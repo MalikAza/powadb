@@ -70,6 +70,14 @@ pub async fn disconnect(state: State<'_, AppState>, id: String) -> AppResult<()>
     Ok(())
 }
 
+#[tauri::command]
+pub async fn get_connection_password(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<String>> {
+    state.storage.get_password(&id).await
+}
+
 pub async fn resolve_connection(
     state: &AppState,
     connection_id: &str,

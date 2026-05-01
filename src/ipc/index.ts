@@ -27,6 +27,9 @@ export const ipc = {
   deleteConnection: (id: string): Promise<void> =>
     invoke("delete_connection", { id }),
 
+  getConnectionPassword: (id: string): Promise<string | null> =>
+    invoke("get_connection_password", { id }),
+
   disconnect: (id: string): Promise<void> => invoke("disconnect", { id }),
 
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>

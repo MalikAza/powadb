@@ -1,3 +1,4 @@
+import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -17,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
 import type { ConnectionInput, DbKind, SavedConnection } from "../types";
 import { folderPaths } from "../utils/folderTree";
@@ -47,9 +49,18 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
   const [username, setUsername] = useState(editing?.username ?? DEFAULTS.postgres.username);
   const [password, setPassword] = useState("");
   const [ssl, setSsl] = useState(editing?.ssl ?? false);
+
+  useEffect(() => {
+    if (editing) {
+      ipc.getConnectionPassword(editing.id).then((pw) => {
+        if (pw) setPassword(pw);
+      });
+    }
+  }, [editing?.id]);
   const [folderId, setFolderId] = useState<string>(
     editing?.folder_id ?? initialFolderId ?? "",
   );
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -130,13 +141,25 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
           <Field label="Username">
             <Input value={username} onChange={(e) => setUsername(e.target.value)} required />
           </Field>
-          <Field label={editing ? "Password (leave blank to keep current)" : "Password"}>
-            <Input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
+          <Field label={"Password"}>
+            <div className="relative">
+              <Input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="new-password"
+                className="pr-9"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                tabIndex={-1}
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </Field>
           <div className="flex items-center gap-2">
             <Checkbox id="ssl" checked={ssl} onCheckedChange={(v) => setSsl(v === true)} />

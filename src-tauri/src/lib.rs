@@ -31,6 +31,7 @@ pub fn run() {
             commands::connections::save_connection,
             commands::connections::delete_connection,
             commands::connections::disconnect,
+            commands::connections::get_connection_password,
             commands::schema::introspect_schema,
             commands::history::list_history,
             commands::history::clear_history,
