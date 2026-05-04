@@ -4,7 +4,8 @@ mod error;
 mod pool_registry;
 mod storage;
 
-use tauri::Manager;
+use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     pub storage: storage::Storage,
@@ -22,6 +23,75 @@ pub fn run() {
                 storage,
                 pools: pool_registry::PoolRegistry::default(),
             });
+
+            let app_submenu = Submenu::with_items(
+                app,
+                "PowaDB",
+                true,
+                &[
+                    &PredefinedMenuItem::about(
+                        app,
+                        Some("About PowaDB"),
+                        Some(AboutMetadata::default()),
+                    )?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "settings", "Settings…", true, Some("CmdOrCtrl+,"))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::services(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::show_all(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
+            )?;
+
+            let edit_submenu = Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, None)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?;
+
+            let view_submenu = Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[&PredefinedMenuItem::fullscreen(app, None)?],
+            )?;
+
+            let window_submenu = Submenu::with_items(
+                app,
+                "Window",
+                true,
+                &[
+                    &PredefinedMenuItem::minimize(app, None)?,
+                    &PredefinedMenuItem::maximize(app, None)?,
+                    &PredefinedMenuItem::close_window(app, None)?,
+                ],
+            )?;
+
+            let menu = Menu::with_items(
+                app,
+                &[&app_submenu, &edit_submenu, &view_submenu, &window_submenu],
+            )?;
+            app.set_menu(menu)?;
+
+            app.on_menu_event(|app, event| {
+                if event.id().as_ref() == "settings" {
+                    let _ = app.emit("open-settings", ());
+                }
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

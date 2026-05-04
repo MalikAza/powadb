@@ -3,6 +3,9 @@ import { z } from "zod";
 export const dbKindSchema = z.enum(["postgres", "mysql"]);
 export type DbKindEnum = z.infer<typeof dbKindSchema>;
 
+export const themeModeSchema = z.enum(["light", "dark", "system"]);
+export type ThemeModeEnum = z.infer<typeof themeModeSchema>;
+
 export const ROOT_FOLDER_SENTINEL = "__root__";
 
 const optionalFolderId = z

@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -5,19 +6,31 @@ import { CommandPalette } from "./components/CommandPalette";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { ConnectionList } from "./components/ConnectionList";
 import { QueryView } from "./components/QueryView";
+import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useConnections } from "./stores/connections";
+import { useApplyTheme } from "./stores/theme";
 
 function App() {
+  useApplyTheme();
+
   const { load, loaded, activeId } = useConnections();
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [initialFolderId, setInitialFolderId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const unlisten = listen("open-settings", () => setSettingsOpen(true));
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   if (!loaded) {
     return (
@@ -70,6 +83,7 @@ function App() {
           />
         )}
         <CommandPalette />
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
     </TooltipProvider>
   );

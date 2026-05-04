@@ -1,4 +1,3 @@
-import { Database } from "lucide-react";
 import { useConnections } from "../stores/connections";
 
 export function TopBar() {
@@ -8,7 +7,7 @@ export function TopBar() {
   return (
     <div className="flex h-10 items-center justify-between border-b border-border bg-sidebar px-3 text-xs">
       <div className="flex items-center gap-2 font-semibold">
-        <Database className="size-4 text-primary" />
+        <img src="/powadb-logo.png" alt="PowaDB" className="size-5" />
         <span>PowaDB</span>
         {conn && (
           <span className="ml-3 font-normal text-muted-foreground">

@@ -4,6 +4,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { useMemo } from "react";
 import { useConnections } from "../../stores/connections";
 import { buildCmSchema, useSchema } from "../../stores/schema";
+import { useResolvedTheme } from "../../stores/theme";
 import type { DbKind } from "../../types";
 
 type Props = {
@@ -16,6 +17,7 @@ type Props = {
 export function SqlEditor({ value, onChange, onRun, kind }: Props) {
   const activeId = useConnections((s) => s.activeId);
   const schemas = useSchema((s) => (activeId ? s.byConnection[activeId] : undefined));
+  const resolvedTheme = useResolvedTheme();
 
   const extensions = useMemo(() => {
     const dialect = kind === "mysql" ? MySQL : PostgreSQL;
@@ -48,7 +50,7 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
     <CodeMirror
       value={value}
       onChange={onChange}
-      theme="dark"
+      theme={resolvedTheme}
       height="100%"
       extensions={extensions}
       basicSetup={{
