@@ -43,6 +43,8 @@ pub struct SavedConnection {
     pub ssl: bool,
     #[serde(default)]
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +90,9 @@ impl Storage {
             .execute(&pool)
             .await;
         let _ = sqlx::query("ALTER TABLE connections ADD COLUMN folder_id TEXT")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN color TEXT")
             .execute(&pool)
             .await;
 
@@ -268,7 +273,7 @@ impl Storage {
 
     pub async fn list(&self) -> AppResult<Vec<SavedConnection>> {
         let rows = sqlx::query(
-            "SELECT id, name, kind, host, port, database, username, ssl, folder_id FROM connections ORDER BY name",
+            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color FROM connections ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -289,6 +294,7 @@ impl Storage {
                     username: r.try_get("username").ok()?,
                     ssl: ssl_i != 0,
                     folder_id: r.try_get("folder_id").ok().flatten(),
+                    color: r.try_get("color").ok().flatten(),
                 })
             })
             .collect())
@@ -297,8 +303,8 @@ impl Storage {
     pub async fn upsert(&self, c: &SavedConnection) -> AppResult<()> {
         sqlx::query(
             r#"
-            INSERT INTO connections (id, name, kind, host, port, database, username, ssl, folder_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            INSERT INTO connections (id, name, kind, host, port, database, username, ssl, folder_id, color)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 kind=excluded.kind,
@@ -307,7 +313,8 @@ impl Storage {
                 database=excluded.database,
                 username=excluded.username,
                 ssl=excluded.ssl,
-                folder_id=excluded.folder_id
+                folder_id=excluded.folder_id,
+                color=excluded.color
             "#,
         )
         .bind(&c.id)
@@ -319,6 +326,7 @@ impl Storage {
         .bind(&c.username)
         .bind(c.ssl as i64)
         .bind(&c.folder_id)
+        .bind(&c.color)
         .execute(&self.pool)
         .await?;
         Ok(())

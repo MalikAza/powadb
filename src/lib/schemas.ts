@@ -18,6 +18,19 @@ const portSchema = z
   .transform((v) => (typeof v === "string" ? Number(v) : v))
   .pipe(z.number().int().min(1, "Port must be ≥ 1").max(65535, "Port must be ≤ 65535"));
 
+export const CONNECTION_COLORS = [
+  { name: "none", value: null, swatch: "transparent" },
+  { name: "slate", value: "#64748b", swatch: "#64748b" },
+  { name: "red", value: "#ef4444", swatch: "#ef4444" },
+  { name: "orange", value: "#f97316", swatch: "#f97316" },
+  { name: "amber", value: "#f59e0b", swatch: "#f59e0b" },
+  { name: "green", value: "#22c55e", swatch: "#22c55e" },
+  { name: "teal", value: "#14b8a6", swatch: "#14b8a6" },
+  { name: "blue", value: "#3b82f6", swatch: "#3b82f6" },
+  { name: "violet", value: "#8b5cf6", swatch: "#8b5cf6" },
+  { name: "pink", value: "#ec4899", swatch: "#ec4899" },
+] as const;
+
 export const connectionFormSchema = z.object({
   name: z.string().min(1, "Name is required"),
   kind: dbKindSchema,
@@ -28,6 +41,7 @@ export const connectionFormSchema = z.object({
   password: z.string().optional().default(""),
   ssl: z.boolean(),
   folder_id: optionalFolderId,
+  color: z.string().nullable().default(null),
 });
 
 export type ConnectionFormValues = z.infer<typeof connectionFormSchema>;

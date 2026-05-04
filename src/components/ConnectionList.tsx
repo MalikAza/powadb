@@ -314,11 +314,18 @@ function ConnRow({
       onClick={() => onActivate(c.id)}
       onDoubleClick={() => onEdit(c.id)}
       className={cn(
-        "group cursor-pointer rounded-md py-1 pr-2 text-xs",
+        "group relative cursor-pointer rounded-md py-1 pr-2 text-xs",
         isActive ? "bg-primary/15 text-foreground" : "hover:bg-sidebar-accent",
       )}
       style={{ paddingLeft: 8 + depth * 12 + 16 }}
     >
+      {c.color && (
+        <span
+          aria-hidden
+          className="absolute left-0 top-1 bottom-1 w-1 rounded-full"
+          style={{ backgroundColor: c.color, marginLeft: depth * 12 + 4 }}
+        />
+      )}
       <div className="flex items-center justify-between gap-1">
         <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
         <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">

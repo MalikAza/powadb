@@ -10,9 +10,16 @@ export function TopBar() {
         <img src="/powadb-logo.png" alt="PowaDB" className="size-5" />
         <span>PowaDB</span>
         {conn && (
-          <span className="ml-3 font-normal text-muted-foreground">
+          <span className="ml-3 flex items-center gap-2 font-normal text-muted-foreground">
+            {conn.color && (
+              <span
+                aria-hidden
+                className="inline-block size-2.5 rounded-full"
+                style={{ backgroundColor: conn.color }}
+              />
+            )}
             <span className="text-foreground">{conn.name}</span>
-            <span className="ml-2 opacity-60">
+            <span className="opacity-60">
               {conn.kind} · {conn.host}:{conn.port}/{conn.database}
             </span>
           </span>

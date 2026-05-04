@@ -21,6 +21,8 @@ pub struct ConnectionInput {
     pub password: Option<String>,
     #[serde(default)]
     pub folder_id: Option<String>,
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 #[tauri::command]
@@ -44,6 +46,7 @@ pub async fn save_connection(
         username: input.username,
         ssl: input.ssl,
         folder_id: input.folder_id,
+        color: input.color,
     };
     state.storage.upsert(&conn).await?;
     if let Some(pw) = input.password {

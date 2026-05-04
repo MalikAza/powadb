@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  CONNECTION_COLORS,
   type ConnectionFormInput,
   type ConnectionFormValues,
   connectionFormSchema,
@@ -67,6 +68,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
       password: "",
       ssl: editing?.ssl ?? false,
       folder_id: editing?.folder_id ?? initialFolderId ?? ROOT_FOLDER_SENTINEL,
+      color: editing?.color ?? null,
     },
   });
 
@@ -105,6 +107,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
         username: values.username,
         ssl: values.ssl,
         folder_id: values.folder_id,
+        color: values.color,
         ...(values.password ? { password: values.password } : {}),
       };
       await save(input);
@@ -266,6 +269,44 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
                     <Checkbox checked={field.value} onCheckedChange={field.onChange} />
                   </FormControl>
                   <FormLabel className="cursor-pointer text-xs font-normal">Require TLS</FormLabel>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="color"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="text-xs font-normal text-muted-foreground">
+                    Color tag
+                  </FormLabel>
+                  <FormControl>
+                    <div className="flex flex-wrap gap-1.5">
+                      {CONNECTION_COLORS.map((c) => {
+                        const selected = (field.value ?? null) === c.value;
+                        const isNone = c.value === null;
+                        return (
+                          <button
+                            key={c.name}
+                            type="button"
+                            onClick={() => field.onChange(c.value)}
+                            aria-label={c.name}
+                            title={c.name}
+                            className={`size-6 rounded-full border transition-all ${
+                              selected
+                                ? "border-foreground ring-2 ring-foreground/30"
+                                : "border-border hover:scale-110"
+                            } ${isNone ? "bg-transparent" : ""}`}
+                            style={isNone ? undefined : { backgroundColor: c.swatch }}
+                          >
+                            {isNone && <span className="text-[10px] text-muted-foreground">∅</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </FormControl>
+                  <FormMessage />
                 </FormItem>
               )}
             />

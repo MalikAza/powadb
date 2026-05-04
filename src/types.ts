@@ -10,12 +10,14 @@ export type SavedConnection = {
   username: string;
   ssl: boolean;
   folder_id: string | null;
+  color: string | null;
 };
 
-export type ConnectionInput = Omit<SavedConnection, "id" | "folder_id"> & {
+export type ConnectionInput = Omit<SavedConnection, "id" | "folder_id" | "color"> & {
   id?: string;
   password?: string;
   folder_id?: string | null;
+  color?: string | null;
 };
 
 export type Folder = {
