@@ -26,10 +26,7 @@ export const useConnections = create<State & Actions>((set, get) => ({
   loaded: false,
 
   async load() {
-    const [connections, folders] = await Promise.all([
-      ipc.listConnections(),
-      ipc.listFolders(),
-    ]);
+    const [connections, folders] = await Promise.all([ipc.listConnections(), ipc.listFolders()]);
     set({ connections, folders, loaded: true });
   },
 

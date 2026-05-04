@@ -1,16 +1,17 @@
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronLeft,
   ChevronRight,
   Plus,
   RefreshCw,
-  Trash2,
   Save,
+  Trash2,
   X,
-  ArrowUp,
-  ArrowDown,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -18,10 +19,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { ipc } from "../ipc";
-import { useTabs, type BrowseTab, newQueryId } from "../stores/tabs";
+import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
 
@@ -109,7 +109,7 @@ function buildWhereClause(tab: BrowseTab, kind: "postgres" | "mysql"): string {
     if (f) parts.push(filterToSql(col, f, kind));
   }
   if (parts.length === 0) return "";
-  return " WHERE " + parts.join(" AND ");
+  return ` WHERE ${parts.join(" AND ")}`;
 }
 
 function BrowseHeader({
@@ -130,11 +130,7 @@ function BrowseHeader({
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="font-mono text-sm">
-        {conn.kind === "postgres" && (
-          <>
-            <span className="text-muted-foreground">{tab.schema}.</span>
-          </>
-        )}
+        {conn.kind === "postgres" && <span className="text-muted-foreground">{tab.schema}.</span>}
         <span className="font-semibold">{tab.table}</span>
       </span>
 
@@ -164,9 +160,7 @@ function BrowseHeader({
           variant="ghost"
           className="size-7"
           disabled={tab.offset === 0 || tab.loading}
-          onClick={() =>
-            patchTab(tab.id, { offset: Math.max(0, tab.offset - tab.limit) })
-          }
+          onClick={() => patchTab(tab.id, { offset: Math.max(0, tab.offset - tab.limit) })}
         >
           <ChevronLeft className="size-3.5" />
         </Button>
@@ -360,19 +354,14 @@ function BrowseGrid({
                         <ArrowDown className="size-3 text-primary" />
                       ))}
                   </div>
-                  <div className="text-[10px] font-normal text-muted-foreground">
-                    {c.type_name}
-                  </div>
+                  <div className="text-[10px] font-normal text-muted-foreground">{c.type_name}</div>
                 </th>
               ))}
             </tr>
             <tr>
               <th className="border-b border-r border-border px-1 py-1"></th>
               {cols.map((c) => (
-                <th
-                  key={c.name}
-                  className="border-b border-r border-border px-1 py-1"
-                >
+                <th key={c.name} className="border-b border-r border-border px-1 py-1">
                   <Input
                     value={tab.filters[c.name] ?? ""}
                     onChange={(e) => onFilter(c.name, e.target.value)}
@@ -451,8 +440,7 @@ function BrowseGrid({
                   </Button>
                 </td>
                 {row.map((v, colIdx) => {
-                  const isEditing =
-                    editing?.row === rowIdx && editing?.col === colIdx;
+                  const isEditing = editing?.row === rowIdx && editing?.col === colIdx;
                   return (
                     <td
                       key={colIdx}
@@ -537,4 +525,3 @@ function stringifyValue(v: unknown): string | null {
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
 }
-

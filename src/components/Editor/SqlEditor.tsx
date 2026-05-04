@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { MySQL, PostgreSQL, sql } from "@codemirror/lang-sql";
+import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
-import { sql, PostgreSQL, MySQL } from "@codemirror/lang-sql";
-import { keymap, EditorView } from "@codemirror/view";
+import { useMemo } from "react";
 import { useConnections } from "../../stores/connections";
 import { buildCmSchema, useSchema } from "../../stores/schema";
 import type { DbKind } from "../../types";

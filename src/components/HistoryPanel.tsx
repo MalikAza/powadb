@@ -1,7 +1,7 @@
 import { RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ipc, type HistoryEntry } from "../ipc";
+import { type HistoryEntry, ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
 

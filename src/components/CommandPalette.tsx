@@ -103,8 +103,7 @@ export function CommandPalette() {
             <CommandItem
               value="cancel running query"
               onSelect={() => {
-                if (activeQueryTab.runningQueryId)
-                  ipc.cancelQuery(activeQueryTab.runningQueryId);
+                if (activeQueryTab.runningQueryId) ipc.cancelQuery(activeQueryTab.runningQueryId);
                 close();
               }}
             >

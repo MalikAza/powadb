@@ -1,4 +1,3 @@
-import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createColumnHelper,
   flexRender,
@@ -6,6 +5,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import type { Column, QueryResult } from "../../types";
 
@@ -145,6 +145,7 @@ export function ResultsGrid({ result }: Props) {
   return (
     <div
       ref={parentRef}
+      role="grid"
       tabIndex={0}
       onKeyDown={onKeyDown}
       className="relative min-h-0 flex-1 overflow-auto rounded-md border border-border bg-card outline-none focus:ring-1 focus:ring-ring"
@@ -182,7 +183,11 @@ export function ResultsGrid({ result }: Props) {
                 key={row.id}
                 className={cn(
                   "absolute left-0 top-0 grid w-full",
-                  isSelectedRow ? "bg-primary/10" : virtualRow.index % 2 ? "bg-card" : "bg-transparent",
+                  isSelectedRow
+                    ? "bg-primary/10"
+                    : virtualRow.index % 2
+                      ? "bg-card"
+                      : "bg-transparent",
                 )}
                 style={{
                   transform: `translateY(${virtualRow.start}px)`,
@@ -198,7 +203,8 @@ export function ResultsGrid({ result }: Props) {
                       onClick={() => setSelected({ row: virtualRow.index, col: colIdx })}
                       className={cn(
                         "overflow-hidden text-ellipsis whitespace-nowrap border-r border-b border-border/50 px-3 py-1 font-mono text-xs",
-                        isSelected && "bg-primary/30 outline outline-1 -outline-offset-1 outline-primary",
+                        isSelected &&
+                          "bg-primary/30 outline outline-1 -outline-offset-1 outline-primary",
                       )}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

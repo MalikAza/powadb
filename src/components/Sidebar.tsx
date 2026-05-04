@@ -1,6 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useConnections } from "../stores/connections";
-import { useUi, type SidebarPane } from "../stores/ui";
+import { type SidebarPane, useUi } from "../stores/ui";
 import { HistoryPanel } from "./HistoryPanel";
 import { SchemaTree } from "./SchemaTree";
 import { SnippetsPanel } from "./SnippetsPanel";

@@ -118,7 +118,12 @@ export function SnippetsPanel() {
             </Label>
           </div>
           <div className="flex justify-end gap-1">
-            <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setSaveOpen(false)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 text-xs"
+              onClick={() => setSaveOpen(false)}
+            >
               Cancel
             </Button>
             <Button

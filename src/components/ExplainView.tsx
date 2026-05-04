@@ -32,9 +32,7 @@ export function ExplainView({ result }: Props) {
   );
 }
 
-type Plan =
-  | { kind: "postgres"; root: PgNode }
-  | { kind: "mysql"; body: unknown };
+type Plan = { kind: "postgres"; root: PgNode } | { kind: "mysql"; body: unknown };
 
 type PgNode = {
   "Node Type"?: string;
@@ -105,7 +103,9 @@ function PgPlanNode({ node, depth }: { node: PgNode; depth: number }) {
         )}
         <DetailLines node={node} />
       </div>
-      {node.Plans?.map((child, i) => <PgPlanNode key={i} node={child} depth={depth + 1} />)}
+      {node.Plans?.map((child, i) => (
+        <PgPlanNode key={i} node={child} depth={depth + 1} />
+      ))}
     </div>
   );
 }

@@ -107,13 +107,7 @@ export function SchemaTree() {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Schema
         </span>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-6"
-          onClick={refresh}
-          disabled={loading}
-        >
+        <Button size="icon" variant="ghost" className="size-6" onClick={refresh} disabled={loading}>
           <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
         </Button>
       </div>

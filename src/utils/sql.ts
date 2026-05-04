@@ -1,8 +1,8 @@
 import type { DbKind } from "../types";
 
 export function quoteIdent(name: string, kind: DbKind): string {
-  if (kind === "mysql") return "`" + name.replace(/`/g, "``") + "`";
-  return '"' + name.replace(/"/g, '""') + '"';
+  if (kind === "mysql") return `\`${name.replace(/`/g, "``")}\``;
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
 export function quoteTable(schema: string, table: string, kind: DbKind): string {
@@ -11,7 +11,7 @@ export function quoteTable(schema: string, table: string, kind: DbKind): string 
 }
 
 export function escapeStringLiteral(value: string): string {
-  return "'" + value.replace(/'/g, "''") + "'";
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 export type Filter =

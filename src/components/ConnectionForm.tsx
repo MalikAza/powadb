@@ -57,9 +57,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
       });
     }
   }, [editing?.id]);
-  const [folderId, setFolderId] = useState<string>(
-    editing?.folder_id ?? initialFolderId ?? "",
-  );
+  const [folderId, setFolderId] = useState<string>(editing?.folder_id ?? initialFolderId ?? "");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

@@ -2,7 +2,7 @@ import { Pause, Play, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ipc } from "../ipc";
-import { newQueryId, useTabs, type QueryTab } from "../stores/tabs";
+import { newQueryId, type QueryTab, useTabs } from "../stores/tabs";
 import type { SavedConnection } from "../types";
 import { toCsv, toJson, toTsv } from "../utils/format";
 import { SqlEditor } from "./Editor/SqlEditor";
@@ -103,22 +103,20 @@ export function QueryTabPane({ tab, conn }: Props) {
         </pre>
       )}
 
-      {tab.result && !tab.error && (
-        <>
-          {isExplainResult(tab.result) ? (
-            <ExplainView result={tab.result} />
-          ) : (
-            <>
-              <CopyBar
-                onCopyTsv={() => navigator.clipboard.writeText(toTsv(tab.result!))}
-                onCopyCsv={() => navigator.clipboard.writeText(toCsv(tab.result!))}
-                onCopyJson={() => navigator.clipboard.writeText(toJson(tab.result!))}
-              />
-              <ResultsGrid result={tab.result} />
-            </>
-          )}
-        </>
-      )}
+      {tab.result &&
+        !tab.error &&
+        (isExplainResult(tab.result) ? (
+          <ExplainView result={tab.result} />
+        ) : (
+          <>
+            <CopyBar
+              onCopyTsv={() => navigator.clipboard.writeText(toTsv(tab.result!))}
+              onCopyCsv={() => navigator.clipboard.writeText(toCsv(tab.result!))}
+              onCopyJson={() => navigator.clipboard.writeText(toJson(tab.result!))}
+            />
+            <ResultsGrid result={tab.result} />
+          </>
+        ))}
     </div>
   );
 }
@@ -141,13 +139,28 @@ function CopyBar({
   return (
     <div className="flex items-center gap-1 text-xs">
       <span className="mr-1 text-muted-foreground">Copy:</span>
-      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => handle("tsv", onCopyTsv)}>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 px-2 text-xs"
+        onClick={() => handle("tsv", onCopyTsv)}
+      >
         TSV
       </Button>
-      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => handle("csv", onCopyCsv)}>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 px-2 text-xs"
+        onClick={() => handle("csv", onCopyCsv)}
+      >
         CSV
       </Button>
-      <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => handle("json", onCopyJson)}>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 px-2 text-xs"
+        onClick={() => handle("json", onCopyJson)}
+      >
         JSON
       </Button>
       {flash && <span className="text-muted-foreground">copied {flash}</span>}

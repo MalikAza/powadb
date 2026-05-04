@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { ConnectionList } from "./components/ConnectionList";

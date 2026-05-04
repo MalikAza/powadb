@@ -188,9 +188,7 @@ function FolderRow({
       <div
         className="group flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sidebar-accent"
         style={{ paddingLeft: 8 + depth * 12 }}
-        onClick={() =>
-          setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] }))
-        }
+        onClick={() => setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] }))}
       >
         {isOpen ? (
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -248,11 +246,7 @@ function FolderRow({
               e.stopPropagation();
               onDeleteFolder(node.folder);
             }}
-            title={
-              armed
-                ? "Click again to confirm (children promoted to parent)"
-                : "Delete folder"
-            }
+            title={armed ? "Click again to confirm (children promoted to parent)" : "Delete folder"}
           >
             <Trash2 className="size-3" />
           </Button>

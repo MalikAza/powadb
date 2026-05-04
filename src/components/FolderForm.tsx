@@ -33,9 +33,7 @@ export function FolderForm({ editing, initialParentId, open, onOpenChange }: Pro
   const { folders, saveFolder } = useConnections();
 
   const [name, setName] = useState(editing?.name ?? "");
-  const [parentId, setParentId] = useState<string>(
-    editing?.parent_id ?? initialParentId ?? "",
-  );
+  const [parentId, setParentId] = useState<string>(editing?.parent_id ?? initialParentId ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -79,12 +77,7 @@ export function FolderForm({ editing, initialParentId, open, onOpenChange }: Pro
         <form onSubmit={submit} className="grid gap-3">
           <div className="grid gap-1.5">
             <Label className="text-xs font-normal text-muted-foreground">Name</Label>
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              required
-            />
+            <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus required />
           </div>
           <div className="grid gap-1.5">
             <Label className="text-xs font-normal text-muted-foreground">Parent folder</Label>

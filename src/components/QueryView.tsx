@@ -58,7 +58,8 @@ export function QueryView() {
   if (!activeId || !conn) {
     return (
       <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
-        Select a connection on the left, or click <Plus className="mx-1 inline size-3.5" /> to add one.
+        Select a connection on the left, or click <Plus className="mx-1 inline size-3.5" /> to add
+        one.
       </div>
     );
   }
@@ -121,7 +122,9 @@ function TabBar({
           <span
             className={cn(
               "rounded px-1 font-mono text-[9px] uppercase",
-              t.kind === "browse" ? "bg-primary/30 text-foreground" : "bg-muted text-muted-foreground",
+              t.kind === "browse"
+                ? "bg-primary/30 text-foreground"
+                : "bg-muted text-muted-foreground",
             )}
           >
             {t.kind === "browse" ? "T" : "Q"}
