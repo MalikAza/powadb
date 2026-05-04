@@ -8,6 +8,7 @@ type State = {
   openTables: Record<string, boolean>;
   exportDialog: { connectionId: string } | null;
   importDialog: { connectionId: string } | null;
+  schemaSearchFocusToken: number;
 };
 
 type Actions = {
@@ -21,6 +22,7 @@ type Actions = {
   closeExportDialog: () => void;
   openImportDialog: (connectionId: string) => void;
   closeImportDialog: () => void;
+  focusSchemaSearch: () => void;
 };
 
 const tableKey = (schema: string, table: string) => `${schema}.${table}`;
@@ -31,8 +33,12 @@ export const useUi = create<State & Actions>((set) => ({
   openTables: {},
   exportDialog: null,
   importDialog: null,
+  schemaSearchFocusToken: 0,
 
   setPane: (pane) => set({ pane }),
+
+  focusSchemaSearch: () =>
+    set((s) => ({ pane: "schema", schemaSearchFocusToken: s.schemaSearchFocusToken + 1 })),
 
   openExportDialog: (connectionId) => set({ exportDialog: { connectionId } }),
   closeExportDialog: () => set({ exportDialog: null }),

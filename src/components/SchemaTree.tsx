@@ -27,11 +27,13 @@ export function SchemaTree() {
   const toggleSchema = useUi((s) => s.toggleSchema);
   const toggleTable = useUi((s) => s.toggleTable);
   const setSchemaOpen = useUi((s) => s.setSchemaOpen);
+  const schemaSearchFocusToken = useUi((s) => s.schemaSearchFocusToken);
 
   const [schemas, setSchemas] = useState<SchemaMeta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
     if (!activeId) return;
@@ -85,6 +87,14 @@ export function SchemaTree() {
     return out;
   }, [openSchemas, search, filteredSchemas]);
 
+  useEffect(() => {
+    if (schemaSearchFocusToken === 0) return;
+    const el = searchInputRef.current;
+    if (!el) return;
+    el.focus();
+    el.select();
+  }, [schemaSearchFocusToken]);
+
   // Scroll an externally-revealed table into view
   const lastOpenTableKey = useRef<string | null>(null);
   useEffect(() => {
@@ -115,6 +125,7 @@ export function SchemaTree() {
       <div className="relative mb-2">
         <Search className="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
         <Input
+          ref={searchInputRef}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search tables…"

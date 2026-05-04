@@ -13,11 +13,13 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useConnections } from "./stores/connections";
 import { useApplyTheme } from "./stores/theme";
+import { useUi } from "./stores/ui";
 
 function App() {
   useApplyTheme();
 
   const { load, loaded, activeId } = useConnections();
+  const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [initialFolderId, setInitialFolderId] = useState<string | null>(null);
@@ -33,6 +35,18 @@ function App() {
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f") return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".cm-editor")) return;
+      e.preventDefault();
+      focusSchemaSearch();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusSchemaSearch]);
 
   if (!loaded) {
     return (

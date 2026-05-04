@@ -1,5 +1,5 @@
-import { Database, Download, Eye, Play, Plus, TableProperties, Upload, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Download, Play, Plus, Upload, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -11,16 +11,13 @@ import {
 } from "@/components/ui/command";
 import { ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
-import { useSchema } from "../stores/schema";
 import { newQueryId, useTabs } from "../stores/tabs";
 import { useUi } from "../stores/ui";
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const { connections, activeId, activate } = useConnections();
-  const { tabs, activeTabId, newQueryTab, openBrowseTab, closeTab, patchTab } = useTabs();
-  const schemasByConn = useSchema((s) => s.byConnection);
-  const revealTable = useUi((s) => s.revealTable);
+  const { tabs, activeTabId, newQueryTab, closeTab, patchTab } = useTabs();
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
 
@@ -37,19 +34,6 @@ export function CommandPalette() {
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const activeQueryTab = activeTab?.kind === "query" ? activeTab : null;
-
-  const tableEntries = useMemo(() => {
-    if (!activeId) return [];
-    const schemas = schemasByConn[activeId];
-    if (!schemas) return [];
-    return schemas.flatMap((s) =>
-      s.tables.map((t) => ({
-        schema: s.name,
-        table: t.name,
-        kind: t.kind,
-      })),
-    );
-  }, [activeId, schemasByConn]);
 
   function close() {
     setOpen(false);
@@ -74,7 +58,7 @@ export function CommandPalette() {
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
-      <CommandInput placeholder="Type a command, or search a table…" />
+      <CommandInput placeholder="Type a command…" />
       <CommandList className="max-h-[60vh]">
         <CommandEmpty>No matches.</CommandEmpty>
 
@@ -149,49 +133,6 @@ export function CommandPalette() {
             </>
           )}
         </CommandGroup>
-
-        {tableEntries.length > 0 && activeId && (
-          <>
-            <CommandSeparator />
-            <CommandGroup heading="Tables">
-              {tableEntries.map(({ schema, table, kind }) => {
-                const fq = `${schema}.${table}`;
-                return (
-                  <div key={fq}>
-                    <CommandItem
-                      value={`browse ${schema} ${table} ${kind}`}
-                      onSelect={() => {
-                        openBrowseTab(activeId, schema, table);
-                        close();
-                      }}
-                    >
-                      <TableProperties className="size-3.5 text-primary" />
-                      <span>Browse</span>
-                      <span className="font-mono text-foreground">{table}</span>
-                      <span className="ml-auto text-xs text-muted-foreground">{schema}</span>
-                    </CommandItem>
-                    <CommandItem
-                      value={`columns schema ${schema} ${table}`}
-                      onSelect={() => {
-                        revealTable(schema, table);
-                        close();
-                      }}
-                    >
-                      {kind === "view" ? (
-                        <Eye className="size-3.5 text-muted-foreground" />
-                      ) : (
-                        <Database className="size-3.5 text-muted-foreground" />
-                      )}
-                      <span>Show columns of</span>
-                      <span className="font-mono text-foreground">{table}</span>
-                      <span className="ml-auto text-xs text-muted-foreground">{schema}</span>
-                    </CommandItem>
-                  </div>
-                );
-              })}
-            </CommandGroup>
-          </>
-        )}
 
         {connections.length > 0 && (
           <>
