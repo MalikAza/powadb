@@ -5,6 +5,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConnectionForm } from "./components/ConnectionForm";
 import { ConnectionList } from "./components/ConnectionList";
+import { ExportDatabaseDialog } from "./components/ExportDatabaseDialog";
+import { ImportSqlDialog } from "./components/ImportSqlDialog";
 import { QueryView } from "./components/QueryView";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
@@ -84,6 +86,8 @@ function App() {
         )}
         <CommandPalette />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <ExportDatabaseDialog />
+        <ImportSqlDialog />
       </div>
     </TooltipProvider>
   );

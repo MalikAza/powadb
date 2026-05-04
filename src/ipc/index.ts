@@ -52,6 +52,80 @@ export const ipc = {
   listFolders: (): Promise<Folder[]> => invoke("list_folders"),
   saveFolder: (input: FolderInput): Promise<Folder> => invoke("save_folder", { input }),
   deleteFolder: (id: string): Promise<void> => invoke("delete_folder", { id }),
+
+  exportDatabase: (
+    connectionId: string,
+    options: ExportOptions,
+    outputPath: string,
+  ): Promise<ExportSummary> => invoke("export_database", { connectionId, options, outputPath }),
+
+  importSql: (
+    connectionId: string,
+    inputPath: string,
+    options: ImportOptions,
+  ): Promise<ImportSummary> => invoke("import_sql", { connectionId, inputPath, options }),
+
+  checkDumpTools: (kind: "postgres" | "mysql"): Promise<ToolStatus> =>
+    invoke("check_dump_tools", { kind }),
+
+  cancelDump: (jobId: string): Promise<boolean> => invoke("cancel_dump", { jobId }),
+
+  pickSavePath: (defaultFilename?: string): Promise<string | null> =>
+    invoke("pick_save_path", { defaultFilename }),
+
+  pickOpenPath: (): Promise<string | null> => invoke("pick_open_path"),
+
+  getSettings: (): Promise<AppSettings> => invoke("get_settings"),
+  saveSettings: (settings: AppSettings): Promise<AppSettings> =>
+    invoke("save_settings", { settings }),
+};
+
+export type DumpEngine = "tool" | "native";
+
+export type TableRef = { schema: string; table: string };
+
+export type ExportOptions = {
+  engine: DumpEngine;
+  include_schema: boolean;
+  include_data: boolean;
+  tables: TableRef[] | null;
+  job_id: string;
+};
+
+export type ImportOptions = {
+  engine: DumpEngine;
+  single_transaction: boolean;
+  job_id: string;
+};
+
+export type ExportSummary = {
+  bytes_written: number;
+  tables_dumped: number;
+};
+
+export type ImportSummary = {
+  statements_executed: number;
+};
+
+export type ToolStatus = {
+  dump: string | null;
+  client: string | null;
+};
+
+export type DumpProgressEvent = {
+  job_id: string;
+  phase: string;
+  table: string | null;
+  rows_done: number | null;
+  statements_done: number | null;
+  message: string | null;
+};
+
+export type AppSettings = {
+  pg_dump_path: string | null;
+  mysqldump_path: string | null;
+  psql_path: string | null;
+  mysql_path: string | null;
 };
 
 export type HistoryEntry = {

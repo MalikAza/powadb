@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -145,7 +146,59 @@ impl Storage {
         .execute(&pool)
         .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
+    }
+
+    pub async fn load_settings(&self) -> AppResult<AppSettings> {
+        let rows = sqlx::query("SELECT key, value FROM settings")
+            .fetch_all(&self.pool)
+            .await?;
+        let mut s = AppSettings::default();
+        for r in rows {
+            let key: String = r.try_get("key").unwrap_or_default();
+            let val: Option<String> = r.try_get("value").ok().flatten();
+            match key.as_str() {
+                "pg_dump_path" => s.pg_dump_path = val,
+                "mysqldump_path" => s.mysqldump_path = val,
+                "psql_path" => s.psql_path = val,
+                "mysql_path" => s.mysql_path = val,
+                _ => {}
+            }
+        }
+        Ok(s)
+    }
+
+    pub async fn save_settings(&self, s: &AppSettings) -> AppResult<()> {
+        let entries: [(&str, Option<&str>); 4] = [
+            ("pg_dump_path", s.pg_dump_path.as_deref()),
+            ("mysqldump_path", s.mysqldump_path.as_deref()),
+            ("psql_path", s.psql_path.as_deref()),
+            ("mysql_path", s.mysql_path.as_deref()),
+        ];
+        for (k, v) in entries {
+            sqlx::query(
+                r#"
+                INSERT INTO settings (key, value) VALUES (?1, ?2)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+                "#,
+            )
+            .bind(k)
+            .bind(v)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
     }
 
     pub async fn list_snippets(&self, connection_id: Option<&str>) -> AppResult<Vec<Snippet>> {
@@ -438,4 +491,34 @@ pub struct HistoryEntry {
 
 pub fn new_id() -> String {
     Uuid::new_v4().to_string()
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(default)]
+    pub pg_dump_path: Option<String>,
+    #[serde(default)]
+    pub mysqldump_path: Option<String>,
+    #[serde(default)]
+    pub psql_path: Option<String>,
+    #[serde(default)]
+    pub mysql_path: Option<String>,
+}
+
+pub struct SettingsStore {
+    inner: RwLock<AppSettings>,
+}
+
+impl SettingsStore {
+    pub fn new(initial: AppSettings) -> Self {
+        Self { inner: RwLock::new(initial) }
+    }
+
+    pub fn get(&self) -> AppSettings {
+        self.inner.read().unwrap().clone()
+    }
+
+    pub fn set(&self, s: AppSettings) {
+        *self.inner.write().unwrap() = s;
+    }
 }

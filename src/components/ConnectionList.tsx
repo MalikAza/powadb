@@ -1,18 +1,29 @@
 import {
   ChevronDown,
   ChevronRight,
+  Download,
   Folder as FolderIcon,
   FolderOpen,
   FolderPlus,
+  MoreHorizontal,
   Pencil,
   Plus,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
+import { useUi } from "../stores/ui";
 import type { Folder, SavedConnection } from "../types";
 import { buildTree, type FolderNode } from "../utils/folderTree";
 import { FolderForm } from "./FolderForm";
@@ -309,6 +320,8 @@ function ConnRow({
   onDelete: (c: SavedConnection) => void;
   armed: boolean;
 }) {
+  const openExportDialog = useUi((s) => s.openExportDialog);
+  const openImportDialog = useUi((s) => s.openImportDialog);
   return (
     <div
       onClick={() => onActivate(c.id)}
@@ -331,34 +344,51 @@ function ConnRow({
         <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
           {c.kind}
         </span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+              onClick={(e) => e.stopPropagation()}
+              title="More actions"
+            >
+              <MoreHorizontal className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()} className="text-xs">
+            <DropdownMenuItem onSelect={() => onEdit(c.id)}>
+              <Pencil className="size-3.5" />
+              Edit…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                onActivate(c.id);
+                openExportDialog(c.id);
+              }}
+            >
+              <Download className="size-3.5" />
+              Export database…
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                onActivate(c.id);
+                openImportDialog(c.id);
+              }}
+            >
+              <Upload className="size-3.5" />
+              Import SQL file…
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c)}>
+              <Trash2 className="size-3.5" />
+              {armed ? "Confirm delete" : "Delete"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
         {c.username}@{c.host}:{c.port}/{c.database}
-      </div>
-      <div className="mt-1 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit(c.id);
-          }}
-        >
-          <Pencil className="size-3" />
-        </Button>
-        <Button
-          size="icon"
-          variant={armed ? "destructive" : "ghost"}
-          className="size-6"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(c);
-          }}
-          title={armed ? "Click again to confirm" : "Delete"}
-        >
-          <Trash2 className="size-3" />
-        </Button>
       </div>
     </div>
   );

@@ -1,7 +1,9 @@
 pub mod connections;
+pub mod dump;
 pub mod folders;
 pub mod history;
 pub mod query;
 pub mod schema;
+pub mod settings;
 pub mod snippets;
 pub mod table_ops;

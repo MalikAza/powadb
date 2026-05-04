@@ -1,6 +1,7 @@
 mod commands;
 mod drivers;
 mod error;
+mod job_registry;
 mod pool_registry;
 mod storage;
 
@@ -10,18 +11,24 @@ use tauri::{Emitter, Manager};
 pub struct AppState {
     pub storage: storage::Storage,
     pub pools: pool_registry::PoolRegistry,
+    pub jobs: job_registry::JobRegistry,
+    pub settings: storage::SettingsStore,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let db_path = data_dir.join("powadb.db");
             let storage = tauri::async_runtime::block_on(storage::Storage::open(db_path))?;
+            let settings = tauri::async_runtime::block_on(storage.load_settings())?;
             app.manage(AppState {
                 storage,
                 pools: pool_registry::PoolRegistry::default(),
+                jobs: job_registry::JobRegistry::default(),
+                settings: storage::SettingsStore::new(settings),
             });
 
             let app_submenu = Submenu::with_items(
@@ -113,6 +120,14 @@ pub fn run() {
             commands::folders::list_folders,
             commands::folders::save_folder,
             commands::folders::delete_folder,
+            commands::dump::export_database,
+            commands::dump::import_sql,
+            commands::dump::check_dump_tools,
+            commands::dump::cancel_dump,
+            commands::dump::pick_save_path,
+            commands::dump::pick_open_path,
+            commands::settings::get_settings,
+            commands::settings::save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-import { Database, Eye, Play, Plus, TableProperties, X } from "lucide-react";
+import { Database, Download, Eye, Play, Plus, TableProperties, Upload, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   CommandDialog,
@@ -21,6 +21,8 @@ export function CommandPalette() {
   const { tabs, activeTabId, newQueryTab, openBrowseTab, closeTab, patchTab } = useTabs();
   const schemasByConn = useSchema((s) => s.byConnection);
   const revealTable = useUi((s) => s.revealTable);
+  const openExportDialog = useUi((s) => s.openExportDialog);
+  const openImportDialog = useUi((s) => s.openImportDialog);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -121,6 +123,30 @@ export function CommandPalette() {
               <X className="size-3.5" />
               Close current tab
             </CommandItem>
+          )}
+          {activeId && (
+            <>
+              <CommandItem
+                value="export database"
+                onSelect={() => {
+                  openExportDialog(activeId);
+                  close();
+                }}
+              >
+                <Download className="size-3.5" />
+                Export database…
+              </CommandItem>
+              <CommandItem
+                value="import sql file"
+                onSelect={() => {
+                  openImportDialog(activeId);
+                  close();
+                }}
+              >
+                <Upload className="size-3.5" />
+                Import SQL file…
+              </CommandItem>
+            </>
           )}
         </CommandGroup>
 

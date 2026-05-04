@@ -6,6 +6,8 @@ type State = {
   pane: SidebarPane;
   openSchemas: Record<string, boolean>;
   openTables: Record<string, boolean>;
+  exportDialog: { connectionId: string } | null;
+  importDialog: { connectionId: string } | null;
 };
 
 type Actions = {
@@ -15,6 +17,10 @@ type Actions = {
   toggleTable: (schema: string, table: string) => void;
   setTableOpen: (schema: string, table: string, open: boolean) => void;
   revealTable: (schema: string, table: string) => void;
+  openExportDialog: (connectionId: string) => void;
+  closeExportDialog: () => void;
+  openImportDialog: (connectionId: string) => void;
+  closeImportDialog: () => void;
 };
 
 const tableKey = (schema: string, table: string) => `${schema}.${table}`;
@@ -23,8 +29,15 @@ export const useUi = create<State & Actions>((set) => ({
   pane: "schema",
   openSchemas: {},
   openTables: {},
+  exportDialog: null,
+  importDialog: null,
 
   setPane: (pane) => set({ pane }),
+
+  openExportDialog: (connectionId) => set({ exportDialog: { connectionId } }),
+  closeExportDialog: () => set({ exportDialog: null }),
+  openImportDialog: (connectionId) => set({ importDialog: { connectionId } }),
+  closeImportDialog: () => set({ importDialog: null }),
 
   toggleSchema: (schema) =>
     set((s) => ({ openSchemas: { ...s.openSchemas, [schema]: !s.openSchemas[schema] } })),

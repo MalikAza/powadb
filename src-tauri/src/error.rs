@@ -5,6 +5,9 @@ pub enum AppError {
     #[error("database error: {0}")]
     Sqlx(#[from] sqlx::Error),
 
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+
     #[error("unsupported column type: {0}")]
     UnsupportedType(String),
 
@@ -13,6 +16,9 @@ pub enum AppError {
 
     #[error("connection not found: {0}")]
     ConnectionNotFound(String),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 impl Serialize for AppError {
