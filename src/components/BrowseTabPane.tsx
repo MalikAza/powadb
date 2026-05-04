@@ -283,7 +283,7 @@ function BrowseGrid({
         const idx = cols.findIndex((c) => c.name === pkCol);
         if (idx === -1) throw new Error(`PK column ${pkCol} not in result`);
         const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
-        wherePieces.push(`${quoteIdent(pkCol, conn.kind)} = ${placeholder}`);
+        wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
         params.push(stringifyValue(oldRow[idx]));
         pIdx++;
       }
@@ -338,7 +338,7 @@ function BrowseGrid({
         if (!row) continue;
         const andPieces: string[] = [];
         tab.pkCols.forEach((pk, k) => {
-          andPieces.push(`${quoteIdent(pk, conn.kind)} = ${placeholder(pIdx)}`);
+          andPieces.push(pkEq(pk, placeholder(pIdx), conn.kind));
           params.push(stringifyValue(row[pkColIndexes[k]]));
           pIdx++;
         });
@@ -367,7 +367,7 @@ function BrowseGrid({
         const idx = cols.findIndex((c) => c.name === pkCol);
         if (idx === -1) throw new Error(`PK column ${pkCol} not in result`);
         const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
-        wherePieces.push(`${quoteIdent(pkCol, conn.kind)} = ${placeholder}`);
+        wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
         params.push(stringifyValue(oldRow[idx]));
         pIdx++;
       }
@@ -656,4 +656,12 @@ function stringifyValue(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+// Postgres rejects `int_col = $1` when $1 is bound as text (no implicit cast).
+// We always send DML params as strings, so cast the column to text on PG to make
+// equality work for any column type. MySQL doesn't need this — it coerces freely.
+function pkEq(col: string, placeholder: string, kind: "postgres" | "mysql"): string {
+  const ident = quoteIdent(col, kind);
+  return kind === "postgres" ? `${ident}::text = ${placeholder}` : `${ident} = ${placeholder}`;
 }
