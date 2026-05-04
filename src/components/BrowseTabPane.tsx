@@ -9,8 +9,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -199,6 +200,8 @@ function BrowseGrid({
   const [editing, setEditing] = useState<{ row: number; col: number; value: string } | null>(null);
   const [insertRow, setInsertRow] = useState<(string | null)[] | null>(null);
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [opError, setOpError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -207,8 +210,53 @@ function BrowseGrid({
     return () => clearTimeout(t);
   }, [confirmDeleteRow]);
 
+  useEffect(() => {
+    if (!confirmBulkDelete) return;
+    const t = setTimeout(() => setConfirmBulkDelete(false), 3000);
+    return () => clearTimeout(t);
+  }, [confirmBulkDelete]);
+
+  // Reset selection whenever the underlying result changes.
+  useEffect(() => {
+    setSelected(new Set());
+    setConfirmBulkDelete(false);
+  }, [result]);
+
   const canEdit = (tab.pkCols?.length ?? 0) > 0;
   const cols = result.columns;
+  const selectedCount = selected.size;
+  const allSelected = selectedCount > 0 && selectedCount === result.rows.length;
+  const headerCheckState: boolean | "indeterminate" = allSelected
+    ? true
+    : selectedCount > 0
+      ? "indeterminate"
+      : false;
+
+  const pkColIndexes = useMemo(() => {
+    if (!tab.pkCols) return null;
+    const idxs: number[] = [];
+    for (const pk of tab.pkCols) {
+      const i = cols.findIndex((c) => c.name === pk);
+      if (i === -1) return null;
+      idxs.push(i);
+    }
+    return idxs;
+  }, [tab.pkCols, cols]);
+
+  function toggleRow(rowIdx: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowIdx)) next.delete(rowIdx);
+      else next.add(rowIdx);
+      return next;
+    });
+  }
+
+  function toggleAll() {
+    setSelected((prev) =>
+      prev.size === result.rows.length ? new Set() : new Set(result.rows.map((_, i) => i)),
+    );
+  }
 
   async function commitEdit() {
     if (!editing || !canEdit || !tab.pkCols) {
@@ -277,6 +325,37 @@ function BrowseGrid({
     }
   }
 
+  async function deleteSelectedRows() {
+    if (!canEdit || !tab.pkCols || !pkColIndexes || selected.size === 0) return;
+    try {
+      const rowIdxs = [...selected].sort((a, b) => a - b);
+      const placeholder = (i: number) => (conn.kind === "postgres" ? `$${i}` : "?");
+      const orPieces: string[] = [];
+      const params: (string | null)[] = [];
+      let pIdx = 1;
+      for (const ri of rowIdxs) {
+        const row = result.rows[ri];
+        if (!row) continue;
+        const andPieces: string[] = [];
+        tab.pkCols.forEach((pk, k) => {
+          andPieces.push(`${quoteIdent(pk, conn.kind)} = ${placeholder(pIdx)}`);
+          params.push(stringifyValue(row[pkColIndexes[k]]));
+          pIdx++;
+        });
+        orPieces.push(`(${andPieces.join(" AND ")})`);
+      }
+      if (orPieces.length === 0) return;
+      const sql = `DELETE FROM ${quoteTable(tab.schema, tab.table, conn.kind)} WHERE ${orPieces.join(" OR ")}`;
+      await ipc.executeDml(conn.id, sql, params);
+      setSelected(new Set());
+      setConfirmBulkDelete(false);
+      setOpError(null);
+      onRefresh();
+    } catch (e) {
+      setOpError(String(e));
+    }
+  }
+
   async function deleteRow(rowIdx: number) {
     if (!canEdit || !tab.pkCols) return;
     try {
@@ -316,6 +395,31 @@ function BrowseGrid({
         >
           <Plus className="size-3.5" /> Insert row
         </Button>
+        {selectedCount > 0 && canEdit && (
+          <Button
+            size="sm"
+            variant={confirmBulkDelete ? "destructive" : "secondary"}
+            onClick={() => {
+              if (confirmBulkDelete) deleteSelectedRows();
+              else setConfirmBulkDelete(true);
+            }}
+            title={
+              confirmBulkDelete
+                ? "Click again to confirm"
+                : `Delete ${selectedCount} selected row${selectedCount === 1 ? "" : "s"}`
+            }
+          >
+            <Trash2 className="size-3.5" />
+            {confirmBulkDelete
+              ? `Confirm delete (${selectedCount})`
+              : `Delete ${selectedCount} selected`}
+          </Button>
+        )}
+        {selectedCount > 0 && (
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear selection
+          </Button>
+        )}
         {!canEdit && tab.pkCols !== null && (
           <span className="text-xs text-muted-foreground">
             No primary key — edit / delete disabled
@@ -333,6 +437,15 @@ function BrowseGrid({
         <table className="w-full border-collapse font-mono text-xs">
           <thead className="sticky top-0 z-10 bg-muted">
             <tr>
+              <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left">
+                {canEdit && result.rows.length > 0 && (
+                  <Checkbox
+                    checked={headerCheckState}
+                    onCheckedChange={() => toggleAll()}
+                    aria-label="Select all rows"
+                  />
+                )}
+              </th>
               <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left"></th>
               {cols.map((c) => (
                 <th
@@ -360,6 +473,7 @@ function BrowseGrid({
             </tr>
             <tr>
               <th className="border-b border-r border-border px-1 py-1"></th>
+              <th className="border-b border-r border-border px-1 py-1"></th>
               {cols.map((c) => (
                 <th key={c.name} className="border-b border-r border-border px-1 py-1">
                   <Input
@@ -375,6 +489,7 @@ function BrowseGrid({
           <tbody>
             {insertRow && (
               <tr className="bg-primary/10">
+                <td className="border-b border-r border-border px-1 py-0.5"></td>
                 <td className="border-b border-r border-border px-1 py-0.5">
                   <div className="flex gap-0.5">
                     <Button
@@ -413,70 +528,87 @@ function BrowseGrid({
                 ))}
               </tr>
             )}
-            {result.rows.map((row, rowIdx) => (
-              <tr key={rowIdx} className={cn(rowIdx % 2 === 0 ? "bg-card" : "bg-muted/30")}>
-                <td className="border-b border-r border-border px-1 py-0.5">
-                  <Button
-                    size="icon"
-                    variant={confirmDeleteRow === rowIdx ? "destructive" : "ghost"}
-                    className="size-5"
-                    disabled={!canEdit}
-                    title={
-                      !canEdit
-                        ? "No primary key — delete disabled"
-                        : confirmDeleteRow === rowIdx
-                          ? "Click again to confirm"
-                          : "Delete"
-                    }
-                    onClick={() => {
-                      if (confirmDeleteRow === rowIdx) {
-                        deleteRow(rowIdx);
-                      } else {
-                        setConfirmDeleteRow(rowIdx);
+            {result.rows.map((row, rowIdx) => {
+              const isSelected = selected.has(rowIdx);
+              return (
+                <tr
+                  key={rowIdx}
+                  className={cn(
+                    isSelected ? "bg-primary/10" : rowIdx % 2 === 0 ? "bg-card" : "bg-muted/30",
+                  )}
+                >
+                  <td className="border-b border-r border-border px-2 py-0.5">
+                    {canEdit && (
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() => toggleRow(rowIdx)}
+                        aria-label={`Select row ${rowIdx + 1}`}
+                      />
+                    )}
+                  </td>
+                  <td className="border-b border-r border-border px-1 py-0.5">
+                    <Button
+                      size="icon"
+                      variant={confirmDeleteRow === rowIdx ? "destructive" : "ghost"}
+                      className="size-5"
+                      disabled={!canEdit}
+                      title={
+                        !canEdit
+                          ? "No primary key — delete disabled"
+                          : confirmDeleteRow === rowIdx
+                            ? "Click again to confirm"
+                            : "Delete"
                       }
-                    }}
-                  >
-                    <Trash2 className="size-3" />
-                  </Button>
-                </td>
-                {row.map((v, colIdx) => {
-                  const isEditing = editing?.row === rowIdx && editing?.col === colIdx;
-                  return (
-                    <td
-                      key={colIdx}
-                      className="border-b border-r border-border p-0"
-                      onDoubleClick={() => {
-                        if (!canEdit) return;
-                        setEditing({
-                          row: rowIdx,
-                          col: colIdx,
-                          value: v === null || v === undefined ? "" : String(v),
-                        });
+                      onClick={() => {
+                        if (confirmDeleteRow === rowIdx) {
+                          deleteRow(rowIdx);
+                        } else {
+                          setConfirmDeleteRow(rowIdx);
+                        }
                       }}
                     >
-                      {isEditing ? (
-                        <CellEditor
-                          value={editing.value}
-                          onChange={(value) => setEditing({ ...editing, value })}
-                          onCommit={commitEdit}
-                          onCancel={() => setEditing(null)}
-                        />
-                      ) : (
-                        <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
-                          {v === null || v === undefined ? (
-                            <span className="text-muted-foreground/60">NULL</span>
-                          ) : typeof v === "object" ? (
-                            JSON.stringify(v)
-                          ) : (
-                            String(v)
-                          )}
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </td>
+                  {row.map((v, colIdx) => {
+                    const isEditing = editing?.row === rowIdx && editing?.col === colIdx;
+                    return (
+                      <td
+                        key={colIdx}
+                        className="border-b border-r border-border p-0"
+                        onDoubleClick={() => {
+                          if (!canEdit) return;
+                          setEditing({
+                            row: rowIdx,
+                            col: colIdx,
+                            value: v === null || v === undefined ? "" : String(v),
+                          });
+                        }}
+                      >
+                        {isEditing ? (
+                          <CellEditor
+                            value={editing.value}
+                            onChange={(value) => setEditing({ ...editing, value })}
+                            onCommit={commitEdit}
+                            onCancel={() => setEditing(null)}
+                          />
+                        ) : (
+                          <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
+                            {v === null || v === undefined ? (
+                              <span className="text-muted-foreground/60">NULL</span>
+                            ) : typeof v === "object" ? (
+                              JSON.stringify(v)
+                            ) : (
+                              String(v)
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
