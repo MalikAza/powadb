@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { Plus, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
@@ -36,11 +37,7 @@ export function QueryView() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === "t") {
-        if (!activeId || !conn) return;
-        e.preventDefault();
-        newQueryTab(activeId, STARTER_SQL[conn.kind]);
-      } else if (meta && e.key.toLowerCase() === "w") {
+      if (meta && e.key.toLowerCase() === "w") {
         if (!activeTab) return;
         e.preventDefault();
         closeTab(activeTab.id);
@@ -48,7 +45,17 @@ export function QueryView() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeId, conn, newQueryTab, activeTab, closeTab]);
+  }, [activeTab, closeTab]);
+
+  useEffect(() => {
+    const unlisten = listen("new-tab", () => {
+      if (!activeId || !conn) return;
+      newQueryTab(activeId, STARTER_SQL[conn.kind]);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [activeId, conn, newQueryTab]);
 
   if (!activeId || !conn) {
     return (

@@ -92,6 +92,8 @@ pub fn run() {
                 "Window",
                 true,
                 &[
+                    &MenuItem::with_id(app, "new-tab", "New Tab", true, Some("CmdOrCtrl+T"))?,
+                    &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::minimize(app, None)?,
                     &PredefinedMenuItem::maximize(app, None)?,
                     &PredefinedMenuItem::close_window(app, None)?,
@@ -104,10 +106,18 @@ pub fn run() {
             )?;
             app.set_menu(menu)?;
 
-            app.on_menu_event(|app, event| {
-                if event.id().as_ref() == "settings" {
+            app.on_menu_event(|app, event| match event.id().as_ref() {
+                "settings" => {
                     let _ = app.emit("open-settings", ());
                 }
+                "new-tab" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                    let _ = app.emit("new-tab", ());
+                }
+                _ => {}
             });
 
             Ok(())
