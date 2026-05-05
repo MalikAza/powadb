@@ -139,6 +139,13 @@ export function CommandPalette({ open, onOpenChange }: Props) {
                     close();
                   }}
                 >
+                  {c.color && (
+                    <span
+                      aria-hidden
+                      className="inline-block size-2.5 rounded-full"
+                      style={{ backgroundColor: c.color }}
+                    />
+                  )}
                   <span>{c.name}</span>
                   <span className="ml-2 text-xs text-muted-foreground">
                     {c.kind} · {c.host}/{c.database}
