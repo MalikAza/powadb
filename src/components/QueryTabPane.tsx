@@ -8,9 +8,7 @@ import { toCsv, toJson, toTsv } from "../utils/format";
 import { ExplainView, isExplainResult, wrapAsExplain } from "./ExplainView";
 import { ResultsGrid } from "./ResultsGrid/Grid";
 
-const SqlEditor = lazy(() =>
-  import("./Editor/SqlEditor").then((m) => ({ default: m.SqlEditor })),
-);
+const SqlEditor = lazy(() => import("./Editor/SqlEditor").then((m) => ({ default: m.SqlEditor })));
 
 type Props = {
   tab: QueryTab;

@@ -7,8 +7,10 @@ import { QueryView } from "./components/QueryView";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useConnections } from "./stores/connections";
+import { usePanelLayouts } from "./stores/panelLayouts";
 import { useApplyTheme } from "./stores/theme";
 import { useUi } from "./stores/ui";
+import { useRestoreAndPersistWindowState } from "./stores/windowState";
 
 const CommandPalette = lazy(() =>
   import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
@@ -28,6 +30,7 @@ const SettingsDialog = lazy(() =>
 
 function App() {
   useApplyTheme();
+  useRestoreAndPersistWindowState();
 
   const { load, loaded, activeId } = useConnections();
   const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);
@@ -38,6 +41,10 @@ function App() {
   const [initialFolderId, setInitialFolderId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const layoutKey = activeId ? "main-with-sidebar" : "main";
+  const savedLayout = usePanelLayouts((s) => s.layouts[layoutKey]);
+  const setLayout = usePanelLayouts((s) => s.setLayout);
 
   useEffect(() => {
     load();
@@ -82,8 +89,13 @@ function App() {
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TopBar />
         <div className="min-h-0 flex-1">
-          <ResizablePanelGroup orientation="horizontal">
-            <ResizablePanel defaultSize={18} minSize={8}>
+          <ResizablePanelGroup
+            key={layoutKey}
+            orientation="horizontal"
+            defaultLayout={savedLayout}
+            onLayoutChanged={(layout) => setLayout(layoutKey, layout)}
+          >
+            <ResizablePanel id="connections" defaultSize={18} minSize={8}>
               <ConnectionList
                 onAdd={(folderId) => {
                   setEditingId(null);
@@ -100,13 +112,13 @@ function App() {
             {activeId && (
               <>
                 <ResizableHandle withHandle />
-                <ResizablePanel defaultSize={22} minSize={10}>
+                <ResizablePanel id="sidebar" defaultSize={22} minSize={10}>
                   <Sidebar />
                 </ResizablePanel>
               </>
             )}
             <ResizableHandle withHandle />
-            <ResizablePanel defaultSize={60} minSize={20}>
+            <ResizablePanel id="query" defaultSize={60} minSize={20}>
               <QueryView />
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -121,9 +133,7 @@ function App() {
             />
           )}
           {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
-          {settingsOpen && (
-            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-          )}
+          {settingsOpen && <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />}
           {exportDialog && <ExportDatabaseDialog />}
           {importDialog && <ImportSqlDialog />}
         </Suspense>
