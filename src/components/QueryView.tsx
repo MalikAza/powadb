@@ -28,14 +28,6 @@ export function QueryView() {
     visibleTabs.find((t) => t.id === activeTabId) ?? visibleTabs[visibleTabs.length - 1] ?? null;
 
   useEffect(() => {
-    if (!activeId) return;
-    const has = useTabs.getState().tabs.some((t) => t.connectionId === activeId);
-    if (!has) {
-      newQueryTab(activeId, STARTER_SQL[conn?.kind ?? "postgres"]);
-    }
-  }, [activeId, conn?.kind, newQueryTab]);
-
-  useEffect(() => {
     if (activeTab && activeTab.id !== activeTabId) {
       setActiveTab(activeTab.id);
     }
