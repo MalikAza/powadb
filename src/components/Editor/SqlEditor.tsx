@@ -1,4 +1,5 @@
 import { MySQL, PostgreSQL, sql } from "@codemirror/lang-sql";
+import { Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { useMemo } from "react";
@@ -29,16 +30,18 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
         ...(cmSchema ? { schema: cmSchema.schema } : {}),
         ...(cmSchema?.defaultSchema ? { defaultSchema: cmSchema.defaultSchema } : {}),
       }),
-      keymap.of([
-        {
-          key: "Mod-Enter",
-          preventDefault: true,
-          run: () => {
-            onRun();
-            return true;
+      Prec.highest(
+        keymap.of([
+          {
+            key: "Mod-Enter",
+            preventDefault: true,
+            run: () => {
+              onRun();
+              return true;
+            },
           },
-        },
-      ]),
+        ]),
+      ),
       EditorView.theme({
         "&": { height: "100%", fontSize: "13px" },
         ".cm-scroller": { fontFamily: "ui-monospace, monospace" },
