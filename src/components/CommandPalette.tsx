@@ -1,5 +1,4 @@
 import { Download, Play, Plus, Upload, X } from "lucide-react";
-import { useEffect, useState } from "react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -14,29 +13,22 @@ import { useConnections } from "../stores/connections";
 import { newQueryId, useTabs } from "../stores/tabs";
 import { useUi } from "../stores/ui";
 
-export function CommandPalette() {
-  const [open, setOpen] = useState(false);
+type Props = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+export function CommandPalette({ open, onOpenChange }: Props) {
   const { connections, activeId, activate } = useConnections();
   const { tabs, activeTabId, newQueryTab, closeTab, patchTab } = useTabs();
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        e.preventDefault();
-        setOpen((v) => !v);
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const activeQueryTab = activeTab?.kind === "query" ? activeTab : null;
 
   function close() {
-    setOpen(false);
+    onOpenChange(false);
   }
 
   async function runActiveTab() {
@@ -57,7 +49,7 @@ export function CommandPalette() {
   }
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen}>
+    <CommandDialog open={open} onOpenChange={onOpenChange}>
       <CommandInput placeholder="Type a command…" />
       <CommandList className="max-h-[60vh]">
         <CommandEmpty>No matches.</CommandEmpty>

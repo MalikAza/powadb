@@ -1,11 +1,14 @@
 import { Plus, X } from "lucide-react";
-import { useEffect, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
-import { BrowseTabPane } from "./BrowseTabPane";
 import { QueryTabPane } from "./QueryTabPane";
+
+const BrowseTabPane = lazy(() =>
+  import("./BrowseTabPane").then((m) => ({ default: m.BrowseTabPane })),
+);
 
 const STARTER_SQL: Record<string, string> = {
   postgres: "SELECT 1 AS one, 'hello' AS greeting, now() AS ts;",
@@ -85,7 +88,9 @@ export function QueryView() {
         onNew={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}
       />
       {activeTab.kind === "browse" ? (
-        <BrowseTabPane key={activeTab.id} tab={activeTab} conn={conn} />
+        <Suspense fallback={<div className="flex-1" />}>
+          <BrowseTabPane key={activeTab.id} tab={activeTab} conn={conn} />
+        </Suspense>
       ) : (
         <QueryTabPane key={activeTab.id} tab={activeTab} conn={conn} />
       )}

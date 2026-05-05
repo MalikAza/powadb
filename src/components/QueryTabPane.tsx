@@ -1,13 +1,16 @@
 import { Pause, Play, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ipc } from "../ipc";
 import { newQueryId, type QueryTab, useTabs } from "../stores/tabs";
 import type { SavedConnection } from "../types";
 import { toCsv, toJson, toTsv } from "../utils/format";
-import { SqlEditor } from "./Editor/SqlEditor";
 import { ExplainView, isExplainResult, wrapAsExplain } from "./ExplainView";
 import { ResultsGrid } from "./ResultsGrid/Grid";
+
+const SqlEditor = lazy(() =>
+  import("./Editor/SqlEditor").then((m) => ({ default: m.SqlEditor })),
+);
 
 type Props = {
   tab: QueryTab;
@@ -60,12 +63,14 @@ export function QueryTabPane({ tab, conn }: Props) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
       <div className="flex h-[200px] shrink-0 overflow-hidden rounded-md border border-border">
-        <SqlEditor
-          value={tab.sql}
-          onChange={(v) => patchTab(tab.id, { sql: v })}
-          onRun={run}
-          kind={conn.kind}
-        />
+        <Suspense fallback={<div className="flex-1" />}>
+          <SqlEditor
+            value={tab.sql}
+            onChange={(v) => patchTab(tab.id, { sql: v })}
+            onRun={run}
+            kind={conn.kind}
+          />
+        </Suspense>
       </div>
 
       <div className="flex items-center gap-2">

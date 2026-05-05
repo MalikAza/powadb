@@ -1,29 +1,43 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { CommandPalette } from "./components/CommandPalette";
-import { ConnectionForm } from "./components/ConnectionForm";
 import { ConnectionList } from "./components/ConnectionList";
-import { ExportDatabaseDialog } from "./components/ExportDatabaseDialog";
-import { ImportSqlDialog } from "./components/ImportSqlDialog";
 import { QueryView } from "./components/QueryView";
-import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useConnections } from "./stores/connections";
 import { useApplyTheme } from "./stores/theme";
 import { useUi } from "./stores/ui";
 
+const CommandPalette = lazy(() =>
+  import("./components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
+);
+const ConnectionForm = lazy(() =>
+  import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
+);
+const ExportDatabaseDialog = lazy(() =>
+  import("./components/ExportDatabaseDialog").then((m) => ({ default: m.ExportDatabaseDialog })),
+);
+const ImportSqlDialog = lazy(() =>
+  import("./components/ImportSqlDialog").then((m) => ({ default: m.ImportSqlDialog })),
+);
+const SettingsDialog = lazy(() =>
+  import("./components/SettingsDialog").then((m) => ({ default: m.SettingsDialog })),
+);
+
 function App() {
   useApplyTheme();
 
   const { load, loaded, activeId } = useConnections();
   const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);
+  const exportDialog = useUi((s) => s.exportDialog);
+  const importDialog = useUi((s) => s.importDialog);
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [initialFolderId, setInitialFolderId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     load();
@@ -38,11 +52,18 @@ function App() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "f") return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest(".cm-editor")) return;
-      e.preventDefault();
-      focusSchemaSearch();
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const key = e.key.toLowerCase();
+      if (key === "f") {
+        const target = e.target as HTMLElement | null;
+        if (target?.closest(".cm-editor")) return;
+        e.preventDefault();
+        focusSchemaSearch();
+      } else if (key === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -90,18 +111,22 @@ function App() {
             </ResizablePanel>
           </ResizablePanelGroup>
         </div>
-        {formOpen && (
-          <ConnectionForm
-            editingId={editingId}
-            initialFolderId={initialFolderId}
-            open={formOpen}
-            onOpenChange={setFormOpen}
-          />
-        )}
-        <CommandPalette />
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-        <ExportDatabaseDialog />
-        <ImportSqlDialog />
+        <Suspense fallback={null}>
+          {formOpen && (
+            <ConnectionForm
+              editingId={editingId}
+              initialFolderId={initialFolderId}
+              open={formOpen}
+              onOpenChange={setFormOpen}
+            />
+          )}
+          {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}
+          {settingsOpen && (
+            <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+          )}
+          {exportDialog && <ExportDatabaseDialog />}
+          {importDialog && <ImportSqlDialog />}
+        </Suspense>
       </div>
     </TooltipProvider>
   );
