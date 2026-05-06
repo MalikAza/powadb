@@ -275,7 +275,12 @@ function BrowseGrid({
     }
 
     try {
-      const setClause = `${quoteIdent(colName, conn.kind)} = ${conn.kind === "postgres" ? "$1" : "?"}`;
+      const setPlaceholder = castPlaceholder(
+        conn.kind === "postgres" ? "$1" : "?",
+        cols[col].type_name,
+        conn.kind,
+      );
+      const setClause = `${quoteIdent(colName, conn.kind)} = ${setPlaceholder}`;
       const wherePieces: string[] = [];
       const params: (string | null)[] = [value];
       let pIdx = 2;
@@ -308,7 +313,8 @@ function BrowseGrid({
         const v = insertRow[i];
         if (v === null || v === "") return;
         colNames.push(quoteIdent(c.name, conn.kind));
-        placeholders.push(conn.kind === "postgres" ? `$${pIdx}` : "?");
+        const ph = conn.kind === "postgres" ? `$${pIdx}` : "?";
+        placeholders.push(castPlaceholder(ph, c.type_name, conn.kind));
         params.push(v);
         pIdx++;
       });
@@ -664,4 +670,28 @@ function stringifyValue(v: unknown): string | null {
 function pkEq(col: string, placeholder: string, kind: "postgres" | "mysql"): string {
   const ident = quoteIdent(col, kind);
   return kind === "postgres" ? `${ident}::text = ${placeholder}` : `${ident} = ${placeholder}`;
+}
+
+// Mirror of pkEq for the assignment side: PG won't implicitly cast text → timestamp,
+// int4, uuid, etc. The sqlx type_info name (TIMESTAMP, INT4, TIMESTAMPTZ, …) is also
+// a valid PG typname for `::cast`, so lowercasing it produces the right cast.
+function castPlaceholder(
+  placeholder: string,
+  typeName: string | undefined,
+  kind: "postgres" | "mysql",
+): string {
+  if (kind !== "postgres" || !typeName) return placeholder;
+  const t = typeName.toUpperCase();
+  if (
+    t === "TEXT" ||
+    t === "VARCHAR" ||
+    t === "CHAR" ||
+    t === "BPCHAR" ||
+    t === "NAME" ||
+    t === "CITEXT" ||
+    t === "UNKNOWN"
+  ) {
+    return placeholder;
+  }
+  return `${placeholder}::${typeName.toLowerCase()}`;
 }
