@@ -78,7 +78,7 @@ export function QueryView() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col">
       <TabBar
         tabs={visibleTabs}
         activeId={activeTab.id}
@@ -111,42 +111,50 @@ function TabBar({
   onNew: () => void;
 }) {
   return (
-    <div className="flex h-9 shrink-0 items-center gap-0.5 border-b border-border bg-sidebar px-2">
-      {tabs.map((t) => (
-        <div
-          key={t.id}
-          onClick={() => onSelect(t.id)}
-          className={cn(
-            "group flex h-7 cursor-pointer items-center gap-1 rounded-md px-3 text-xs",
-            t.id === activeId
-              ? "bg-background text-foreground"
-              : "text-muted-foreground hover:bg-sidebar-accent",
-          )}
-        >
-          <span
+    <div className="flex h-9 shrink-0 items-center border-b border-border bg-sidebar">
+      <div
+        className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        onWheel={(e) => {
+          if (e.deltaY === 0) return;
+          e.currentTarget.scrollLeft += e.deltaY;
+        }}
+      >
+        {tabs.map((t) => (
+          <div
+            key={t.id}
+            onClick={() => onSelect(t.id)}
             className={cn(
-              "rounded px-1 font-mono text-[9px] uppercase",
-              t.kind === "browse"
-                ? "bg-primary/30 text-foreground"
-                : "bg-muted text-muted-foreground",
+              "group flex h-7 max-w-50 shrink-0 cursor-pointer items-center gap-1 rounded-md px-3 text-xs",
+              t.id === activeId
+                ? "bg-primary/10 text-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent",
             )}
           >
-            {t.kind === "browse" ? "T" : "Q"}
-          </span>
-          <span className="truncate">{t.title}</span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onClose(t.id);
-            }}
-            className="rounded p-0.5 opacity-50 hover:bg-muted hover:opacity-100"
-          >
-            <X className="size-3" />
-          </button>
-        </div>
-      ))}
-      <Button onClick={onNew} size="icon" variant="ghost" className="size-6">
+            <span
+              className={cn(
+                "shrink-0 rounded px-1 font-mono text-[9px] uppercase",
+                t.kind === "browse"
+                  ? "bg-primary/30 text-foreground"
+                  : "bg-muted text-muted-foreground",
+              )}
+            >
+              {t.kind === "browse" ? "T" : "Q"}
+            </span>
+            <span className="truncate">{t.title}</span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(t.id);
+              }}
+              className="shrink-0 rounded p-0.5 opacity-50 hover:bg-muted hover:opacity-100"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <Button onClick={onNew} size="icon" variant="ghost" className="mr-2 size-6 shrink-0">
         <Plus className="size-3.5" />
       </Button>
     </div>
