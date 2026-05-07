@@ -87,7 +87,7 @@ jobs:
 
           # Build a {asset_name -> asset_id} map for this release.
           gh api "repos/$REPO/releases/tags/$TAG" \
-            --jq '.assets | map({(.name): .id}) | from_entries' > assets.json
+            --jq '.assets | map({(.name): .id}) | add' > assets.json
 
           # Replace each platform's url with the api.github.com asset endpoint
           # (which honors Authorization headers; the public download URL doesn't).
