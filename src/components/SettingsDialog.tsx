@@ -1,4 +1,5 @@
-import { CheckCircle2, Laptop, Moon, Sun, XCircle } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
+import { CheckCircle2, Laptop, Moon, RefreshCw, Sun, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { runUpdateCheck } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { type AppSettings, ipc } from "../ipc";
 import { type ThemeMode, useTheme } from "../stores/theme";
@@ -30,11 +32,23 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
   const [myStatus, setMyStatus] = useState<{ dump: string | null; client: string | null } | null>(
     null,
   );
+  const [version, setVersion] = useState<string | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     ipc.getSettings().then(setSettings);
+    getVersion().then(setVersion);
   }, [open]);
+
+  async function checkForUpdate() {
+    setCheckingUpdate(true);
+    try {
+      await runUpdateCheck({ notifyWhenUpToDate: true });
+    } finally {
+      setCheckingUpdate(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -128,6 +142,18 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
               onChange={(v) => patch({ mysql_path: v })}
               resolved={myStatus?.client ?? null}
             />
+          </div>
+        </Section>
+
+        <Section title="About">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">
+              PowaDB <span className="font-mono">v{version ?? "…"}</span>
+            </div>
+            <Button variant="outline" size="sm" onClick={checkForUpdate} disabled={checkingUpdate}>
+              <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
+              Check for updates
+            </Button>
           </div>
         </Section>
 

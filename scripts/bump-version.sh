@@ -31,7 +31,7 @@ fs.writeFileSync(path, JSON.stringify(c, null, 2) + "\n");
 
 # src-tauri/Cargo.toml — only the [package] version line
 perl -i -pe '
-  if (/^\[package\]/ .. /^\[/) {
+  if (/^\[package\]/ ... /^\[(?!package\])/) {
     s/^version\s*=\s*"[^"]*"/version = "'"$NEW"'"/;
   }
 ' src-tauri/Cargo.toml
