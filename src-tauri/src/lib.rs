@@ -19,6 +19,8 @@ pub struct AppState {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .on_window_event(|window, event| {
             #[cfg(target_os = "macos")]
             if let WindowEvent::CloseRequested { api, .. } = event {

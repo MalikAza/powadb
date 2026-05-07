@@ -1,11 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Toaster } from "sonner";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ConnectionList } from "./components/ConnectionList";
 import { QueryView } from "./components/QueryView";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { UpdateChecker } from "./components/UpdateChecker";
 import { useConnections } from "./stores/connections";
 import { usePanelLayouts } from "./stores/panelLayouts";
 import { useApplyTheme } from "./stores/theme";
@@ -86,6 +88,8 @@ function App() {
 
   return (
     <TooltipProvider delayDuration={150}>
+      <UpdateChecker />
+      <Toaster richColors position="bottom-right" />
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TopBar />
         <div className="min-h-0 flex-1">

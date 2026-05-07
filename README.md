@@ -57,6 +57,40 @@ npm run lint        # Biome
 npm run check       # both
 ```
 
+## Installing on macOS (first time)
+
+The app is not signed with an Apple Developer ID, so Gatekeeper will quarantine
+the first install from the DMG. One of the following clears it once:
+
+- Right-click `PowaDB.app` in `/Applications` → **Open** → confirm in the
+  dialog. macOS remembers the choice for future launches.
+- Or, from a terminal: `xattr -dr com.apple.quarantine /Applications/PowaDB.app`.
+
+Subsequent in-app updates do **not** re-trigger the quarantine prompt — the
+updater downloads via Tauri's HTTP client, which never writes the
+`com.apple.quarantine` xattr.
+
+## Releasing
+
+Releases are built and published automatically by
+`.github/workflows/release.yml` when a `v*` tag is pushed.
+
+```bash
+./scripts/bump-version.sh 0.2.0
+git add -A && git commit -m "chore: release v0.2.0"
+git tag v0.2.0 && git push --follow-tags
+```
+
+The workflow needs two GitHub Actions secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` — full contents of the minisign private key
+  (generated with `npm run tauri -- signer generate -w ~/.tauri/powadb.key`).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — empty if the key was generated
+  without a password.
+
+Running PowaDB clients pick up new versions within ~30 minutes (or on next
+launch) via a non-blocking toast offering a one-click install + restart.
+
 ## Project Layout
 
 ```
