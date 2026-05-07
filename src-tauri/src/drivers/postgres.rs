@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::{Column, Executor, Row, TypeInfo};
 
 use super::{Column as ColMeta, QueryResult};
 use crate::error::{AppError, AppResult};
@@ -29,7 +29,19 @@ pub async fn execute(pool: &PgPool, sql: &str) -> AppResult<QueryResult> {
             })
             .collect()
     } else {
-        Vec::new()
+        // No rows: ask the driver to describe the statement so the UI still has
+        // column metadata (needed e.g. for the "Insert row" form on empty tables).
+        match pool.describe(sql).await {
+            Ok(d) => d
+                .columns
+                .iter()
+                .map(|c| ColMeta {
+                    name: c.name().to_string(),
+                    type_name: c.type_info().name().to_string(),
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
     };
 
     let mut json_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
