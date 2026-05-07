@@ -81,12 +81,15 @@ git add -A && git commit -m "chore: release v0.2.0"
 git tag v0.2.0 && git push --follow-tags
 ```
 
-The workflow needs two GitHub Actions secrets:
+The workflow needs one GitHub Actions secret:
 
 - `TAURI_SIGNING_PRIVATE_KEY` — full contents of the minisign private key
   (generated with `npm run tauri -- signer generate -w ~/.tauri/powadb.key`).
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — empty if the key was generated
-  without a password.
+
+Do **not** add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key was generated
+without a password — GitHub Actions secrets can't hold an empty value, and
+any non-empty value (including a single space) is treated as a real password
+and fails to decrypt the key.
 
 Running PowaDB clients pick up new versions within ~30 minutes (or on next
 launch) via a non-blocking toast offering a one-click install + restart.
