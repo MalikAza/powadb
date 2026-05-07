@@ -41,4 +41,5 @@ perl -i -pe '
 
 echo "Bumped to $NEW. Next steps:"
 echo "  git add -A && git commit -m \"chore: release v$NEW\""
-echo "  git tag v$NEW && git push --follow-tags"
+echo "  git push"
+echo "  git tag v$NEW && git push origin v$NEW"

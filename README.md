@@ -76,23 +76,57 @@ Releases are built and published automatically by
 `.github/workflows/release.yml` when a `v*` tag is pushed.
 
 ```bash
-./scripts/bump-version.sh 0.2.0
-git add -A && git commit -m "chore: release v0.2.0"
-git tag v0.2.0 && git push --follow-tags
+./scripts/bump-version.sh 0.2.1
+git add -A && git commit -m "chore: release v0.2.1"
+git push
+git tag v0.2.1 && git push origin v0.2.1
 ```
 
-The workflow needs one GitHub Actions secret:
+### One-time setup
 
-- `TAURI_SIGNING_PRIVATE_KEY` — full contents of the minisign private key
-  (generated with `npm run tauri -- signer generate -w ~/.tauri/powadb.key`).
+The repo is private, so the in-app updater needs an embedded GitHub token
+to fetch the manifest and release binaries.
 
-Do **not** add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key was generated
-without a password — GitHub Actions secrets can't hold an empty value, and
-any non-empty value (including a single space) is treated as a real password
-and fails to decrypt the key.
+1. **Generate a fine-grained PAT** at https://github.com/settings/tokens?type=beta:
+   - Resource owner: your account
+   - Repository access: **Only select repositories** → `MalikAza/powadb`
+   - Repository permissions: **Contents: Read-only**
+   - Expiration: as long as you're comfortable (max 1 year)
+2. **Add it as GitHub Actions secrets** (Settings → Secrets and variables → Actions):
+   - `UPDATER_PAT` — the PAT
+   - `TAURI_SIGNING_PRIVATE_KEY` — full contents of `~/.tauri/powadb.key`
+     (do **not** add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — GitHub Actions
+     secrets can't hold an empty value, and any non-empty value, including
+     a single space, fails to decrypt a passwordless key).
+3. **Local dev**: create `.env.local` (gitignored) with:
+   ```
+   VITE_UPDATER_GH_TOKEN=ghp_yourTokenHere
+   ```
+   Without this, `tauri:dev` builds will still run but the in-app update
+   check will hit raw.githubusercontent.com unauthenticated and 404.
+4. **Set the repo's default workflow permissions to "Read and write"**
+   (Settings → Actions → General → Workflow permissions). Required so the
+   release job can create releases and force-push the manifest branch.
 
-Running PowaDB clients pick up new versions within ~30 minutes (or on next
-launch) via a non-blocking toast offering a one-click install + restart.
+### How auto-update actually works
+
+The release workflow:
+1. Builds + signs bundles for macOS / Linux / Windows
+2. Creates a GitHub Release with the binaries + a `latest.json` manifest
+3. Rewrites `latest.json` to point at `api.github.com/.../releases/assets/{id}`
+   URLs (these honor `Authorization` headers; public download URLs don't)
+4. Force-pushes the rewritten manifest to the orphan `release-manifest`
+   branch so the updater has a stable URL to poll
+
+The installed app polls
+`https://raw.githubusercontent.com/MalikAza/powadb/release-manifest/latest.json`
+every 30 minutes (and once on launch / on demand from Settings) sending
+`Authorization: Bearer $VITE_UPDATER_GH_TOKEN`. On match, it downloads the
+signed bundle, verifies the minisign signature, and offers to restart.
+
+> The PAT is embedded in distributed binaries — extractable by anyone who
+> has the binary. Acceptable here because it's read-only and scoped to a
+> single private repo.
 
 ## Project Layout
 
