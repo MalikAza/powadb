@@ -23,10 +23,10 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -72,7 +72,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Rewrite latest.json with API asset URLs and force-push to release-manifest branch
         env:
@@ -102,16 +102,16 @@ jobs:
 
           # Force-push manifest to its own orphan branch so the updater has a
           # stable URL (raw.githubusercontent.com/.../release-manifest/latest.json).
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          # Build the branch contents in a fresh worktree to keep the build
+          # Build the branch contents in a fresh repo to keep the build
           # checkout untouched.
           mkdir manifest-tree
           cp latest.json manifest-tree/
           cd manifest-tree
           git init -q -b release-manifest
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config commit.gpgsign false
           git add latest.json
-          git -c commit.gpgsign=false commit -q -m "release: $TAG manifest"
+          git commit -q -m "release: $TAG manifest"
           git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
             release-manifest:release-manifest
