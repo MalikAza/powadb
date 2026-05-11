@@ -1,4 +1,4 @@
-import { Download, Play, Plus, Upload, X } from "lucide-react";
+import { Download, Play, Plus, Unplug, Upload, X } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -19,13 +19,20 @@ type Props = {
 };
 
 export function CommandPalette({ open, onOpenChange }: Props) {
-  const { connections, activeId, activate } = useConnections();
+  const { connections, activeId, activate, connectedIds, disconnect } = useConnections();
   const { tabs, activeTabId, newQueryTab, closeTab, patchTab } = useTabs();
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const activeQueryTab = activeTab?.kind === "query" ? activeTab : null;
+
+  const connectedList = connections.filter((c) => connectedIds.has(c.id));
+  const activeConnected =
+    activeId && connectedIds.has(activeId)
+      ? (connections.find((c) => c.id === activeId) ?? null)
+      : null;
+  const otherConnected = connectedList.filter((c) => c.id !== activeId);
 
   function close() {
     onOpenChange(false);
@@ -125,6 +132,43 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             </>
           )}
         </CommandGroup>
+
+        {connectedList.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Disconnect">
+              {activeConnected && (
+                <CommandItem
+                  value={`disconnect current ${activeConnected.name}`}
+                  onSelect={() => {
+                    disconnect(activeConnected.id);
+                    close();
+                  }}
+                >
+                  <Unplug className="size-3.5" />
+                  Disconnect current connection
+                  <span className="ml-2 text-xs text-muted-foreground">{activeConnected.name}</span>
+                </CommandItem>
+              )}
+              {otherConnected.map((c) => (
+                <CommandItem
+                  key={c.id}
+                  value={`disconnect ${c.name} ${c.host} ${c.database}`}
+                  onSelect={() => {
+                    disconnect(c.id);
+                    close();
+                  }}
+                >
+                  <Unplug className="size-3.5" />
+                  <span>Disconnect {c.name}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">
+                    {c.kind} · {c.host}/{c.database}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
 
         {connections.length > 0 && (
           <>

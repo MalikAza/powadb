@@ -43,6 +43,7 @@ type Actions = {
   newQueryTab: (connectionId: string, sql?: string) => string;
   openBrowseTab: (connectionId: string, schema: string, table: string) => string;
   closeTab: (id: string) => void;
+  closeTabsForConnection: (connectionId: string) => void;
   setActiveTab: (id: string) => void;
   patchTab: (id: string, patch: Partial<Tab>) => void;
 };
@@ -110,6 +111,15 @@ export const useTabs = create<State & Actions>((set, get) => ({
       const tabs = s.tabs.filter((t) => t.id !== id);
       const activeTabId =
         s.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : s.activeTabId;
+      return { tabs, activeTabId };
+    });
+  },
+
+  closeTabsForConnection(connectionId) {
+    set((s) => {
+      const tabs = s.tabs.filter((t) => t.connectionId !== connectionId);
+      const activeStillThere = tabs.some((t) => t.id === s.activeTabId);
+      const activeTabId = activeStillThere ? s.activeTabId : (tabs[tabs.length - 1]?.id ?? null);
       return { tabs, activeTabId };
     });
   },

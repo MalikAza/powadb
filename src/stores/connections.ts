@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { ipc } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
+import { useTabs } from "./tabs";
 
 type State = {
   connections: SavedConnection[];
@@ -57,6 +58,8 @@ export const useConnections = create<State & Actions>((set, get) => ({
 
   async disconnect(id) {
     await ipc.disconnect(id);
+    useTabs.getState().closeTabsForConnection(id);
+    if (get().activeId === id) set({ activeId: null });
     await get().refreshConnected();
   },
 
