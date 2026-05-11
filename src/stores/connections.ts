@@ -6,6 +6,7 @@ type State = {
   connections: SavedConnection[];
   folders: Folder[];
   activeId: string | null;
+  connectedIds: Set<string>;
   loaded: boolean;
 };
 
@@ -17,17 +18,24 @@ type Actions = {
   removeFolder: (id: string) => Promise<void>;
   activate: (id: string) => void;
   deactivate: () => void;
+  refreshConnected: () => Promise<void>;
+  disconnect: (id: string) => Promise<void>;
 };
 
 export const useConnections = create<State & Actions>((set, get) => ({
   connections: [],
   folders: [],
   activeId: null,
+  connectedIds: new Set(),
   loaded: false,
 
   async load() {
-    const [connections, folders] = await Promise.all([ipc.listConnections(), ipc.listFolders()]);
-    set({ connections, folders, loaded: true });
+    const [connections, folders, activeIds] = await Promise.all([
+      ipc.listConnections(),
+      ipc.listFolders(),
+      ipc.listActiveConnections(),
+    ]);
+    set({ connections, folders, connectedIds: new Set(activeIds), loaded: true });
   },
 
   async save(input) {
@@ -40,6 +48,16 @@ export const useConnections = create<State & Actions>((set, get) => ({
     await ipc.deleteConnection(id);
     if (get().activeId === id) set({ activeId: null });
     await get().load();
+  },
+
+  async refreshConnected() {
+    const ids = await ipc.listActiveConnections();
+    set({ connectedIds: new Set(ids) });
+  },
+
+  async disconnect(id) {
+    await ipc.disconnect(id);
+    await get().refreshConnected();
   },
 
   async saveFolder(input) {

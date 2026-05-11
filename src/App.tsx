@@ -60,6 +60,15 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const unlisten = listen<string[]>("pools-changed", (e) => {
+      useConnections.setState({ connectedIds: new Set(e.payload) });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
       if (!meta) return;

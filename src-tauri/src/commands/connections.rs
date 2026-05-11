@@ -74,6 +74,11 @@ pub async fn disconnect(state: State<'_, AppState>, id: String) -> AppResult<()>
 }
 
 #[tauri::command]
+pub async fn list_active_connections(state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    Ok(state.pools.active_ids().await)
+}
+
+#[tauri::command]
 pub async fn get_connection_password(
     state: State<'_, AppState>,
     id: String,

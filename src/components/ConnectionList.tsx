@@ -9,6 +9,7 @@ import {
   Pencil,
   Plus,
   Trash2,
+  Unplug,
   Upload,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -34,7 +35,16 @@ type Props = {
 };
 
 export function ConnectionList({ onAdd, onEdit }: Props) {
-  const { connections, folders, activeId, activate, remove, removeFolder } = useConnections();
+  const {
+    connections,
+    folders,
+    activeId,
+    connectedIds,
+    activate,
+    remove,
+    removeFolder,
+    disconnect,
+  } = useConnections();
   const [confirmDeleteConn, setConfirmDeleteConn] = useState<string | null>(null);
   const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
@@ -98,8 +108,10 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
               openFolders={openFolders}
               setOpenFolders={setOpenFolders}
               activeId={activeId}
+              connectedIds={connectedIds}
               onActivate={activate}
               onEdit={onEdit}
+              onDisconnect={disconnect}
               onAddConnHere={onAdd}
               onAddSubfolder={(parentId) =>
                 setFolderForm({ editing: null, initialParentId: parentId })
@@ -132,8 +144,10 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
               c={c}
               depth={0}
               isActive={activeId === c.id}
+              isConnected={connectedIds.has(c.id)}
               onActivate={activate}
               onEdit={onEdit}
+              onDisconnect={disconnect}
               onDelete={(c) => {
                 if (confirmDeleteConn === c.id) {
                   remove(c.id);
@@ -166,8 +180,10 @@ function FolderRow({
   openFolders,
   setOpenFolders,
   activeId,
+  connectedIds,
   onActivate,
   onEdit,
+  onDisconnect,
   onAddConnHere,
   onAddSubfolder,
   onRenameFolder,
@@ -181,8 +197,10 @@ function FolderRow({
   openFolders: Record<string, boolean>;
   setOpenFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   activeId: string | null;
+  connectedIds: Set<string>;
   onActivate: (id: string) => void;
   onEdit: (id: string) => void;
+  onDisconnect: (id: string) => Promise<void>;
   onAddConnHere: (folderId?: string | null) => void;
   onAddSubfolder: (parentId: string) => void;
   onRenameFolder: (folder: Folder) => void;
@@ -274,8 +292,10 @@ function FolderRow({
               openFolders={openFolders}
               setOpenFolders={setOpenFolders}
               activeId={activeId}
+              connectedIds={connectedIds}
               onActivate={onActivate}
               onEdit={onEdit}
+              onDisconnect={onDisconnect}
               onAddConnHere={onAddConnHere}
               onAddSubfolder={onAddSubfolder}
               onRenameFolder={onRenameFolder}
@@ -291,8 +311,10 @@ function FolderRow({
               c={c}
               depth={depth + 1}
               isActive={activeId === c.id}
+              isConnected={connectedIds.has(c.id)}
               onActivate={onActivate}
               onEdit={onEdit}
+              onDisconnect={onDisconnect}
               onDelete={onDeleteConn}
               armed={confirmDeleteConn === c.id}
             />
@@ -307,16 +329,20 @@ function ConnRow({
   c,
   depth,
   isActive,
+  isConnected,
   onActivate,
   onEdit,
+  onDisconnect,
   onDelete,
   armed,
 }: {
   c: SavedConnection;
   depth: number;
   isActive: boolean;
+  isConnected: boolean;
   onActivate: (id: string) => void;
   onEdit: (id: string) => void;
+  onDisconnect: (id: string) => Promise<void>;
   onDelete: (c: SavedConnection) => void;
   armed: boolean;
 }) {
@@ -340,6 +366,15 @@ function ConnRow({
         />
       )}
       <div className="flex items-center justify-between gap-1">
+        <span
+          role="status"
+          aria-label={isConnected ? "Connected" : "Not connected"}
+          title={isConnected ? "Connected" : "Not connected"}
+          className={cn(
+            "size-1.5 shrink-0 rounded-full",
+            isConnected ? "bg-emerald-500" : "bg-muted-foreground/30",
+          )}
+        />
         <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
         <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
           {c.kind}
@@ -361,6 +396,12 @@ function ConnRow({
               <Pencil className="size-3.5" />
               Edit…
             </DropdownMenuItem>
+            {isConnected && (
+              <DropdownMenuItem onSelect={() => onDisconnect(c.id)}>
+                <Unplug className="size-3.5" />
+                Disconnect
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onSelect={() => {
                 onActivate(c.id);

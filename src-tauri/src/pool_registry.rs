@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use sqlx::mysql::MySqlPool;
 use sqlx::postgres::PgPool;
+use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::commands::connections::resolve_connection;
@@ -9,6 +11,8 @@ use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, QueryResult};
 use crate::error::AppResult;
 use crate::storage::{DbKind, SavedConnection};
 use crate::AppState;
+
+pub const POOLS_CHANGED_EVENT: &str = "pools-changed";
 
 #[derive(Clone)]
 pub enum PoolHandle {
@@ -20,9 +24,25 @@ pub enum PoolHandle {
 pub struct PoolRegistry {
     pools: Mutex<HashMap<String, PoolHandle>>,
     cancels: Mutex<HashMap<String, oneshot::Sender<()>>>,
+    app: OnceLock<AppHandle>,
 }
 
 impl PoolRegistry {
+    pub fn set_app_handle(&self, app: AppHandle) {
+        let _ = self.app.set(app);
+    }
+
+    pub async fn active_ids(&self) -> Vec<String> {
+        self.pools.lock().await.keys().cloned().collect()
+    }
+
+    async fn emit_changed(&self) {
+        if let Some(app) = self.app.get() {
+            let ids = self.active_ids().await;
+            let _ = app.emit(POOLS_CHANGED_EVENT, ids);
+        }
+    }
+
     pub async fn get_or_open(&self, state: &AppState, connection_id: &str) -> AppResult<PoolHandle> {
         if let Some(p) = self.pools.lock().await.get(connection_id).cloned() {
             return Ok(p);
@@ -30,15 +50,18 @@ impl PoolRegistry {
         let (conn, password) = resolve_connection(state, connection_id).await?;
         let handle = open_pool(&conn, password.as_deref()).await?;
         self.pools.lock().await.insert(connection_id.to_string(), handle.clone());
+        self.emit_changed().await;
         Ok(handle)
     }
 
     pub async fn close(&self, connection_id: &str) {
-        if let Some(handle) = self.pools.lock().await.remove(connection_id) {
+        let removed = self.pools.lock().await.remove(connection_id);
+        if let Some(handle) = removed {
             match handle {
                 PoolHandle::Postgres(p) => p.close().await,
                 PoolHandle::MySql(p) => p.close().await,
             }
+            self.emit_changed().await;
         }
     }
 

@@ -28,6 +28,8 @@ export const ipc = {
 
   disconnect: (id: string): Promise<void> => invoke("disconnect", { id }),
 
+  listActiveConnections: (): Promise<string[]> => invoke("list_active_connections"),
+
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
 

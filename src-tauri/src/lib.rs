@@ -43,6 +43,7 @@ pub fn run() {
                 jobs: job_registry::JobRegistry::default(),
                 settings: storage::SettingsStore::new(settings),
             });
+            app.state::<AppState>().pools.set_app_handle(app.handle().clone());
 
             let app_submenu = Submenu::with_items(
                 app,
@@ -131,6 +132,7 @@ pub fn run() {
             commands::connections::save_connection,
             commands::connections::delete_connection,
             commands::connections::disconnect,
+            commands::connections::list_active_connections,
             commands::connections::get_connection_password,
             commands::schema::introspect_schema,
             commands::history::list_history,
