@@ -1,3 +1,7 @@
+## [0.4.1] - 2026-05-12
+
+Oopsie, we forgot about the latest version's changelog... So here it is.
+
 ## [0.4.0] — 2026-05-12
 
 ### Added
