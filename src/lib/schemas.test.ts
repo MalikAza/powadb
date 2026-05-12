@@ -14,10 +14,11 @@ describe("dbKindSchema", () => {
   it("accepts known kinds", () => {
     expect(dbKindSchema.parse("postgres")).toBe("postgres");
     expect(dbKindSchema.parse("mysql")).toBe("mysql");
+    expect(dbKindSchema.parse("sqlite")).toBe("sqlite");
   });
 
   it("rejects unknown kinds", () => {
-    expect(() => dbKindSchema.parse("sqlite")).toThrow();
+    expect(() => dbKindSchema.parse("mongodb")).toThrow();
   });
 });
 
@@ -115,6 +116,8 @@ describe("KIND_DEFAULTS", () => {
   it("provides defaults for each db kind", () => {
     expect(KIND_DEFAULTS.postgres.port).toBe(5432);
     expect(KIND_DEFAULTS.mysql.port).toBe(3306);
+    expect(KIND_DEFAULTS.sqlite.port).toBe(0);
+    expect(KIND_DEFAULTS.sqlite.username).toBe("");
   });
 });
 

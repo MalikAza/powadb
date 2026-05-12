@@ -567,9 +567,11 @@ mod tests {
     async fn db_kind_round_trips_via_parse() {
         assert_eq!(DbKind::parse("postgres"), Some(DbKind::Postgres));
         assert_eq!(DbKind::parse("mysql"), Some(DbKind::Mysql));
-        assert_eq!(DbKind::parse("sqlite"), None);
+        assert_eq!(DbKind::parse("sqlite"), Some(DbKind::Sqlite));
+        assert_eq!(DbKind::parse("mongodb"), None);
         assert_eq!(DbKind::Postgres.as_str(), "postgres");
         assert_eq!(DbKind::Mysql.as_str(), "mysql");
+        assert_eq!(DbKind::Sqlite.as_str(), "sqlite");
     }
 
     #[test]
