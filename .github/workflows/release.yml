@@ -17,7 +17,6 @@ jobs:
       - name: Ensure tag is reachable from main
         run: |
           set -euo pipefail
-          git fetch origin main --depth=0
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::Tag ${GITHUB_REF_NAME} ($GITHUB_SHA) is not on main. Release builds only run for tags pointing to a commit on main."
             exit 1
