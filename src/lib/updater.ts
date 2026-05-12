@@ -8,20 +8,6 @@ type Options = {
   notifyWhenUpToDate?: boolean;
 };
 
-// Embedded at build time. Required because the GitHub repo is private — both
-// the manifest (raw.githubusercontent.com) and the platform binaries
-// (api.github.com release-asset URLs) need an Authorization header.
-const ghToken = import.meta.env.VITE_UPDATER_GH_TOKEN;
-
-const updateCheckOptions = ghToken
-  ? {
-      headers: {
-        Authorization: `Bearer ${ghToken}`,
-        Accept: "application/octet-stream",
-      },
-    }
-  : undefined;
-
 export async function runUpdateCheck({ notifyWhenUpToDate = false }: Options = {}) {
   let checking: string | number | undefined;
   if (notifyWhenUpToDate) {
@@ -29,7 +15,7 @@ export async function runUpdateCheck({ notifyWhenUpToDate = false }: Options = {
   }
 
   try {
-    const update = await check(updateCheckOptions);
+    const update = await check();
     if (checking !== undefined) toast.dismiss(checking);
 
     if (!update) {

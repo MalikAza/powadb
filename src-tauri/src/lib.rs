@@ -6,7 +6,9 @@ mod pool_registry;
 mod storage;
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{Emitter, Manager, RunEvent, WindowEvent};
+use tauri::{Emitter, Manager};
+#[cfg(target_os = "macos")]
+use tauri::{RunEvent, WindowEvent};
 
 pub struct AppState {
     pub storage: storage::Storage,

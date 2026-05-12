@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PowaDB",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "com.aza.powadb",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -36,7 +36,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://raw.githubusercontent.com/MalikAza/powadb/release-manifest/latest.json"
+        "https://github.com/MalikAza/powadb/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5MEVDNkU0NkVEOTMyQzQKUldURU10bHU1TVlPcVM5OEdtcjhUaFV2d0RNOTJXMGFyK29JV0VkRzE3RzJ3SkJvQko5M3R4MXcK"
     }

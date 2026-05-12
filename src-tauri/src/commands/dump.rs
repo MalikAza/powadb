@@ -97,7 +97,7 @@ pub async fn pick_save_path(
     dialog.save_file(move |path| {
         let _ = tx.send(path.map(|p| p.to_string()));
     });
-    Ok(rx.await.map_err(|e| AppError::Other(e.to_string()))?)
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
 #[tauri::command]
@@ -109,7 +109,7 @@ pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
         .pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
-    Ok(rx.await.map_err(|e| AppError::Other(e.to_string()))?)
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
 #[tauri::command]
@@ -866,14 +866,10 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
             // Bytea/blobs were already encoded as hex literals upstream.
             match (kind, upper.as_str()) {
                 (DbKind::Postgres, "BYTEA") => format!("'{}'::bytea", s.replace('\'', "''")),
-                (DbKind::Mysql, t)
-                    if matches!(
-                        t,
-                        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY"
-                    ) =>
-                {
-                    s.clone()
-                }
+                (
+                    DbKind::Mysql,
+                    "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY",
+                ) => s.clone(),
                 _ => format!("'{}'", s.replace('\'', "''")),
             }
         }
