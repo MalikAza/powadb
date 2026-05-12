@@ -1,145 +1,161 @@
+<div align="center">
+
+<img src="./powadb_logo_black.png" alt="PowaDB" width="128" height="128" />
+
 # PowaDB
 
-A fast, modern desktop database client for PostgreSQL and MySQL — built with Tauri, React, and Rust.
+**A fast, modern desktop database client for PostgreSQL and MySQL.**
+
+Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust](https://www.rust-lang.org).
+
+[![Latest release](https://img.shields.io/github/v/release/MalikAza/powadb?style=flat-square)](https://github.com/MalikAza/powadb/releases/latest)
+[![Release workflow](https://img.shields.io/github/actions/workflow/status/MalikAza/powadb/release.yml?style=flat-square&label=release)](https://github.com/MalikAza/powadb/actions/workflows/release.yml)
+![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square)
+
+[Download](#download) · [Features](#features) · [Build from source](#build-from-source) · [Contributing](#contributing)
+
+</div>
+
+---
 
 ## Features
 
-- **Multi-engine support** — PostgreSQL and MySQL via `sqlx`
-- **SQL editor** — CodeMirror 6 with syntax highlighting and SQL autocompletion
-- **Results grid** — virtualized table view powered by TanStack Table for large result sets
-- **Schema browser** — introspect databases, schemas, tables, columns, and indexes
-- **Browse / edit data** — inline DML editing with primary-key-aware updates
-- **EXPLAIN view** — visualize query plans
-- **Connection manager** — organize connections in folders, with optional password storage
-- **Query history & snippets** — recall past queries and save reusable snippets
-- **Command palette** — quick navigation across the app
-- **Light & dark themes**
+- 🔌 **Multi-engine** — PostgreSQL and MySQL, connected via [`sqlx`](https://github.com/launchbadge/sqlx).
+- ✍️ **SQL editor** — CodeMirror 6 with syntax highlighting and autocompletion.
+- 📊 **Virtualized results grid** — TanStack Table + Virtual, fluid on millions of rows.
+- 🗂️ **Schema browser** — schemas, tables, columns and indexes at a glance.
+- 🛠️ **Inline DML editing** — primary-key-aware updates straight from the grid.
+- 🧭 **EXPLAIN view** — visualize query plans.
+- 📁 **Connection manager** — organize connections in folders, optional saved passwords.
+- 🕓 **History & snippets** — recall past queries and save reusable SQL.
+- ⌘ **Command palette** — quick navigation across the app.
+- 🌗 **Light & dark themes.**
+- ⬆️ **Auto-update** — built-in, signed updates.
 
-## Tech Stack
+## Download
 
-- **Frontend**: React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI, Zustand, React Hook Form + Zod
-- **Backend**: Rust, Tauri 2, sqlx (Postgres / MySQL / SQLite), Tokio
-- **Storage**: local SQLite database for app metadata (connections, history, snippets, folders)
+Grab the latest signed bundle for your OS from the [**Releases**](https://github.com/MalikAza/powadb/releases/latest) page:
 
-## Prerequisites
+| Platform | Bundle |
+| :--- | :--- |
+| macOS (Apple Silicon / Intel) | `.dmg` |
+| Linux | `.AppImage` / `.deb` |
+| Windows | `.msi` / `.exe` |
 
-- [Node.js](https://nodejs.org/) 20+ and npm/pnpm
+### macOS — first launch
+
+The app is **not** signed with an Apple Developer ID, so Gatekeeper will quarantine it the first time you install from the DMG. Clear it once with either:
+
+- **Finder** — right-click `PowaDB.app` in `/Applications` → **Open** → confirm. macOS remembers the choice.
+- **Terminal** — `xattr -dr com.apple.quarantine /Applications/PowaDB.app`
+
+Subsequent in-app updates don't trigger this prompt again — the Tauri updater downloads outside of Gatekeeper's web-download path.
+
+## Build from source
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 20+ and npm (pnpm works too)
 - [Rust](https://rustup.rs/) stable toolchain
 - Tauri system dependencies — see the [Tauri prerequisites guide](https://tauri.app/start/prerequisites/)
 
-## Development
+### Run in dev
 
 ```bash
-# install JS dependencies
 npm install
-
-# run the desktop app in dev mode
-npm run tauri:dev
-
-# run the web frontend only (no Tauri shell)
-npm run dev
+npm run tauri:dev     # full desktop app
+npm run dev           # frontend only at http://localhost:1420 (no IPC)
 ```
 
-## Build
+### Build a release
 
 ```bash
-# produce a release build for the current platform
 npm run tauri:build
 ```
 
-Artifacts are emitted to `src-tauri/target/release/bundle/`.
+Artifacts land in `src-tauri/target/release/bundle/`.
 
-## Quality
+### Quality checks
 
 ```bash
-npm run typecheck   # TypeScript
-npm run lint        # Biome
-npm run check       # both
+npm run check         # typecheck + biome lint
+npm run lint:fix      # auto-fix biome issues
+cd src-tauri && cargo clippy -- -D warnings && cargo fmt --check
 ```
 
-## Installing on macOS (first time)
+## Architecture at a glance
 
-The app is not signed with an Apple Developer ID, so Gatekeeper will quarantine
-the first install from the DMG. One of the following clears it once:
+PowaDB is a single Tauri 2 app — React 19 / TypeScript frontend in `src/`, Rust backend in `src-tauri/`. The two halves communicate **only** through typed IPC wrappers in `src/ipc/index.ts`.
 
-- Right-click `PowaDB.app` in `/Applications` → **Open** → confirm in the
-  dialog. macOS remembers the choice for future launches.
-- Or, from a terminal: `xattr -dr com.apple.quarantine /Applications/PowaDB.app`.
+```
+src/                       React app
+  components/              UI (editor, results grid, panels, dialogs)
+  stores/                  Zustand stores (connections, tabs, schema, …)
+  ipc/index.ts             Typed wrappers for every Tauri command
+src-tauri/src/
+  commands/                Tauri command handlers (query, schema, dump, …)
+  drivers/                 Postgres / MySQL execution + value coercion
+  pool_registry.rs         Live sqlx pool cache + query cancellation
+  storage.rs               Local SQLite store (connections, history, snippets)
+```
 
-Subsequent in-app updates do **not** re-trigger the quarantine prompt — the
-updater downloads via Tauri's HTTP client, which never writes the
-`com.apple.quarantine` xattr.
+For a deeper tour — IPC contract, the four `AppState` sub-systems, cancellation patterns — see [`CLAUDE.md`](./CLAUDE.md).
+
+## Contributing
+
+Contributions are welcome — bug reports, feature requests and pull requests.
+
+1. **Fork** the repository and clone your fork.
+2. **Create a branch** off `main` (`feature/...` or `bug/...`).
+3. **Make your changes** and run the quality checks above. The project has no test suite yet, so PRs that include reproductions / manual test steps are especially helpful.
+4. **Open a pull request** describing the change and the motivation.
+
+A few non-obvious conventions worth knowing before you patch:
+
+- Frontend never calls `invoke()` directly — every IPC goes through a typed wrapper in `src/ipc/index.ts`.
+- shadcn/ui components under `src/components/ui/` are vendored and excluded from biome — leave them alone.
+- TypeScript is strict with `noUnusedLocals` / `noUnusedParameters` — unused identifiers fail the build.
+- See [`CLAUDE.md`](./CLAUDE.md) for the full architecture and conventions.
+
+## Tech stack
+
+- **Frontend** — React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI / shadcn, Zustand, React Hook Form + Zod, CodeMirror 6, TanStack Table + Virtual
+- **Backend** — Rust, Tauri 2, `sqlx` (Postgres / MySQL / SQLite), Tokio
+- **Local storage** — SQLite at `<app_data_dir>/powadb.db` for connections, folders, query history, snippets, settings
 
 ## Releasing
 
-Releases are built and published automatically by
-`.github/workflows/release.yml` when a `v*` tag is pushed.
+<details>
+<summary><b>Maintainer-only</b> — how releases are cut and how the auto-updater is wired.</summary>
+
+<br>
+
+Releases are built and published automatically by `.github/workflows/release.yml` when a `v*` tag is pushed.
 
 ```bash
-./scripts/bump-version.sh 0.2.1
-git add -A && git commit -m "chore: release v0.2.1"
+./scripts/bump-version.sh 0.3.1
+git add -A && git commit -m "chore: release v0.3.1"
 git push
-git tag v0.2.1 && git push origin v0.2.1
+git tag v0.3.1 && git push origin v0.3.1
 ```
 
-### One-time setup
+### Required secrets
 
-The repo is private, so the in-app updater needs an embedded GitHub token
-to fetch the manifest and release binaries.
+- `TAURI_SIGNING_PRIVATE_KEY` — full contents of `~/.tauri/powadb.key`. Do **not** set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for a passwordless key (GitHub secrets cannot hold empty values, and any non-empty value — including a space — fails to decrypt).
 
-1. **Generate a fine-grained PAT** at https://github.com/settings/tokens?type=beta:
-   - Resource owner: your account
-   - Repository access: **Only select repositories** → `MalikAza/powadb`
-   - Repository permissions: **Contents: Read-only**
-   - Expiration: as long as you're comfortable (max 1 year)
-2. **Add it as GitHub Actions secrets** (Settings → Secrets and variables → Actions):
-   - `UPDATER_PAT` — the PAT
-   - `TAURI_SIGNING_PRIVATE_KEY` — full contents of `~/.tauri/powadb.key`
-     (do **not** add `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — GitHub Actions
-     secrets can't hold an empty value, and any non-empty value, including
-     a single space, fails to decrypt a passwordless key).
-3. **Local dev**: create `.env.local` (gitignored) with:
-   ```
-   VITE_UPDATER_GH_TOKEN=ghp_yourTokenHere
-   ```
-   Without this, `tauri:dev` builds will still run but the in-app update
-   check will hit raw.githubusercontent.com unauthenticated and 404.
-4. **Set the repo's default workflow permissions to "Read and write"**
-   (Settings → Actions → General → Workflow permissions). Required so the
-   release job can create releases and force-push the manifest branch.
+Now that the repo is public, the previously-required `UPDATER_PAT` / `VITE_UPDATER_GH_TOKEN` are optional — the updater can fetch the manifest and release binaries anonymously. The plumbing is still in place if you want to keep auth on updater requests.
 
-### How auto-update actually works
+The repo's default workflow permissions must be **Read and write** (Settings → Actions → General → Workflow permissions) so the release job can create releases and force-push the manifest branch.
+
+### How auto-update works
 
 The release workflow:
-1. Builds + signs bundles for macOS / Linux / Windows
-2. Creates a GitHub Release with the binaries + a `latest.json` manifest
-3. Rewrites `latest.json` to point at `api.github.com/.../releases/assets/{id}`
-   URLs (these honor `Authorization` headers; public download URLs don't)
-4. Force-pushes the rewritten manifest to the orphan `release-manifest`
-   branch so the updater has a stable URL to poll
 
-The installed app polls
-`https://raw.githubusercontent.com/MalikAza/powadb/release-manifest/latest.json`
-every 30 minutes (and once on launch / on demand from Settings) sending
-`Authorization: Bearer $VITE_UPDATER_GH_TOKEN`. On match, it downloads the
-signed bundle, verifies the minisign signature, and offers to restart.
+1. Builds and signs bundles for macOS / Linux / Windows.
+2. Creates a GitHub Release with the binaries + a `latest.json` manifest.
+3. Rewrites `latest.json` to point at `api.github.com/.../releases/assets/{id}` URLs (these honor `Authorization` headers; public download URLs don't).
+4. Force-pushes the rewritten manifest to the orphan `release-manifest` branch so the updater has a stable URL to poll.
 
-> The PAT is embedded in distributed binaries — extractable by anyone who
-> has the binary. Acceptable here because it's read-only and scoped to a
-> single private repo.
+The installed app polls `https://raw.githubusercontent.com/MalikAza/powadb/release-manifest/latest.json` on launch, every 30 minutes, and on demand from Settings. On match, it downloads the signed bundle, verifies the minisign signature and offers to restart.
 
-## Project Layout
-
-```
-src/                  React app (UI, stores, schemas)
-  components/         Editor, ResultsGrid, panels, dialogs
-  stores/             Zustand stores
-src-tauri/            Rust backend
-  src/commands/       Tauri command handlers (query, connections, schema, …)
-  src/drivers/        Postgres / MySQL drivers
-  src/storage.rs      Local SQLite-backed app storage
-```
-
-## License
-
-Private project.
+</details>
