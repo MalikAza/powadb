@@ -94,6 +94,44 @@ pub async fn introspect_schema(
                 }
             })))
         }
+        PoolHandle::Sqlite(pool) => {
+            // sqlite_master lists tables/views; PRAGMA table_info gives columns.
+            let tables = sqlx::query(
+                r#"
+                SELECT name, type FROM sqlite_master
+                WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+                ORDER BY type, name
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?;
+
+            let mut rows_out: Vec<RowOut> = Vec::new();
+            for tr in tables {
+                let name: String = tr.try_get("name").unwrap_or_default();
+                let ttype: String = tr.try_get("type").unwrap_or_default();
+                let pragma = format!("PRAGMA table_info(\"{}\")", name.replace('"', "\"\""));
+                let cols = sqlx::query(&pragma).fetch_all(&pool).await?;
+                for c in cols {
+                    let column: String = c.try_get("name").unwrap_or_default();
+                    let data_type: String = c.try_get("type").unwrap_or_default();
+                    let notnull: i64 = c.try_get("notnull").unwrap_or(0);
+                    rows_out.push(RowOut {
+                        schema: "main".into(),
+                        table: name.clone(),
+                        column,
+                        data_type,
+                        nullable: notnull == 0,
+                        table_type: if ttype == "view" {
+                            "VIEW".into()
+                        } else {
+                            "BASE TABLE".into()
+                        },
+                    });
+                }
+            }
+            Ok(group_rows(rows_out.into_iter()))
+        }
     }
 }
 

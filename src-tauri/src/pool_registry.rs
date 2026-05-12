@@ -3,11 +3,12 @@ use std::sync::OnceLock;
 
 use sqlx::mysql::MySqlPool;
 use sqlx::postgres::PgPool;
+use sqlx::sqlite::SqlitePool;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::commands::connections::resolve_connection;
-use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, QueryResult};
+use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult};
 use crate::error::AppResult;
 use crate::storage::{DbKind, SavedConnection};
 use crate::AppState;
@@ -18,6 +19,7 @@ pub const POOLS_CHANGED_EVENT: &str = "pools-changed";
 pub enum PoolHandle {
     Postgres(PgPool),
     MySql(MySqlPool),
+    Sqlite(SqlitePool),
 }
 
 #[derive(Default)]
@@ -67,6 +69,7 @@ impl PoolRegistry {
             match handle {
                 PoolHandle::Postgres(p) => p.close().await,
                 PoolHandle::MySql(p) => p.close().await,
+                PoolHandle::Sqlite(p) => p.close().await,
             }
             self.emit_changed().await;
         }
@@ -93,6 +96,11 @@ impl PoolRegistry {
 }
 
 async fn open_pool(conn: &SavedConnection, password: Option<&str>) -> AppResult<PoolHandle> {
+    if matches!(conn.kind, DbKind::Sqlite) {
+        return Ok(PoolHandle::Sqlite(
+            sqlite_drv::connect(&conn.database).await?,
+        ));
+    }
     let url = build_url(
         &conn.kind,
         &conn.username,
@@ -105,6 +113,7 @@ async fn open_pool(conn: &SavedConnection, password: Option<&str>) -> AppResult<
     Ok(match conn.kind {
         DbKind::Postgres => PoolHandle::Postgres(pg_drv::connect(&url).await?),
         DbKind::Mysql => PoolHandle::MySql(mysql_drv::connect(&url).await?),
+        DbKind::Sqlite => unreachable!("sqlite handled above"),
     })
 }
 
@@ -120,6 +129,7 @@ fn build_url(
     let scheme = match kind {
         DbKind::Postgres => "postgres",
         DbKind::Mysql => "mysql",
+        DbKind::Sqlite => unreachable!("sqlite does not use a URL"),
     };
     let userinfo = if let Some(pw) = password {
         format!("{}:{}", urlencode(username), urlencode(pw))
@@ -163,6 +173,7 @@ pub async fn run_with_cancel(
         match handle {
             PoolHandle::Postgres(p) => pg_drv::execute(&p, sql).await,
             PoolHandle::MySql(p) => mysql_drv::execute(&p, sql).await,
+            PoolHandle::Sqlite(p) => sqlite_drv::execute(&p, sql).await,
         }
     };
 

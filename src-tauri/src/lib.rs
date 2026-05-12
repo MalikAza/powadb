@@ -155,6 +155,7 @@ pub fn run() {
             commands::dump::cancel_dump,
             commands::dump::pick_save_path,
             commands::dump::pick_open_path,
+            commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
             commands::settings::save_settings,
         ])

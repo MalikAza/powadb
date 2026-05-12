@@ -26,3 +26,5 @@ lcov.info
 *.njsproj
 *.sln
 *.sw?
+
+coverage/

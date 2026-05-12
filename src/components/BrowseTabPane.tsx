@@ -23,7 +23,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
-import type { QueryResult, SavedConnection } from "../types";
+import type { DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
 
 type Props = {
@@ -103,7 +103,7 @@ export function BrowseTabPane({ tab, conn }: Props) {
   );
 }
 
-function buildWhereClause(tab: BrowseTab, kind: "postgres" | "mysql"): string {
+function buildWhereClause(tab: BrowseTab, kind: DbKind): string {
   const parts: string[] = [];
   for (const [col, val] of Object.entries(tab.filters)) {
     const f = parseFilter(val);
@@ -667,7 +667,7 @@ function stringifyValue(v: unknown): string | null {
 // Postgres rejects `int_col = $1` when $1 is bound as text (no implicit cast).
 // We always send DML params as strings, so cast the column to text on PG to make
 // equality work for any column type. MySQL doesn't need this — it coerces freely.
-function pkEq(col: string, placeholder: string, kind: "postgres" | "mysql"): string {
+function pkEq(col: string, placeholder: string, kind: DbKind): string {
   const ident = quoteIdent(col, kind);
   return kind === "postgres" ? `${ident}::text = ${placeholder}` : `${ident} = ${placeholder}`;
 }
@@ -675,11 +675,7 @@ function pkEq(col: string, placeholder: string, kind: "postgres" | "mysql"): str
 // Mirror of pkEq for the assignment side: PG won't implicitly cast text → timestamp,
 // int4, uuid, etc. The sqlx type_info name (TIMESTAMP, INT4, TIMESTAMPTZ, …) is also
 // a valid PG typname for `::cast`, so lowercasing it produces the right cast.
-function castPlaceholder(
-  placeholder: string,
-  typeName: string | undefined,
-  kind: "postgres" | "mysql",
-): string {
+function castPlaceholder(placeholder: string, typeName: string | undefined, kind: DbKind): string {
   if (kind !== "postgres" || !typeName) return placeholder;
   const t = typeName.toUpperCase();
   if (

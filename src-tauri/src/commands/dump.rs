@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use crate::commands::connections::resolve_connection;
-use crate::drivers::{mysql as mysql_drv, postgres as pg_drv};
+use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv};
 use crate::error::{AppError, AppResult};
 use crate::pool_registry::PoolHandle;
 use crate::storage::{AppSettings, DbKind, SavedConnection};
@@ -106,6 +106,18 @@ pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
     app.dialog()
         .file()
         .add_filter("SQL", &["sql"])
+        .pick_file(move |path| {
+            let _ = tx.send(path.map(|p| p.to_string()));
+        });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn pick_sqlite_path(app: AppHandle) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("SQLite database", &["db", "sqlite", "sqlite3"])
         .pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
@@ -214,6 +226,8 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Postgres, ToolKind::Client) => s.psql_path.as_deref(),
         (DbKind::Mysql, ToolKind::Dump) => s.mysqldump_path.as_deref(),
         (DbKind::Mysql, ToolKind::Client) => s.mysql_path.as_deref(),
+        // sqlite3 binary handles both dump (`.dump`) and client (`.read`) modes.
+        (DbKind::Sqlite, _) => s.sqlite3_path.as_deref(),
     };
     if let Some(p) = override_path.filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
@@ -223,6 +237,7 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Postgres, ToolKind::Client) => "psql",
         (DbKind::Mysql, ToolKind::Dump) => "mysqldump",
         (DbKind::Mysql, ToolKind::Client) => "mysql",
+        (DbKind::Sqlite, _) => "sqlite3",
     };
     which::which(bin).ok()
 }
@@ -292,11 +307,39 @@ async fn export_with_tool(
                 cmd.env("MYSQL_PWD", pw);
             }
         }
+        DbKind::Sqlite => {
+            // The sqlite3 CLI picks one of `.dump` / `.schema` based on options.
+            // Output is written to stdout, which we redirect to the target file.
+            cmd.arg(&conn.database);
+            let dotcmd = if opts.include_schema && !opts.include_data {
+                let mut s = String::from(".schema");
+                if let Some(tables) = &opts.tables {
+                    for t in tables {
+                        s.push(' ');
+                        s.push_str(&t.table);
+                    }
+                }
+                s
+            } else {
+                let mut s = String::from(".dump");
+                if let Some(tables) = &opts.tables {
+                    for t in tables {
+                        s.push(' ');
+                        s.push_str(&t.table);
+                    }
+                }
+                s
+            };
+            cmd.arg(dotcmd);
+        }
     }
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(Stdio::null());
+    if matches!(conn.kind, DbKind::Sqlite) {
+        cmd.stdout(Stdio::from(std::fs::File::create(output_path)?));
+    } else {
+        cmd.stdout(Stdio::piped());
+    }
+    cmd.stderr(Stdio::piped()).stdin(Stdio::null());
     let mut child = cmd.spawn()?;
 
     if let Some(stderr) = child.stderr.take() {
@@ -380,6 +423,11 @@ async fn import_with_tool(
             if let Some(pw) = password.as_deref() {
                 cmd.env("MYSQL_PWD", pw);
             }
+            feed_via_stdin = true;
+        }
+        DbKind::Sqlite => {
+            // `sqlite3 <file>` reads SQL from stdin.
+            cmd.arg(&conn.database);
             feed_via_stdin = true;
         }
     }
@@ -471,6 +519,7 @@ async fn export_native(
         match handle {
             PoolHandle::Postgres(_) => "postgres",
             PoolHandle::MySql(_) => "mysql",
+            PoolHandle::Sqlite(_) => "sqlite",
         },
         opts.include_schema,
         opts.include_data,
@@ -569,6 +618,26 @@ async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppRes
                 .filter_map(|r| {
                     Some(TableRef {
                         schema: r.try_get("schema_name").ok()?,
+                        table: r.try_get("name").ok()?,
+                    })
+                })
+                .collect())
+        }
+        PoolHandle::Sqlite(pool) => {
+            let rows = sqlx::query(
+                r#"
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+                "#,
+            )
+            .fetch_all(pool)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .filter_map(|r| {
+                    Some(TableRef {
+                        schema: "main".into(),
                         table: r.try_get("name").ok()?,
                     })
                 })
@@ -726,6 +795,19 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
                 lines.join(",\n"),
             ))
         }
+        PoolHandle::Sqlite(pool) => {
+            // SQLite stores the exact CREATE statement; reuse it verbatim.
+            let row =
+                sqlx::query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+                    .bind(&t.table)
+                    .fetch_optional(pool)
+                    .await?;
+            let ddl: Option<String> = row.and_then(|r| r.try_get("sql").ok());
+            match ddl {
+                Some(s) if !s.is_empty() => Ok(format!("{};\n", s)),
+                _ => Ok(format!("-- table {} not found\n", t.table)),
+            }
+        }
     }
 }
 
@@ -765,15 +847,18 @@ async fn dump_table_data(
 ) -> AppResult<()> {
     let sql_pg = format!("SELECT * FROM \"{}\".\"{}\"", t.schema, t.table);
     let sql_my = format!("SELECT * FROM `{}`", t.table);
+    let sql_lite = format!("SELECT * FROM \"{}\"", t.table.replace('"', "\"\""));
 
     let result = match handle {
         PoolHandle::Postgres(pool) => pg_drv::execute(pool, &sql_pg).await?,
         PoolHandle::MySql(pool) => mysql_drv::execute(pool, &sql_my).await?,
+        PoolHandle::Sqlite(pool) => sqlite_drv::execute(pool, &sql_lite).await?,
     };
 
     let kind = match handle {
         PoolHandle::Postgres(_) => DbKind::Postgres,
         PoolHandle::MySql(_) => DbKind::Mysql,
+        PoolHandle::Sqlite(_) => DbKind::Sqlite,
     };
 
     if result.rows.is_empty() {
@@ -783,13 +868,14 @@ async fn dump_table_data(
         .columns
         .iter()
         .map(|c| match kind {
-            DbKind::Postgres => format!("\"{}\"", c.name),
+            DbKind::Postgres | DbKind::Sqlite => format!("\"{}\"", c.name),
             DbKind::Mysql => format!("`{}`", c.name),
         })
         .collect();
     let table_qualified = match kind {
         DbKind::Postgres => format!("\"{}\".\"{}\"", t.schema, t.table),
         DbKind::Mysql => format!("`{}`", t.table),
+        DbKind::Sqlite => format!("\"{}\"", t.table.replace('"', "\"\"")),
     };
 
     let chunk_size = 500usize;
@@ -853,7 +939,7 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
                     "FALSE".into()
                 }
             }
-            DbKind::Mysql => {
+            DbKind::Mysql | DbKind::Sqlite => {
                 if *b {
                     "1".into()
                 } else {
@@ -965,6 +1051,31 @@ async fn import_native(
             }
         }
         PoolHandle::MySql(pool) => {
+            if opts.single_transaction {
+                let mut tx = pool.begin().await?;
+                for s in &statements {
+                    check_cancel!();
+                    sqlx::query(s)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| exec_err!(s, e))?;
+                    executed += 1;
+                    tick!();
+                }
+                tx.commit().await?;
+            } else {
+                for s in &statements {
+                    check_cancel!();
+                    sqlx::query(s)
+                        .execute(&pool)
+                        .await
+                        .map_err(|e| exec_err!(s, e))?;
+                    executed += 1;
+                    tick!();
+                }
+            }
+        }
+        PoolHandle::Sqlite(pool) => {
             if opts.single_transaction {
                 let mut tx = pool.begin().await?;
                 for s in &statements {

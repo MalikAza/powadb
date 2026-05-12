@@ -6,7 +6,8 @@ export function quoteIdent(name: string, kind: DbKind): string {
 }
 
 export function quoteTable(schema: string, table: string, kind: DbKind): string {
-  if (kind === "mysql") return quoteIdent(table, kind);
+  // SQLite has no schemas (the "main" namespace is implicit) and MySQL ignores schema in our model.
+  if (kind === "mysql" || kind === "sqlite") return quoteIdent(table, kind);
   return `${quoteIdent(schema, kind)}.${quoteIdent(table, kind)}`;
 }
 
@@ -52,6 +53,7 @@ export function filterToSql(col: string, filter: Filter, kind: DbKind): string {
     case "like": {
       const escaped = escapeStringLiteral(`%${filter.value}%`);
       if (kind === "postgres") return `CAST(${colQ} AS TEXT) ILIKE ${escaped}`;
+      if (kind === "sqlite") return `CAST(${colQ} AS TEXT) LIKE ${escaped}`;
       return `CAST(${colQ} AS CHAR) LIKE ${escaped}`;
     }
   }

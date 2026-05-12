@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ConnectionInput, Folder, FolderInput, QueryResult, SavedConnection } from "../types";
+import type {
+  ConnectionInput,
+  DbKind,
+  Folder,
+  FolderInput,
+  QueryResult,
+  SavedConnection,
+} from "../types";
 
 export type SchemaMeta = {
   name: string;
@@ -67,8 +74,7 @@ export const ipc = {
     options: ImportOptions,
   ): Promise<ImportSummary> => invoke("import_sql", { connectionId, inputPath, options }),
 
-  checkDumpTools: (kind: "postgres" | "mysql"): Promise<ToolStatus> =>
-    invoke("check_dump_tools", { kind }),
+  checkDumpTools: (kind: DbKind): Promise<ToolStatus> => invoke("check_dump_tools", { kind }),
 
   cancelDump: (jobId: string): Promise<boolean> => invoke("cancel_dump", { jobId }),
 
@@ -76,6 +82,8 @@ export const ipc = {
     invoke("pick_save_path", { defaultFilename }),
 
   pickOpenPath: (): Promise<string | null> => invoke("pick_open_path"),
+
+  pickSqlitePath: (): Promise<string | null> => invoke("pick_sqlite_path"),
 
   getSettings: (): Promise<AppSettings> => invoke("get_settings"),
   saveSettings: (settings: AppSettings): Promise<AppSettings> =>
@@ -128,6 +136,7 @@ export type AppSettings = {
   mysqldump_path: string | null;
   psql_path: string | null;
   mysql_path: string | null;
+  sqlite3_path: string | null;
 };
 
 export type HistoryEntry = {

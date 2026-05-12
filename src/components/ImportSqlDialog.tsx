@@ -130,7 +130,9 @@ function ImportSqlDialogBody({
           <div>
             This will execute SQL against{" "}
             <span className="font-mono font-semibold">
-              {conn.username}@{conn.host}:{conn.port}/{conn.database}
+              {conn.kind === "sqlite"
+                ? conn.database
+                : `${conn.username}@${conn.host}:${conn.port}/${conn.database}`}
             </span>{" "}
             and may modify or destroy existing data. Make sure you have a backup before continuing.
           </div>
@@ -143,7 +145,7 @@ function ImportSqlDialogBody({
               label="Tool"
               hint={
                 tools?.client
-                  ? `Uses ${conn.kind === "postgres" ? "psql" : "mysql"}`
+                  ? `Uses ${clientToolName(conn.kind)}`
                   : "Not found on PATH — set its path in Settings"
               }
               selected={engine === "tool"}
@@ -249,6 +251,12 @@ function ImportSqlDialogBody({
       </DialogFooter>
     </>
   );
+}
+
+function clientToolName(kind: "postgres" | "mysql" | "sqlite"): string {
+  if (kind === "postgres") return "psql";
+  if (kind === "mysql") return "mysql";
+  return "sqlite3";
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

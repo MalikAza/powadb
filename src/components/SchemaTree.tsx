@@ -44,6 +44,7 @@ export function SchemaTree() {
       setSchemas(result);
       setSchemaInStore(activeId, result);
       if (conn?.kind === "postgres") setSchemaOpen("public", true);
+      else if (conn?.kind === "sqlite") setSchemaOpen("main", true);
       else if (result[0]) setSchemaOpen(result[0].name, true);
     } catch (e) {
       setError(String(e));

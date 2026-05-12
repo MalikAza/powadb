@@ -13,6 +13,7 @@ use crate::error::AppResult;
 pub enum DbKind {
     Postgres,
     Mysql,
+    Sqlite,
 }
 
 impl DbKind {
@@ -20,12 +21,14 @@ impl DbKind {
         match self {
             DbKind::Postgres => "postgres",
             DbKind::Mysql => "mysql",
+            DbKind::Sqlite => "sqlite",
         }
     }
     fn parse(s: &str) -> Option<DbKind> {
         match s {
             "postgres" => Some(DbKind::Postgres),
             "mysql" => Some(DbKind::Mysql),
+            "sqlite" => Some(DbKind::Sqlite),
             _ => None,
         }
     }
@@ -176,6 +179,7 @@ impl Storage {
                 "mysqldump_path" => s.mysqldump_path = val,
                 "psql_path" => s.psql_path = val,
                 "mysql_path" => s.mysql_path = val,
+                "sqlite3_path" => s.sqlite3_path = val,
                 _ => {}
             }
         }
@@ -183,11 +187,12 @@ impl Storage {
     }
 
     pub async fn save_settings(&self, s: &AppSettings) -> AppResult<()> {
-        let entries: [(&str, Option<&str>); 4] = [
+        let entries: [(&str, Option<&str>); 5] = [
             ("pg_dump_path", s.pg_dump_path.as_deref()),
             ("mysqldump_path", s.mysqldump_path.as_deref()),
             ("psql_path", s.psql_path.as_deref()),
             ("mysql_path", s.mysql_path.as_deref()),
+            ("sqlite3_path", s.sqlite3_path.as_deref()),
         ];
         for (k, v) in entries {
             sqlx::query(
@@ -508,6 +513,8 @@ pub struct AppSettings {
     pub psql_path: Option<String>,
     #[serde(default)]
     pub mysql_path: Option<String>,
+    #[serde(default)]
+    pub sqlite3_path: Option<String>,
 }
 
 pub struct SettingsStore {

@@ -1,4 +1,4 @@
-import { MySQL, PostgreSQL, sql } from "@codemirror/lang-sql";
+import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { Prec } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
@@ -21,7 +21,7 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
   const resolvedTheme = useResolvedTheme();
 
   const extensions = useMemo(() => {
-    const dialect = kind === "mysql" ? MySQL : PostgreSQL;
+    const dialect = kind === "mysql" ? MySQL : kind === "sqlite" ? SQLite : PostgreSQL;
     const cmSchema = schemas ? buildCmSchema(schemas, kind) : undefined;
     return [
       sql({

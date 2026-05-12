@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import type { QueryResult } from "../types";
+import type { DbKind, QueryResult } from "../types";
 
 type Props = {
   result: QueryResult;
@@ -151,11 +151,14 @@ export function isExplainResult(result: QueryResult): boolean {
   return name === "QUERY PLAN" || name === "EXPLAIN";
 }
 
-export function wrapAsExplain(sql: string, kind: "postgres" | "mysql", analyze: boolean): string {
+export function wrapAsExplain(sql: string, kind: DbKind, analyze: boolean): string {
   const trimmed = sql.trim().replace(/;$/, "");
   if (kind === "postgres") {
     const opts = analyze ? "FORMAT JSON, ANALYZE, BUFFERS" : "FORMAT JSON";
     return `EXPLAIN (${opts}) ${trimmed}`;
+  }
+  if (kind === "sqlite") {
+    return `EXPLAIN QUERY PLAN ${trimmed}`;
   }
   return `EXPLAIN FORMAT=JSON ${trimmed}`;
 }

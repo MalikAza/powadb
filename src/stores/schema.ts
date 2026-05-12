@@ -50,7 +50,7 @@ export function buildCmSchema(
   schemas: SchemaMeta[],
   kind: DbKind,
 ): { schema: SQLNamespace; defaultSchema?: string } {
-  if (kind === "mysql") {
+  if (kind === "mysql" || kind === "sqlite") {
     const ns: Record<string, SQLNamespace> = {};
     for (const s of schemas) {
       for (const t of s.tables) {
