@@ -7,7 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
+  verify-tag-on-main:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Ensure tag is reachable from main
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=0
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} ($GITHUB_SHA) is not on main. Release builds only run for tags pointing to a commit on main."
+            exit 1
+          fi
+
   checks:
+    needs: verify-tag-on-main
     uses: ./.github/workflows/checks.yml
 
   build:

@@ -40,6 +40,7 @@ perl -i -pe '
 ( cd src-tauri && cargo update -p powadb --offline >/dev/null 2>&1 || cargo generate-lockfile >/dev/null 2>&1 || true )
 
 echo "Bumped to $NEW. Next steps:"
+echo "  ⚠️  Don't forget to update CHANGELOG.md with the changes for v$NEW before committing."
 echo "  git add -A && git commit -m \"chore: release v$NEW\""
 echo "  git push"
 echo "  git tag v$NEW && git push origin v$NEW"
