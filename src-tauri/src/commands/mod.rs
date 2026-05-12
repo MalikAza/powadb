@@ -1,4 +1,5 @@
 pub mod connections;
+pub mod databases;
 pub mod dump;
 pub mod folders;
 pub mod history;

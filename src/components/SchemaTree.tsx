@@ -3,10 +3,12 @@ import {
   ChevronRight,
   Database,
   Eye,
+  Plus,
   RefreshCw,
   Search,
   Table2,
   TableProperties,
+  Trash2,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -39,7 +41,14 @@ export function SchemaTree() {
   const [search, setSearch] = useState("");
   const [databases, setDatabases] = useState<string[] | null>(null);
   const [databasesOpen, setDatabasesOpen] = useState(false);
+  const [createDbOpen, setCreateDbOpen] = useState(false);
+  const [createDbName, setCreateDbName] = useState("");
+  const [creatingDb, setCreatingDb] = useState(false);
+  const [confirmDropDb, setConfirmDropDb] = useState<string | null>(null);
+  const [droppingDb, setDroppingDb] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const supportsDbAdmin = conn?.kind === "postgres" || conn?.kind === "mysql";
 
   async function refresh() {
     if (!activeId) return;
@@ -72,8 +81,62 @@ export function SchemaTree() {
     setError(null);
     setSearch("");
     setDatabases(null);
+    setCreateDbOpen(false);
+    setCreateDbName("");
+    setConfirmDropDb(null);
     if (activeId) refresh();
   }, [activeId, conn?.database]);
+
+  useEffect(() => {
+    if (!confirmDropDb) return;
+    const t = setTimeout(() => setConfirmDropDb(null), 3000);
+    return () => clearTimeout(t);
+  }, [confirmDropDb]);
+
+  async function refreshDatabases() {
+    if (!activeId) return;
+    try {
+      const dbs = await ipc.listDatabases(activeId);
+      setDatabases(dbs);
+      setDatabasesInStore(activeId, dbs);
+    } catch (e) {
+      toast.error(`Failed to list databases: ${String(e)}`);
+    }
+  }
+
+  async function submitCreateDatabase() {
+    if (!activeId) return;
+    const name = createDbName.trim();
+    if (!name) return;
+    setCreatingDb(true);
+    try {
+      await ipc.createDatabase(activeId, name);
+      toast.success(`Database "${name}" created`);
+      setCreateDbName("");
+      setCreateDbOpen(false);
+      setDatabasesOpen(true);
+      await refreshDatabases();
+    } catch (e) {
+      toast.error(`Failed to create database: ${String(e)}`);
+    } finally {
+      setCreatingDb(false);
+    }
+  }
+
+  async function dropDatabase(db: string) {
+    if (!activeId) return;
+    setDroppingDb(db);
+    try {
+      await ipc.dropDatabase(activeId, db);
+      toast.success(`Database "${db}" dropped`);
+      setConfirmDropDb(null);
+      await refreshDatabases();
+    } catch (e) {
+      toast.error(`Failed to drop database: ${String(e)}`);
+    } finally {
+      setDroppingDb(null);
+    }
+  }
 
   function browseTable(schema: string, table: string) {
     if (!activeId) return;
@@ -152,38 +215,116 @@ export function SchemaTree() {
     <div className="text-xs">
       {databases && databases.length > 0 && (
         <div className="mb-3">
-          <button
-            type="button"
-            onClick={() => setDatabasesOpen((v) => !v)}
-            className="mb-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-sidebar-accent"
-          >
-            {databasesOpen ? (
-              <ChevronDown className="size-3 shrink-0" />
-            ) : (
-              <ChevronRight className="size-3 shrink-0" />
+          <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => setDatabasesOpen((v) => !v)}
+              className="flex flex-1 items-center gap-1 rounded px-1 py-0.5 hover:bg-sidebar-accent"
+            >
+              {databasesOpen ? (
+                <ChevronDown className="size-3 shrink-0" />
+              ) : (
+                <ChevronRight className="size-3 shrink-0" />
+              )}
+              <span className="flex-1 text-left">Databases</span>
+              <span className="text-[10px] normal-case">{databases.length}</span>
+            </button>
+            {supportsDbAdmin && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-5"
+                onClick={() => {
+                  setDatabasesOpen(true);
+                  setCreateDbOpen((v) => !v);
+                }}
+                title="Create database"
+              >
+                <Plus className="size-3" />
+              </Button>
             )}
-            <span className="flex-1 text-left">Databases</span>
-            <span className="text-[10px] normal-case">{databases.length}</span>
-          </button>
+          </div>
+          {databasesOpen && createDbOpen && supportsDbAdmin && (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitCreateDatabase();
+              }}
+              className="mb-1 ml-1 flex items-center gap-1"
+            >
+              <Input
+                autoFocus
+                value={createDbName}
+                onChange={(e) => setCreateDbName(e.target.value)}
+                placeholder="new_database"
+                className="h-6 px-1.5 text-[11px]"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                className="h-6 px-2 text-[11px]"
+                disabled={creatingDb || !createDbName.trim()}
+              >
+                {creatingDb ? "…" : "Create"}
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="size-6"
+                onClick={() => {
+                  setCreateDbOpen(false);
+                  setCreateDbName("");
+                }}
+                title="Cancel"
+              >
+                <X className="size-3" />
+              </Button>
+            </form>
+          )}
           {databasesOpen &&
             databases.map((db) => {
               const isActive = db === conn?.database;
+              const armed = confirmDropDb === db;
+              const isDropping = droppingDb === db;
               return (
-                <button
+                <div
                   key={db}
-                  type="button"
-                  onClick={() => switchDatabase(db)}
-                  disabled={isActive}
-                  title={isActive ? "Current database" : `Switch to ${db}`}
-                  className={`ml-1 flex w-[calc(100%-0.25rem)] items-center gap-1 rounded px-1 py-0.5 text-left ${
-                    isActive
-                      ? "cursor-default font-medium text-primary"
-                      : "text-foreground hover:bg-sidebar-accent"
+                  className={`group ml-1 flex w-[calc(100%-0.25rem)] items-center gap-1 rounded ${
+                    isActive ? "" : "hover:bg-sidebar-accent"
                   }`}
                 >
-                  <Database className="size-3 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{db}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => switchDatabase(db)}
+                    disabled={isActive}
+                    title={isActive ? "Current database" : `Switch to ${db}`}
+                    className={`flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left ${
+                      isActive ? "cursor-default font-medium text-primary" : "text-foreground"
+                    }`}
+                  >
+                    <Database className="size-3 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate">{db}</span>
+                  </button>
+                  {supportsDbAdmin && !isActive && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (armed) dropDatabase(db);
+                        else setConfirmDropDb(db);
+                      }}
+                      disabled={isDropping}
+                      title={armed ? `Click again to drop "${db}"` : `Drop ${db}`}
+                      className={`mr-1 rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 ${
+                        armed
+                          ? "text-destructive opacity-100"
+                          : "text-muted-foreground hover:text-destructive"
+                      }`}
+                    >
+                      <Trash2 className="size-3" />
+                    </button>
+                  )}
+                </div>
               );
             })}
         </div>

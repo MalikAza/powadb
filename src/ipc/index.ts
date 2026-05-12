@@ -43,6 +43,12 @@ export const ipc = {
   listDatabases: (connectionId: string): Promise<string[]> =>
     invoke("list_databases", { connectionId }),
 
+  createDatabase: (connectionId: string, name: string): Promise<void> =>
+    invoke("create_database", { connectionId, name }),
+
+  dropDatabase: (connectionId: string, name: string): Promise<void> =>
+    invoke("drop_database", { connectionId, name }),
+
   listHistory: (connectionId?: string, limit?: number): Promise<HistoryEntry[]> =>
     invoke("list_history", { connectionId, limit }),
 

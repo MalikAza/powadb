@@ -140,6 +140,8 @@ pub fn run() {
             commands::connections::get_connection_password,
             commands::schema::introspect_schema,
             commands::schema::list_databases,
+            commands::databases::create_database,
+            commands::databases::drop_database,
             commands::history::list_history,
             commands::history::clear_history,
             commands::snippets::list_snippets,
