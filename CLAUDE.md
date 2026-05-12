@@ -80,7 +80,7 @@ UI primitives are shadcn/ui under `src/components/ui/` (excluded from biome — 
 
 ### Auto-updater (production builds)
 
-The app is distributed via the GitHub Release attached to each `v*` tag. `.github/workflows/release.yml` builds bundles, signs them with minisign (`TAURI_SIGNING_PRIVATE_KEY` secret), and force-pushes a rewritten `latest.json` to the `release-manifest` branch so the installed app can poll a stable raw URL. The PAT (`UPDATER_PAT` / `VITE_UPDATER_GH_TOKEN`) is read-only and gets embedded in shipped binaries — see README "Auto-update" section for the full chain.
+The app is distributed via the GitHub Release attached to each `v*` tag. `.github/workflows/release.yml` builds bundles, signs them with minisign (`TAURI_SIGNING_PRIVATE_KEY` secret), and publishes `latest.json` as a release asset. From v0.3.1 onward installed apps poll `https://github.com/MalikAza/powadb/releases/latest/download/latest.json` anonymously — the repo is public. The `publish-manifest` job still force-pushes a rewritten `latest.json` to the orphan `release-manifest` branch for backward compatibility with v0.3.0-and-older installs (which embed a `UPDATER_PAT` and poll the old raw URL). Both will be removed once those clients age out. See README "Auto-update" section.
 
 Releasing: `./scripts/bump-version.sh X.Y.Z`, commit, push, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
