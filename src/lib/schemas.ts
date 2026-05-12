@@ -100,7 +100,7 @@ export const KIND_DEFAULTS: Record<
   DbKindEnum,
   { port: number; database: string; username: string }
 > = {
-  postgres: { port: 5432, database: "postgres", username: "postgres" },
+  postgres: { port: 5432, database: "", username: "postgres" },
   mysql: { port: 3306, database: "", username: "root" },
   // SQLite is file-based: host/port/username are unused; `database` holds the file path.
   sqlite: { port: 0, database: "", username: "" },

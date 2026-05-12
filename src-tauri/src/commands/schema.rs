@@ -183,6 +183,7 @@ pub async fn list_databases(
                 .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
                 .collect())
         }
+        PoolHandle::Sqlite(_) => Ok(Vec::new()),
     }
 }
 

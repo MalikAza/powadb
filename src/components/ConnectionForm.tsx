@@ -212,7 +212,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="text-xs font-normal text-muted-foreground">
-                    {isSqlite ? "Database file" : "Database"}
+                    {isSqlite ? "Database file" : "Database (optional)"}
                   </FormLabel>
                   <FormControl>
                     {isSqlite ? (
@@ -224,7 +224,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
                         </Button>
                       </div>
                     ) : (
-                      <Input {...field} />
+                      <Input {...field} placeholder="leave empty to pick later" />
                     )}
                   </FormControl>
                   <FormMessage />

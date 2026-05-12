@@ -137,7 +137,13 @@ fn build_url(
         urlencode(username)
     };
     let db = if database.is_empty() {
-        String::new()
+        match kind {
+            // Postgres always needs a database name in the URL (otherwise it falls
+            // back to the username). Bootstrap with the default admin DB so the
+            // user can list/switch from there.
+            DbKind::Postgres => "/postgres".to_string(),
+            _ => String::new(),
+        }
     } else {
         format!("/{}", urlencode(database))
     };
