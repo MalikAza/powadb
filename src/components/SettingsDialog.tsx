@@ -1,6 +1,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { CheckCircle2, Laptop, Moon, RefreshCw, Sun, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ChangelogView } from "@/components/ChangelogView";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { runUpdateCheck } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { type AppSettings, ipc } from "../ipc";
@@ -34,6 +36,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
   );
   const [version, setVersion] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [tab, setTab] = useState("appearance");
 
   useEffect(() => {
     if (!open) return;
@@ -81,90 +84,127 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
         </DialogHeader>
 
-        <Section title="Appearance" description="Light, dark, or follow your system theme.">
-          <RadioGroup
-            value={mode}
-            onValueChange={(v) => setMode(v as ThemeMode)}
-            className="grid grid-cols-3 gap-2"
-          >
-            <ThemeCard
-              value="light"
-              current={mode}
-              icon={<Sun className="size-5" />}
-              label="Light"
-            />
-            <ThemeCard
-              value="dark"
-              current={mode}
-              icon={<Moon className="size-5" />}
-              label="Dark"
-            />
-            <ThemeCard
-              value="system"
-              current={mode}
-              icon={<Laptop className="size-5" />}
-              label="System"
-            />
-          </RadioGroup>
-        </Section>
+        <Tabs value={tab} onValueChange={setTab} className="gap-0">
+          <TabsList className="bg-transparent p-0">
+            <SettingsTab value="appearance">Appearance</SettingsTab>
+            <SettingsTab value="tools">Database tools</SettingsTab>
+            <SettingsTab value="about">About</SettingsTab>
+            <SettingsTab value="changelog">Changelog</SettingsTab>
+          </TabsList>
 
-        <Section
-          title="Database tools"
-          description="Override paths to pg_dump / psql / mysqldump / mysql. Leave blank to use whatever is on your PATH."
-        >
-          <div className="grid gap-3">
-            <ToolPath
-              label="pg_dump"
-              value={settings?.pg_dump_path ?? ""}
-              onChange={(v) => patch({ pg_dump_path: v })}
-              resolved={pgStatus?.dump ?? null}
-            />
-            <ToolPath
-              label="psql"
-              value={settings?.psql_path ?? ""}
-              onChange={(v) => patch({ psql_path: v })}
-              resolved={pgStatus?.client ?? null}
-            />
-            <ToolPath
-              label="mysqldump"
-              value={settings?.mysqldump_path ?? ""}
-              onChange={(v) => patch({ mysqldump_path: v })}
-              resolved={myStatus?.dump ?? null}
-            />
-            <ToolPath
-              label="mysql"
-              value={settings?.mysql_path ?? ""}
-              onChange={(v) => patch({ mysql_path: v })}
-              resolved={myStatus?.client ?? null}
-            />
-          </div>
-        </Section>
+          <TabsContent value="appearance" className="mt-6">
+            <Section title="Appearance" description="Light, dark, or follow your system theme.">
+              <RadioGroup
+                value={mode}
+                onValueChange={(v) => setMode(v as ThemeMode)}
+                className="grid grid-cols-3 gap-2"
+              >
+                <ThemeCard
+                  value="light"
+                  current={mode}
+                  icon={<Sun className="size-5" />}
+                  label="Light"
+                />
+                <ThemeCard
+                  value="dark"
+                  current={mode}
+                  icon={<Moon className="size-5" />}
+                  label="Dark"
+                />
+                <ThemeCard
+                  value="system"
+                  current={mode}
+                  icon={<Laptop className="size-5" />}
+                  label="System"
+                />
+              </RadioGroup>
+            </Section>
+          </TabsContent>
 
-        <Section title="About">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-muted-foreground">
-              PowaDB <span className="font-mono">v{version ?? "…"}</span>
-            </div>
-            <Button variant="outline" size="sm" onClick={checkForUpdate} disabled={checkingUpdate}>
-              <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
-              Check for updates
+          <TabsContent value="tools" className="mt-6">
+            <Section
+              title="Database tools"
+              description="Override paths to pg_dump / psql / mysqldump / mysql. Leave blank to use whatever is on your PATH."
+            >
+              <div className="grid gap-3">
+                <ToolPath
+                  label="pg_dump"
+                  value={settings?.pg_dump_path ?? ""}
+                  onChange={(v) => patch({ pg_dump_path: v })}
+                  resolved={pgStatus?.dump ?? null}
+                />
+                <ToolPath
+                  label="psql"
+                  value={settings?.psql_path ?? ""}
+                  onChange={(v) => patch({ psql_path: v })}
+                  resolved={pgStatus?.client ?? null}
+                />
+                <ToolPath
+                  label="mysqldump"
+                  value={settings?.mysqldump_path ?? ""}
+                  onChange={(v) => patch({ mysqldump_path: v })}
+                  resolved={myStatus?.dump ?? null}
+                />
+                <ToolPath
+                  label="mysql"
+                  value={settings?.mysql_path ?? ""}
+                  onChange={(v) => patch({ mysql_path: v })}
+                  resolved={myStatus?.client ?? null}
+                />
+              </div>
+            </Section>
+          </TabsContent>
+
+          <TabsContent value="about" className="mt-6">
+            <Section title="About">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-muted-foreground">
+                  PowaDB <span className="font-mono">v{version ?? "…"}</span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={checkForUpdate}
+                  disabled={checkingUpdate}
+                >
+                  <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
+                  Check for updates
+                </Button>
+              </div>
+            </Section>
+          </TabsContent>
+
+          <TabsContent value="changelog" className="mt-6">
+            <ChangelogView currentVersion={version} />
+          </TabsContent>
+        </Tabs>
+
+        {tab === "tools" && (
+          <DialogFooter className="mt-2">
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
             </Button>
-          </div>
-        </Section>
-
-        <DialogFooter className="mt-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={persist}>Save</Button>
-        </DialogFooter>
+            <Button onClick={persist}>Save</Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SettingsTab({ value, children }: { value: string; children: React.ReactNode }) {
+  return (
+    <TabsTrigger
+      value={value}
+      className="h-full flex-none rounded-none border-0 border-b-2 border-transparent px-3 text-sm data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+    >
+      {children}
+    </TabsTrigger>
   );
 }
 
