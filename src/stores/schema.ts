@@ -6,22 +6,30 @@ import type { DbKind } from "../types";
 
 type State = {
   byConnection: Record<string, SchemaMeta[]>;
+  databasesByConnection: Record<string, string[]>;
 };
 
 type Actions = {
   set: (connectionId: string, schemas: SchemaMeta[]) => void;
   clear: (connectionId: string) => void;
+  setDatabases: (connectionId: string, databases: string[]) => void;
 };
 
 export const useSchema = create<State & Actions>((set) => ({
   byConnection: {},
+  databasesByConnection: {},
   set: (connectionId, schemas) =>
     set((s) => ({ byConnection: { ...s.byConnection, [connectionId]: schemas } })),
   clear: (connectionId) =>
     set((s) => {
       const { [connectionId]: _, ...rest } = s.byConnection;
-      return { byConnection: rest };
+      const { [connectionId]: _2, ...restDbs } = s.databasesByConnection;
+      return { byConnection: rest, databasesByConnection: restDbs };
     }),
+  setDatabases: (connectionId, databases) =>
+    set((s) => ({
+      databasesByConnection: { ...s.databasesByConnection, [connectionId]: databases },
+    })),
 }));
 
 type Column = SchemaMeta["tables"][number]["columns"][number];

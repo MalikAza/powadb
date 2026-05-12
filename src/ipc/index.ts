@@ -40,6 +40,9 @@ export const ipc = {
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
 
+  listDatabases: (connectionId: string): Promise<string[]> =>
+    invoke("list_databases", { connectionId }),
+
   listHistory: (connectionId?: string, limit?: number): Promise<HistoryEntry[]> =>
     invoke("list_history", { connectionId, limit }),
 

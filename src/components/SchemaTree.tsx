@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  Database,
   Eye,
   RefreshCw,
   Search,
@@ -9,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ipc, type SchemaMeta } from "../ipc";
@@ -19,9 +21,11 @@ import { useUi } from "../stores/ui";
 
 export function SchemaTree() {
   const { activeId, connections } = useConnections();
+  const saveConnection = useConnections((s) => s.save);
   const conn = connections.find((c) => c.id === activeId);
   const openBrowseTab = useTabs((s) => s.openBrowseTab);
   const setSchemaInStore = useSchema((s) => s.set);
+  const setDatabasesInStore = useSchema((s) => s.setDatabases);
   const openSchemas = useUi((s) => s.openSchemas);
   const openTables = useUi((s) => s.openTables);
   const toggleSchema = useUi((s) => s.toggleSchema);
@@ -33,6 +37,8 @@ export function SchemaTree() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+  const [databases, setDatabases] = useState<string[] | null>(null);
+  const [databasesOpen, setDatabasesOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   async function refresh() {
@@ -51,18 +57,48 @@ export function SchemaTree() {
     } finally {
       setLoading(false);
     }
+    try {
+      const dbs = await ipc.listDatabases(activeId);
+      setDatabases(dbs);
+      setDatabasesInStore(activeId, dbs);
+    } catch {
+      setDatabases([]);
+      setDatabasesInStore(activeId, []);
+    }
   }
 
   useEffect(() => {
     setSchemas(null);
     setError(null);
     setSearch("");
+    setDatabases(null);
     if (activeId) refresh();
-  }, [activeId]);
+  }, [activeId, conn?.database]);
 
   function browseTable(schema: string, table: string) {
     if (!activeId) return;
     openBrowseTab(activeId, schema, table);
+  }
+
+  async function switchDatabase(db: string) {
+    if (!conn || db === conn.database) return;
+    try {
+      await saveConnection({
+        id: conn.id,
+        name: conn.name,
+        kind: conn.kind,
+        host: conn.host,
+        port: conn.port,
+        database: db,
+        username: conn.username,
+        ssl: conn.ssl,
+        folder_id: conn.folder_id,
+        color: conn.color,
+      });
+      toast.success(`Switched to ${db}`);
+    } catch (e) {
+      toast.error(`Failed to switch: ${String(e)}`);
+    }
   }
 
   // Filter schemas/tables by search query
@@ -114,6 +150,45 @@ export function SchemaTree() {
 
   return (
     <div className="text-xs">
+      {databases && databases.length > 0 && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={() => setDatabasesOpen((v) => !v)}
+            className="mb-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-sidebar-accent"
+          >
+            {databasesOpen ? (
+              <ChevronDown className="size-3 shrink-0" />
+            ) : (
+              <ChevronRight className="size-3 shrink-0" />
+            )}
+            <span className="flex-1 text-left">Databases</span>
+            <span className="text-[10px] normal-case">{databases.length}</span>
+          </button>
+          {databasesOpen &&
+            databases.map((db) => {
+              const isActive = db === conn?.database;
+              return (
+                <button
+                  key={db}
+                  type="button"
+                  onClick={() => switchDatabase(db)}
+                  disabled={isActive}
+                  title={isActive ? "Current database" : `Switch to ${db}`}
+                  className={`ml-1 flex w-[calc(100%-0.25rem)] items-center gap-1 rounded px-1 py-0.5 text-left ${
+                    isActive
+                      ? "cursor-default font-medium text-primary"
+                      : "text-foreground hover:bg-sidebar-accent"
+                  }`}
+                >
+                  <Database className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{db}</span>
+                </button>
+              );
+            })}
+        </div>
+      )}
+
       <div className="mb-2 flex items-center justify-between gap-1">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Schema

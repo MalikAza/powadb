@@ -144,6 +144,48 @@ struct RowOut {
     table_type: String,
 }
 
+#[tauri::command]
+pub async fn list_databases(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<Vec<String>> {
+    let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    match handle {
+        PoolHandle::Postgres(pool) => {
+            let rows = sqlx::query(
+                r#"
+                SELECT datname::text AS name
+                FROM pg_database
+                WHERE datistemplate = false AND datallowconn = true
+                ORDER BY datname
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
+                .collect())
+        }
+        PoolHandle::MySql(pool) => {
+            let rows = sqlx::query(
+                r#"
+                SELECT schema_name AS name
+                FROM information_schema.schemata
+                WHERE schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                ORDER BY schema_name
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
+                .collect())
+        }
+    }
+}
+
 fn group_rows<I: Iterator<Item = RowOut>>(rows: I) -> Vec<SchemaMeta> {
     let mut schemas: Vec<SchemaMeta> = Vec::new();
     for r in rows {
