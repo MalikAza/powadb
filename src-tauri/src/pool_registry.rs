@@ -174,3 +174,68 @@ pub async fn run_with_cancel(
     registry.forget_cancel(query_id).await;
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urlencode_passes_unreserved_chars_through() {
+        assert_eq!(urlencode("aZ09-_.~"), "aZ09-_.~");
+    }
+
+    #[test]
+    fn urlencode_percent_encodes_special_chars() {
+        assert_eq!(urlencode("p@ss word/!"), "p%40ss%20word%2F%21");
+        assert_eq!(urlencode(":/?#"), "%3A%2F%3F%23");
+    }
+
+    #[test]
+    fn build_url_postgres_with_password() {
+        let url = build_url(
+            &DbKind::Postgres,
+            "user",
+            Some("p@ss"),
+            "localhost",
+            5432,
+            "app",
+            false,
+        );
+        assert_eq!(url, "postgres://user:p%40ss@localhost:5432/app");
+    }
+
+    #[test]
+    fn build_url_omits_password_when_none() {
+        let url = build_url(&DbKind::Mysql, "root", None, "127.0.0.1", 3306, "db", false);
+        assert_eq!(url, "mysql://root@127.0.0.1:3306/db");
+    }
+
+    #[test]
+    fn build_url_omits_path_when_database_is_empty() {
+        let url = build_url(&DbKind::Mysql, "root", None, "host", 3306, "", false);
+        assert_eq!(url, "mysql://root@host:3306");
+    }
+
+    #[test]
+    fn build_url_appends_ssl_query_string_per_kind() {
+        let pg = build_url(&DbKind::Postgres, "u", None, "h", 5432, "d", true);
+        assert!(pg.ends_with("?sslmode=require"), "got {pg}");
+
+        let my = build_url(&DbKind::Mysql, "u", None, "h", 3306, "d", true);
+        assert!(my.ends_with("?ssl-mode=REQUIRED"), "got {my}");
+    }
+
+    #[test]
+    fn build_url_encodes_username_with_special_chars() {
+        let url = build_url(
+            &DbKind::Postgres,
+            "ad min",
+            Some("x"),
+            "h",
+            5432,
+            "d",
+            false,
+        );
+        assert_eq!(url, "postgres://ad%20min:x@h:5432/d");
+    }
+}

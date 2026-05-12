@@ -28,3 +28,38 @@ impl Serialize for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_includes_human_message() {
+        assert_eq!(AppError::Canceled.to_string(), "query canceled");
+        assert_eq!(
+            AppError::UnsupportedType("FOO".into()).to_string(),
+            "unsupported column type: FOO",
+        );
+        assert_eq!(
+            AppError::ConnectionNotFound("abc".into()).to_string(),
+            "connection not found: abc",
+        );
+        assert_eq!(AppError::Other("boom".into()).to_string(), "boom");
+    }
+
+    #[test]
+    fn serializes_as_a_string() {
+        let json = serde_json::to_string(&AppError::Canceled).unwrap();
+        assert_eq!(json, "\"query canceled\"");
+    }
+
+    #[test]
+    fn io_error_is_convertible_via_question_mark() {
+        fn inner() -> AppResult<()> {
+            Err(std::io::Error::other("nope"))?;
+            Ok(())
+        }
+        let s = inner().unwrap_err().to_string();
+        assert!(s.starts_with("io error:"), "got {s}");
+    }
+}
