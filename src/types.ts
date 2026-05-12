@@ -1,4 +1,4 @@
-export type DbKind = "postgres" | "mysql";
+export type DbKind = "postgres" | "mysql" | "sqlite";
 
 export type SavedConnection = {
   id: string;

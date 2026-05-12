@@ -1,4 +1,5 @@
-import { Download, Play, Plus, Unplug, Upload, X } from "lucide-react";
+import { Database, Download, Play, Plus, Unplug, Upload, X } from "lucide-react";
+import { toast } from "sonner";
 import {
   CommandDialog,
   CommandEmpty,
@@ -10,6 +11,7 @@ import {
 } from "@/components/ui/command";
 import { ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
+import { useSchema } from "../stores/schema";
 import { newQueryId, useTabs } from "../stores/tabs";
 import { useUi } from "../stores/ui";
 
@@ -19,10 +21,13 @@ type Props = {
 };
 
 export function CommandPalette({ open, onOpenChange }: Props) {
-  const { connections, activeId, activate, connectedIds, disconnect } = useConnections();
+  const { connections, activeId, activate, connectedIds, disconnect, save } = useConnections();
   const { tabs, activeTabId, newQueryTab, closeTab, patchTab } = useTabs();
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
+  const databasesByConnection = useSchema((s) => s.databasesByConnection);
+  const activeConn = activeId ? (connections.find((c) => c.id === activeId) ?? null) : null;
+  const switchable = activeConn ? (databasesByConnection[activeConn.id] ?? []) : [];
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const activeQueryTab = activeTab?.kind === "query" ? activeTab : null;
@@ -36,6 +41,27 @@ export function CommandPalette({ open, onOpenChange }: Props) {
 
   function close() {
     onOpenChange(false);
+  }
+
+  async function switchDatabase(db: string) {
+    if (!activeConn || db === activeConn.database) return;
+    try {
+      await save({
+        id: activeConn.id,
+        name: activeConn.name,
+        kind: activeConn.kind,
+        host: activeConn.host,
+        port: activeConn.port,
+        database: db,
+        username: activeConn.username,
+        ssl: activeConn.ssl,
+        folder_id: activeConn.folder_id,
+        color: activeConn.color,
+      });
+      toast.success(`Switched to ${db}`);
+    } catch (e) {
+      toast.error(`Failed to switch: ${String(e)}`);
+    }
   }
 
   async function runActiveTab() {
@@ -166,6 +192,34 @@ export function CommandPalette({ open, onOpenChange }: Props) {
                   </span>
                 </CommandItem>
               ))}
+            </CommandGroup>
+          </>
+        )}
+
+        {activeConn && switchable.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Switch database">
+              {switchable.map((db) => {
+                const isActive = db === activeConn.database;
+                return (
+                  <CommandItem
+                    key={db}
+                    value={`switch db ${db}`}
+                    disabled={isActive}
+                    onSelect={() => {
+                      switchDatabase(db);
+                      close();
+                    }}
+                  >
+                    <Database className="size-3.5" />
+                    <span>{db}</span>
+                    {isActive && (
+                      <span className="ml-2 text-xs text-muted-foreground">current</span>
+                    )}
+                  </CommandItem>
+                );
+              })}
             </CommandGroup>
           </>
         )}

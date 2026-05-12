@@ -94,6 +94,44 @@ pub async fn introspect_schema(
                 }
             })))
         }
+        PoolHandle::Sqlite(pool) => {
+            // sqlite_master lists tables/views; PRAGMA table_info gives columns.
+            let tables = sqlx::query(
+                r#"
+                SELECT name, type FROM sqlite_master
+                WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'
+                ORDER BY type, name
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?;
+
+            let mut rows_out: Vec<RowOut> = Vec::new();
+            for tr in tables {
+                let name: String = tr.try_get("name").unwrap_or_default();
+                let ttype: String = tr.try_get("type").unwrap_or_default();
+                let pragma = format!("PRAGMA table_info(\"{}\")", name.replace('"', "\"\""));
+                let cols = sqlx::query(&pragma).fetch_all(&pool).await?;
+                for c in cols {
+                    let column: String = c.try_get("name").unwrap_or_default();
+                    let data_type: String = c.try_get("type").unwrap_or_default();
+                    let notnull: i64 = c.try_get("notnull").unwrap_or(0);
+                    rows_out.push(RowOut {
+                        schema: "main".into(),
+                        table: name.clone(),
+                        column,
+                        data_type,
+                        nullable: notnull == 0,
+                        table_type: if ttype == "view" {
+                            "VIEW".into()
+                        } else {
+                            "BASE TABLE".into()
+                        },
+                    });
+                }
+            }
+            Ok(group_rows(rows_out.into_iter()))
+        }
     }
 }
 
@@ -104,6 +142,49 @@ struct RowOut {
     data_type: String,
     nullable: bool,
     table_type: String,
+}
+
+#[tauri::command]
+pub async fn list_databases(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<Vec<String>> {
+    let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    match handle {
+        PoolHandle::Postgres(pool) => {
+            let rows = sqlx::query(
+                r#"
+                SELECT datname::text AS name
+                FROM pg_database
+                WHERE datistemplate = false AND datallowconn = true
+                ORDER BY datname
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
+                .collect())
+        }
+        PoolHandle::MySql(pool) => {
+            let rows = sqlx::query(
+                r#"
+                SELECT schema_name AS name
+                FROM information_schema.schemata
+                WHERE schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+                ORDER BY schema_name
+                "#,
+            )
+            .fetch_all(&pool)
+            .await?;
+            Ok(rows
+                .into_iter()
+                .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
+                .collect())
+        }
+        PoolHandle::Sqlite(_) => Ok(Vec::new()),
+    }
 }
 
 fn group_rows<I: Iterator<Item = RowOut>>(rows: I) -> Vec<SchemaMeta> {

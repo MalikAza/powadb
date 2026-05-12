@@ -177,7 +177,7 @@ function ExportDatabaseDialogBody({
               label="Tool"
               hint={
                 tools?.dump
-                  ? `Uses ${conn.kind === "postgres" ? "pg_dump" : "mysqldump"}`
+                  ? `Uses ${dumpToolName(conn.kind)}`
                   : "Not found on PATH — set its path in Settings"
               }
               selected={engine === "tool"}
@@ -326,6 +326,12 @@ function ExportDatabaseDialogBody({
       </DialogFooter>
     </>
   );
+}
+
+function dumpToolName(kind: "postgres" | "mysql" | "sqlite"): string {
+  if (kind === "postgres") return "pg_dump";
+  if (kind === "mysql") return "mysqldump";
+  return "sqlite3";
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

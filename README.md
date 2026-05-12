@@ -83,6 +83,16 @@ npm run lint:fix      # auto-fix biome issues
 cd src-tauri && cargo clippy -- -D warnings && cargo fmt --check
 ```
 
+### Tests
+
+```bash
+npm test                       # vitest (frontend)
+npm run test:coverage          # writes ./coverage/lcov.info
+cd src-tauri && cargo test --lib   # backend
+```
+
+Tests live next to the code they cover: `src/**/*.test.ts(x)` for the frontend (Vitest + jsdom) and `#[cfg(test)] mod tests` blocks inside each Rust file. CI runs both suites and uploads coverage to [Codecov](https://about.codecov.io/) under the `frontend` and `backend` flags.
+
 ## Architecture at a glance
 
 PowaDB is a single Tauri 2 app — React 19 / TypeScript frontend in `src/`, Rust backend in `src-tauri/`. The two halves communicate **only** through typed IPC wrappers in `src/ipc/index.ts`.
@@ -107,7 +117,7 @@ Contributions are welcome — bug reports, feature requests and pull requests.
 
 1. **Fork** the repository and clone your fork.
 2. **Create a branch** off `main` (`feature/...` or `bug/...`).
-3. **Make your changes** and run the quality checks above. The project has no test suite yet, so PRs that include reproductions / manual test steps are especially helpful.
+3. **Make your changes** and run the quality checks above, including `npm test` and `cargo test --lib`. PRs adding new behavior are expected to add tests alongside the change where it makes sense.
 4. **Open a pull request** describing the change and the motivation.
 
 A few non-obvious conventions worth knowing before you patch:

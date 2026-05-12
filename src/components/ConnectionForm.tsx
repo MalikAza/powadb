@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -94,6 +94,13 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
     }
   }, [watchedKind]);
 
+  const isSqlite = watchedKind === "sqlite";
+
+  async function pickSqlitePath() {
+    const picked = await ipc.pickSqlitePath();
+    if (picked) form.setValue("database", picked);
+  }
+
   async function onSubmit(values: ConnectionFormValues) {
     setSubmitError(null);
     try {
@@ -156,6 +163,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
                     <SelectContent>
                       <SelectItem value="postgres">PostgreSQL</SelectItem>
                       <SelectItem value="mysql">MySQL / MariaDB</SelectItem>
+                      <SelectItem value="sqlite">SQLite</SelectItem>
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -163,38 +171,40 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
               )}
             />
 
-            <div className="grid grid-cols-[2fr_1fr] gap-3">
-              <FormField
-                control={form.control}
-                name="host"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs font-normal text-muted-foreground">
-                      Host
-                    </FormLabel>
-                    <FormControl>
-                      <Input {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="port"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="text-xs font-normal text-muted-foreground">
-                      Port
-                    </FormLabel>
-                    <FormControl>
-                      <Input type="number" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
+            {!isSqlite && (
+              <div className="grid grid-cols-[2fr_1fr] gap-3">
+                <FormField
+                  control={form.control}
+                  name="host"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        Host
+                      </FormLabel>
+                      <FormControl>
+                        <Input {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="port"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        Port
+                      </FormLabel>
+                      <FormControl>
+                        <Input type="number" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
 
             <FormField
               control={form.control}
@@ -202,76 +212,92 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
               render={({ field }) => (
                 <FormItem>
                   <FormLabel className="text-xs font-normal text-muted-foreground">
-                    Database
+                    {isSqlite ? "Database file" : "Database (optional)"}
                   </FormLabel>
                   <FormControl>
-                    <Input {...field} />
+                    {isSqlite ? (
+                      <div className="flex gap-2">
+                        <Input {...field} placeholder="/path/to/database.db" />
+                        <Button type="button" variant="outline" size="sm" onClick={pickSqlitePath}>
+                          <FolderOpen className="size-3.5" />
+                          Browse…
+                        </Button>
+                      </div>
+                    ) : (
+                      <Input {...field} placeholder="leave empty to pick later" />
+                    )}
                   </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
             />
 
-            <FormField
-              control={form.control}
-              name="username"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-normal text-muted-foreground">
-                    Username
-                  </FormLabel>
-                  <FormControl>
-                    <Input {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {!isSqlite && (
+              <>
+                <FormField
+                  control={form.control}
+                  name="username"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        Username
+                      </FormLabel>
+                      <FormControl>
+                        <Input {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel className="text-xs font-normal text-muted-foreground">
-                    Password
-                  </FormLabel>
-                  <FormControl>
-                    <div className="relative">
-                      <Input
-                        type={showPassword ? "text" : "password"}
-                        autoComplete="new-password"
-                        className="pr-9"
-                        {...field}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((v) => !v)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                        tabIndex={-1}
-                        aria-label={showPassword ? "Hide password" : "Show password"}
-                      >
-                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </button>
-                    </div>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                <FormField
+                  control={form.control}
+                  name="password"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        Password
+                      </FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Input
+                            type={showPassword ? "text" : "password"}
+                            autoComplete="new-password"
+                            className="pr-9"
+                            {...field}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword((v) => !v)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            tabIndex={-1}
+                            aria-label={showPassword ? "Hide password" : "Show password"}
+                          >
+                            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                          </button>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <FormField
-              control={form.control}
-              name="ssl"
-              render={({ field }) => (
-                <FormItem className="flex items-center gap-2 space-y-0">
-                  <FormControl>
-                    <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                  </FormControl>
-                  <FormLabel className="cursor-pointer text-xs font-normal">Require TLS</FormLabel>
-                </FormItem>
-              )}
-            />
+                <FormField
+                  control={form.control}
+                  name="ssl"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center gap-2 space-y-0">
+                      <FormControl>
+                        <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                      </FormControl>
+                      <FormLabel className="cursor-pointer text-xs font-normal">
+                        Require TLS
+                      </FormLabel>
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
 
             <FormField
               control={form.control}
@@ -343,6 +369,13 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
             />
 
             {submitError && <p className="text-xs text-destructive">{submitError}</p>}
+            {Object.keys(form.formState.errors).length > 0 && (
+              <p className="text-xs text-destructive">
+                {Object.entries(form.formState.errors)
+                  .map(([field, err]) => `${field}: ${err?.message ?? "invalid"}`)
+                  .join(" · ")}
+              </p>
+            )}
 
             <DialogFooter className="mt-2">
               <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>

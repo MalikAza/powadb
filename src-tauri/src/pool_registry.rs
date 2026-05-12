@@ -3,11 +3,12 @@ use std::sync::OnceLock;
 
 use sqlx::mysql::MySqlPool;
 use sqlx::postgres::PgPool;
+use sqlx::sqlite::SqlitePool;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::commands::connections::resolve_connection;
-use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, QueryResult};
+use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult};
 use crate::error::AppResult;
 use crate::storage::{DbKind, SavedConnection};
 use crate::AppState;
@@ -18,6 +19,7 @@ pub const POOLS_CHANGED_EVENT: &str = "pools-changed";
 pub enum PoolHandle {
     Postgres(PgPool),
     MySql(MySqlPool),
+    Sqlite(SqlitePool),
 }
 
 #[derive(Default)]
@@ -67,6 +69,7 @@ impl PoolRegistry {
             match handle {
                 PoolHandle::Postgres(p) => p.close().await,
                 PoolHandle::MySql(p) => p.close().await,
+                PoolHandle::Sqlite(p) => p.close().await,
             }
             self.emit_changed().await;
         }
@@ -93,6 +96,11 @@ impl PoolRegistry {
 }
 
 async fn open_pool(conn: &SavedConnection, password: Option<&str>) -> AppResult<PoolHandle> {
+    if matches!(conn.kind, DbKind::Sqlite) {
+        return Ok(PoolHandle::Sqlite(
+            sqlite_drv::connect(&conn.database).await?,
+        ));
+    }
     let url = build_url(
         &conn.kind,
         &conn.username,
@@ -105,6 +113,7 @@ async fn open_pool(conn: &SavedConnection, password: Option<&str>) -> AppResult<
     Ok(match conn.kind {
         DbKind::Postgres => PoolHandle::Postgres(pg_drv::connect(&url).await?),
         DbKind::Mysql => PoolHandle::MySql(mysql_drv::connect(&url).await?),
+        DbKind::Sqlite => unreachable!("sqlite handled above"),
     })
 }
 
@@ -120,6 +129,7 @@ fn build_url(
     let scheme = match kind {
         DbKind::Postgres => "postgres",
         DbKind::Mysql => "mysql",
+        DbKind::Sqlite => unreachable!("sqlite does not use a URL"),
     };
     let userinfo = if let Some(pw) = password {
         format!("{}:{}", urlencode(username), urlencode(pw))
@@ -127,7 +137,13 @@ fn build_url(
         urlencode(username)
     };
     let db = if database.is_empty() {
-        String::new()
+        match kind {
+            // Postgres always needs a database name in the URL (otherwise it falls
+            // back to the username). Bootstrap with the default admin DB so the
+            // user can list/switch from there.
+            DbKind::Postgres => "/postgres".to_string(),
+            _ => String::new(),
+        }
     } else {
         format!("/{}", urlencode(database))
     };
@@ -163,6 +179,7 @@ pub async fn run_with_cancel(
         match handle {
             PoolHandle::Postgres(p) => pg_drv::execute(&p, sql).await,
             PoolHandle::MySql(p) => mysql_drv::execute(&p, sql).await,
+            PoolHandle::Sqlite(p) => sqlite_drv::execute(&p, sql).await,
         }
     };
 
@@ -173,4 +190,69 @@ pub async fn run_with_cancel(
 
     registry.forget_cancel(query_id).await;
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn urlencode_passes_unreserved_chars_through() {
+        assert_eq!(urlencode("aZ09-_.~"), "aZ09-_.~");
+    }
+
+    #[test]
+    fn urlencode_percent_encodes_special_chars() {
+        assert_eq!(urlencode("p@ss word/!"), "p%40ss%20word%2F%21");
+        assert_eq!(urlencode(":/?#"), "%3A%2F%3F%23");
+    }
+
+    #[test]
+    fn build_url_postgres_with_password() {
+        let url = build_url(
+            &DbKind::Postgres,
+            "user",
+            Some("p@ss"),
+            "localhost",
+            5432,
+            "app",
+            false,
+        );
+        assert_eq!(url, "postgres://user:p%40ss@localhost:5432/app");
+    }
+
+    #[test]
+    fn build_url_omits_password_when_none() {
+        let url = build_url(&DbKind::Mysql, "root", None, "127.0.0.1", 3306, "db", false);
+        assert_eq!(url, "mysql://root@127.0.0.1:3306/db");
+    }
+
+    #[test]
+    fn build_url_omits_path_when_database_is_empty() {
+        let url = build_url(&DbKind::Mysql, "root", None, "host", 3306, "", false);
+        assert_eq!(url, "mysql://root@host:3306");
+    }
+
+    #[test]
+    fn build_url_appends_ssl_query_string_per_kind() {
+        let pg = build_url(&DbKind::Postgres, "u", None, "h", 5432, "d", true);
+        assert!(pg.ends_with("?sslmode=require"), "got {pg}");
+
+        let my = build_url(&DbKind::Mysql, "u", None, "h", 3306, "d", true);
+        assert!(my.ends_with("?ssl-mode=REQUIRED"), "got {my}");
+    }
+
+    #[test]
+    fn build_url_encodes_username_with_special_chars() {
+        let url = build_url(
+            &DbKind::Postgres,
+            "ad min",
+            Some("x"),
+            "h",
+            5432,
+            "d",
+            false,
+        );
+        assert_eq!(url, "postgres://ad%20min:x@h:5432/d");
+    }
 }

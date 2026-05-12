@@ -1,5 +1,6 @@
 pub mod mysql;
 pub mod postgres;
+pub mod sqlite;
 
 use serde::Serialize;
 use serde_json::Value;

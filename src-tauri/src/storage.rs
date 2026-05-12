@@ -13,6 +13,7 @@ use crate::error::AppResult;
 pub enum DbKind {
     Postgres,
     Mysql,
+    Sqlite,
 }
 
 impl DbKind {
@@ -20,12 +21,14 @@ impl DbKind {
         match self {
             DbKind::Postgres => "postgres",
             DbKind::Mysql => "mysql",
+            DbKind::Sqlite => "sqlite",
         }
     }
     fn parse(s: &str) -> Option<DbKind> {
         match s {
             "postgres" => Some(DbKind::Postgres),
             "mysql" => Some(DbKind::Mysql),
+            "sqlite" => Some(DbKind::Sqlite),
             _ => None,
         }
     }
@@ -176,6 +179,7 @@ impl Storage {
                 "mysqldump_path" => s.mysqldump_path = val,
                 "psql_path" => s.psql_path = val,
                 "mysql_path" => s.mysql_path = val,
+                "sqlite3_path" => s.sqlite3_path = val,
                 _ => {}
             }
         }
@@ -183,11 +187,12 @@ impl Storage {
     }
 
     pub async fn save_settings(&self, s: &AppSettings) -> AppResult<()> {
-        let entries: [(&str, Option<&str>); 4] = [
+        let entries: [(&str, Option<&str>); 5] = [
             ("pg_dump_path", s.pg_dump_path.as_deref()),
             ("mysqldump_path", s.mysqldump_path.as_deref()),
             ("psql_path", s.psql_path.as_deref()),
             ("mysql_path", s.mysql_path.as_deref()),
+            ("sqlite3_path", s.sqlite3_path.as_deref()),
         ];
         for (k, v) in entries {
             sqlx::query(
@@ -508,6 +513,8 @@ pub struct AppSettings {
     pub psql_path: Option<String>,
     #[serde(default)]
     pub mysql_path: Option<String>,
+    #[serde(default)]
+    pub sqlite3_path: Option<String>,
 }
 
 pub struct SettingsStore {
@@ -527,5 +534,341 @@ impl SettingsStore {
 
     pub fn set(&self, s: AppSettings) {
         *self.inner.write().unwrap() = s;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn fresh_storage() -> (TempDir, Storage) {
+        let dir = TempDir::new().unwrap();
+        let storage = Storage::open(dir.path().join("test.db")).await.unwrap();
+        (dir, storage)
+    }
+
+    fn sample_conn(id: &str) -> SavedConnection {
+        SavedConnection {
+            id: id.into(),
+            name: format!("conn-{id}"),
+            kind: DbKind::Postgres,
+            host: "localhost".into(),
+            port: 5432,
+            database: "app".into(),
+            username: "user".into(),
+            ssl: false,
+            folder_id: None,
+            color: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn db_kind_round_trips_via_parse() {
+        assert_eq!(DbKind::parse("postgres"), Some(DbKind::Postgres));
+        assert_eq!(DbKind::parse("mysql"), Some(DbKind::Mysql));
+        assert_eq!(DbKind::parse("sqlite"), Some(DbKind::Sqlite));
+        assert_eq!(DbKind::parse("mongodb"), None);
+        assert_eq!(DbKind::Postgres.as_str(), "postgres");
+        assert_eq!(DbKind::Mysql.as_str(), "mysql");
+        assert_eq!(DbKind::Sqlite.as_str(), "sqlite");
+    }
+
+    #[test]
+    fn new_id_is_a_valid_uuid_v4() {
+        let id = new_id();
+        let parsed = Uuid::parse_str(&id).expect("uuid");
+        assert_eq!(parsed.get_version_num(), 4);
+    }
+
+    #[tokio::test]
+    async fn open_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.db");
+        let s1 = Storage::open(path.clone()).await.unwrap();
+        drop(s1);
+        // Opening again on the same file must succeed (CREATE TABLE IF NOT EXISTS).
+        let s2 = Storage::open(path).await.unwrap();
+        assert!(s2.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn upsert_then_list_returns_connection() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        let all = s.list().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, "a");
+        assert_eq!(all[0].kind, DbKind::Postgres);
+    }
+
+    #[tokio::test]
+    async fn upsert_updates_existing_row() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        let mut updated = sample_conn("a");
+        updated.name = "renamed".into();
+        updated.port = 6543;
+        s.upsert(&updated).await.unwrap();
+        let all = s.list().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "renamed");
+        assert_eq!(all[0].port, 6543);
+    }
+
+    #[tokio::test]
+    async fn list_orders_by_name() {
+        let (_d, s) = fresh_storage().await;
+        let mut a = sample_conn("1");
+        a.name = "Zeta".into();
+        let mut b = sample_conn("2");
+        b.name = "Alpha".into();
+        s.upsert(&a).await.unwrap();
+        s.upsert(&b).await.unwrap();
+        let names: Vec<_> = s
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, vec!["Alpha", "Zeta"]);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_connection() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        s.delete("a").await.unwrap();
+        assert!(s.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn password_round_trip() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        assert_eq!(s.get_password("a").await.unwrap(), None);
+        s.set_password("a", Some("secret")).await.unwrap();
+        assert_eq!(s.get_password("a").await.unwrap(), Some("secret".into()));
+        s.set_password("a", None).await.unwrap();
+        assert_eq!(s.get_password("a").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn get_password_for_missing_connection_is_none() {
+        let (_d, s) = fresh_storage().await;
+        assert_eq!(s.get_password("missing").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn folder_upsert_and_list() {
+        let (_d, s) = fresh_storage().await;
+        let f = Folder {
+            id: "f1".into(),
+            name: "Work".into(),
+            parent_id: None,
+        };
+        s.upsert_folder(&f).await.unwrap();
+        let all = s.list_folders().await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].name, "Work");
+    }
+
+    #[tokio::test]
+    async fn delete_folder_promotes_children_to_parent() {
+        let (_d, s) = fresh_storage().await;
+        let root = Folder {
+            id: "root".into(),
+            name: "Root".into(),
+            parent_id: None,
+        };
+        let mid = Folder {
+            id: "mid".into(),
+            name: "Mid".into(),
+            parent_id: Some("root".into()),
+        };
+        let leaf = Folder {
+            id: "leaf".into(),
+            name: "Leaf".into(),
+            parent_id: Some("mid".into()),
+        };
+        s.upsert_folder(&root).await.unwrap();
+        s.upsert_folder(&mid).await.unwrap();
+        s.upsert_folder(&leaf).await.unwrap();
+
+        let mut conn_in_mid = sample_conn("c");
+        conn_in_mid.folder_id = Some("mid".into());
+        s.upsert(&conn_in_mid).await.unwrap();
+
+        s.delete_folder("mid").await.unwrap();
+
+        let folders = s.list_folders().await.unwrap();
+        let leaf_after = folders.iter().find(|f| f.id == "leaf").unwrap();
+        assert_eq!(leaf_after.parent_id.as_deref(), Some("root"));
+
+        let connections = s.list().await.unwrap();
+        assert_eq!(connections[0].folder_id.as_deref(), Some("root"));
+    }
+
+    #[tokio::test]
+    async fn delete_folder_promotes_children_to_root_when_parent_is_root() {
+        let (_d, s) = fresh_storage().await;
+        let top = Folder {
+            id: "top".into(),
+            name: "Top".into(),
+            parent_id: None,
+        };
+        let child = Folder {
+            id: "child".into(),
+            name: "Child".into(),
+            parent_id: Some("top".into()),
+        };
+        s.upsert_folder(&top).await.unwrap();
+        s.upsert_folder(&child).await.unwrap();
+
+        s.delete_folder("top").await.unwrap();
+
+        let folders = s.list_folders().await.unwrap();
+        let child_after = folders.iter().find(|f| f.id == "child").unwrap();
+        assert!(child_after.parent_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn settings_round_trip() {
+        let (_d, s) = fresh_storage().await;
+        let settings = AppSettings {
+            pg_dump_path: Some("/usr/bin/pg_dump".into()),
+            mysql_path: Some("/usr/bin/mysql".into()),
+            ..AppSettings::default()
+        };
+        s.save_settings(&settings).await.unwrap();
+
+        let loaded = s.load_settings().await.unwrap();
+        assert_eq!(loaded.pg_dump_path.as_deref(), Some("/usr/bin/pg_dump"));
+        assert_eq!(loaded.mysql_path.as_deref(), Some("/usr/bin/mysql"));
+        assert_eq!(loaded.psql_path, None);
+        assert_eq!(loaded.mysqldump_path, None);
+    }
+
+    #[tokio::test]
+    async fn snippet_round_trip() {
+        let (_d, s) = fresh_storage().await;
+        let snip = Snippet {
+            id: "s1".into(),
+            connection_id: Some("c1".into()),
+            name: "All users".into(),
+            sql: "SELECT * FROM users".into(),
+            created_at: String::new(),
+        };
+        s.upsert_snippet(&snip).await.unwrap();
+
+        let scoped = s.list_snippets(Some("c1")).await.unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].sql, "SELECT * FROM users");
+
+        let other = s.list_snippets(Some("other")).await.unwrap();
+        assert!(
+            other.is_empty(),
+            "snippet should not leak across connections"
+        );
+
+        s.delete_snippet("s1").await.unwrap();
+        assert!(s.list_snippets(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn global_snippets_are_visible_to_any_connection() {
+        let (_d, s) = fresh_storage().await;
+        let global = Snippet {
+            id: "g1".into(),
+            connection_id: None,
+            name: "Global".into(),
+            sql: "SELECT 1".into(),
+            created_at: String::new(),
+        };
+        s.upsert_snippet(&global).await.unwrap();
+        // Visible whether you ask scoped or unscoped — that's the contract.
+        let scoped = s.list_snippets(Some("any-conn")).await.unwrap();
+        let unscoped = s.list_snippets(None).await.unwrap();
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(unscoped.len(), 1);
+        assert_eq!(scoped[0].id, "g1");
+    }
+
+    #[tokio::test]
+    async fn history_logs_and_lists_in_reverse_chronological_order() {
+        let (_d, s) = fresh_storage().await;
+        s.log_history("c1", "SELECT 1", Some(5), Some(1), None)
+            .await
+            .unwrap();
+        s.log_history("c1", "SELECT 2", Some(10), Some(2), None)
+            .await
+            .unwrap();
+        s.log_history("c2", "SELECT 3", None, None, Some("boom"))
+            .await
+            .unwrap();
+
+        let h1 = s.list_history(Some("c1"), 10).await.unwrap();
+        assert_eq!(h1.len(), 2);
+        assert_eq!(h1[0].sql, "SELECT 2");
+        assert_eq!(h1[1].sql, "SELECT 1");
+
+        let h_all = s.list_history(None, 10).await.unwrap();
+        assert_eq!(h_all.len(), 3);
+        assert_eq!(h_all[0].error.as_deref(), Some("boom"));
+    }
+
+    #[tokio::test]
+    async fn history_respects_limit() {
+        let (_d, s) = fresh_storage().await;
+        for i in 0..5 {
+            s.log_history("c", &format!("SELECT {i}"), None, None, None)
+                .await
+                .unwrap();
+        }
+        let h = s.list_history(Some("c"), 2).await.unwrap();
+        assert_eq!(h.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn clear_history_scopes_to_connection() {
+        let (_d, s) = fresh_storage().await;
+        s.log_history("c1", "SELECT 1", None, None, None)
+            .await
+            .unwrap();
+        s.log_history("c2", "SELECT 2", None, None, None)
+            .await
+            .unwrap();
+        s.clear_history(Some("c1")).await.unwrap();
+        let remaining = s.list_history(None, 10).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].connection_id, "c2");
+    }
+
+    #[tokio::test]
+    async fn clear_history_with_no_scope_wipes_everything() {
+        let (_d, s) = fresh_storage().await;
+        s.log_history("c1", "SELECT 1", None, None, None)
+            .await
+            .unwrap();
+        s.log_history("c2", "SELECT 2", None, None, None)
+            .await
+            .unwrap();
+        s.clear_history(None).await.unwrap();
+        assert!(s.list_history(None, 10).await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn settings_store_is_thread_safe_for_read_write() {
+        let store = SettingsStore::new(AppSettings::default());
+        let snapshot = store.get();
+        assert!(snapshot.pg_dump_path.is_none());
+
+        let next = AppSettings {
+            psql_path: Some("/bin/psql".into()),
+            ..AppSettings::default()
+        };
+        store.set(next);
+        assert_eq!(store.get().psql_path.as_deref(), Some("/bin/psql"));
     }
 }

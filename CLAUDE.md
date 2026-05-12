@@ -18,10 +18,17 @@ npm run lint:fix    # biome check --write src
 npm run check       # typecheck + lint
 npm run format      # biome format --write src
 
+# Tests.
+npm test                       # vitest run
+npm run test:watch             # vitest in watch mode
+npm run test:coverage          # vitest run --coverage (writes ./coverage/lcov.info)
+
 # Rust side (run from src-tauri/):
 cargo check
 cargo clippy -- -D warnings
 cargo fmt --check    # or `cargo fmt` to apply
+cargo test --lib     # backend unit tests
+# Coverage (requires cargo-llvm-cov): `cargo llvm-cov --lib --lcov --output-path lcov.info`
 
 # Release build for current platform (delegates to scripts/build.sh).
 npm run tauri:build
@@ -30,7 +37,7 @@ npm run tauri:build
 ./scripts/bump-version.sh <new-version>
 ```
 
-There is no test framework — neither Vitest nor Rust tests are wired up.
+Tests live next to the code they cover: `src/**/*.test.ts(x)` for the frontend (Vitest + jsdom) and `#[cfg(test)] mod tests` blocks inside each Rust file. CI runs both and uploads `lcov.info` to Codecov under the `frontend` / `backend` flags (see `.github/workflows/checks.yml` and `codecov.yml`).
 
 ## Architecture
 

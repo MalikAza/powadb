@@ -10,7 +10,7 @@ import { TopBar } from "./components/TopBar";
 import { UpdateChecker } from "./components/UpdateChecker";
 import { useConnections } from "./stores/connections";
 import { usePanelLayouts } from "./stores/panelLayouts";
-import { useApplyTheme } from "./stores/theme";
+import { useApplyTheme, useResolvedTheme } from "./stores/theme";
 import { useUi } from "./stores/ui";
 import { useRestoreAndPersistWindowState } from "./stores/windowState";
 
@@ -33,6 +33,7 @@ const SettingsDialog = lazy(() =>
 function App() {
   useApplyTheme();
   useRestoreAndPersistWindowState();
+  const resolvedTheme = useResolvedTheme();
 
   const { load, loaded, activeId } = useConnections();
   const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);
@@ -98,7 +99,7 @@ function App() {
   return (
     <TooltipProvider delayDuration={150}>
       <UpdateChecker />
-      <Toaster richColors position="bottom-right" />
+      <Toaster richColors position="bottom-right" theme={resolvedTheme} />
       <div className="flex h-screen flex-col bg-background text-foreground">
         <TopBar />
         <div className="min-h-0 flex-1">

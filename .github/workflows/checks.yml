@@ -9,7 +9,7 @@ on:
       - dev
 
 jobs:
-  checks:
+  frontend:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -20,21 +20,6 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-
-      - name: Install Linux deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
-
       - name: Install JS deps
         run: npm ci
 
@@ -43,6 +28,38 @@ jobs:
 
       - name: Frontend typecheck (tsc)
         run: npm run typecheck
+
+      - name: Frontend tests (vitest + coverage)
+        run: npm run test:coverage
+
+      - name: Upload frontend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage/lcov.info
+          flags: frontend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  backend:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install Linux deps
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          version: 1.0
 
       - name: Backend rustfmt
         working-directory: src-tauri
@@ -55,3 +72,18 @@ jobs:
       - name: Backend cargo clippy
         working-directory: src-tauri
         run: cargo clippy -- -D warnings
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Backend tests (cargo test + coverage)
+        working-directory: src-tauri
+        run: cargo llvm-cov --lib --lcov --output-path lcov.info
+
+      - name: Upload backend coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./src-tauri/lcov.info
+          flags: backend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

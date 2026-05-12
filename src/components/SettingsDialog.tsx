@@ -34,6 +34,10 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
   const [myStatus, setMyStatus] = useState<{ dump: string | null; client: string | null } | null>(
     null,
   );
+  const [liteStatus, setLiteStatus] = useState<{
+    dump: string | null;
+    client: string | null;
+  } | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [tab, setTab] = useState("appearance");
@@ -57,12 +61,14 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
     if (!open) return;
     ipc.checkDumpTools("postgres").then(setPgStatus);
     ipc.checkDumpTools("mysql").then(setMyStatus);
+    ipc.checkDumpTools("sqlite").then(setLiteStatus);
   }, [
     open,
     settings?.pg_dump_path,
     settings?.psql_path,
     settings?.mysqldump_path,
     settings?.mysql_path,
+    settings?.sqlite3_path,
   ]);
 
   function patch(p: Partial<AppSettings>) {
@@ -77,6 +83,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
       psql_path: emptyToNull(settings.psql_path),
       mysqldump_path: emptyToNull(settings.mysqldump_path),
       mysql_path: emptyToNull(settings.mysql_path),
+      sqlite3_path: emptyToNull(settings.sqlite3_path),
     });
     setSettings(saved);
     onOpenChange(false);
@@ -155,6 +162,12 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                   value={settings?.mysql_path ?? ""}
                   onChange={(v) => patch({ mysql_path: v })}
                   resolved={myStatus?.client ?? null}
+                />
+                <ToolPath
+                  label="sqlite3"
+                  value={settings?.sqlite3_path ?? ""}
+                  onChange={(v) => patch({ sqlite3_path: v })}
+                  resolved={liteStatus?.dump ?? null}
                 />
               </div>
             </Section>

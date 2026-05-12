@@ -51,6 +51,24 @@ pub async fn get_primary_key_columns(
                 .filter_map(|r| r.try_get::<String, _>("column_name").ok())
                 .collect())
         }
+        PoolHandle::Sqlite(pool) => {
+            let _ = schema;
+            let pragma = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
+            let rows = sqlx::query(&pragma).fetch_all(&pool).await?;
+            let mut cols: Vec<(i64, String)> = rows
+                .into_iter()
+                .filter_map(|r| {
+                    let pk: i64 = r.try_get("pk").ok()?;
+                    if pk == 0 {
+                        return None;
+                    }
+                    let name: String = r.try_get("name").ok()?;
+                    Some((pk, name))
+                })
+                .collect();
+            cols.sort_by_key(|(pk, _)| *pk);
+            Ok(cols.into_iter().map(|(_, n)| n).collect())
+        }
     }
 }
 
@@ -73,6 +91,14 @@ pub async fn execute_dml(
             Ok(r.rows_affected())
         }
         PoolHandle::MySql(pool) => {
+            let mut q = sqlx::query(&sql);
+            for p in &params {
+                q = q.bind(p.as_deref());
+            }
+            let r = q.execute(&pool).await?;
+            Ok(r.rows_affected())
+        }
+        PoolHandle::Sqlite(pool) => {
             let mut q = sqlx::query(&sql);
             for p in &params {
                 q = q.bind(p.as_deref());

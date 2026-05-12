@@ -2724,7 +2724,7 @@ dependencies = [
 
 [[package]]
 name = "powadb"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "futures",
  "serde",
@@ -2735,6 +2735,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "uuid",

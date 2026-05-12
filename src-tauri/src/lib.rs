@@ -139,6 +139,9 @@ pub fn run() {
             commands::connections::list_active_connections,
             commands::connections::get_connection_password,
             commands::schema::introspect_schema,
+            commands::schema::list_databases,
+            commands::databases::create_database,
+            commands::databases::drop_database,
             commands::history::list_history,
             commands::history::clear_history,
             commands::snippets::list_snippets,
@@ -155,6 +158,7 @@ pub fn run() {
             commands::dump::cancel_dump,
             commands::dump::pick_save_path,
             commands::dump::pick_open_path,
+            commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
             commands::settings::save_settings,
         ])

@@ -6,22 +6,30 @@ import type { DbKind } from "../types";
 
 type State = {
   byConnection: Record<string, SchemaMeta[]>;
+  databasesByConnection: Record<string, string[]>;
 };
 
 type Actions = {
   set: (connectionId: string, schemas: SchemaMeta[]) => void;
   clear: (connectionId: string) => void;
+  setDatabases: (connectionId: string, databases: string[]) => void;
 };
 
 export const useSchema = create<State & Actions>((set) => ({
   byConnection: {},
+  databasesByConnection: {},
   set: (connectionId, schemas) =>
     set((s) => ({ byConnection: { ...s.byConnection, [connectionId]: schemas } })),
   clear: (connectionId) =>
     set((s) => {
       const { [connectionId]: _, ...rest } = s.byConnection;
-      return { byConnection: rest };
+      const { [connectionId]: _2, ...restDbs } = s.databasesByConnection;
+      return { byConnection: rest, databasesByConnection: restDbs };
     }),
+  setDatabases: (connectionId, databases) =>
+    set((s) => ({
+      databasesByConnection: { ...s.databasesByConnection, [connectionId]: databases },
+    })),
 }));
 
 type Column = SchemaMeta["tables"][number]["columns"][number];
@@ -50,7 +58,7 @@ export function buildCmSchema(
   schemas: SchemaMeta[],
   kind: DbKind,
 ): { schema: SQLNamespace; defaultSchema?: string } {
-  if (kind === "mysql") {
+  if (kind === "mysql" || kind === "sqlite") {
     const ns: Record<string, SQLNamespace> = {};
     for (const s of schemas) {
       for (const t of s.tables) {
