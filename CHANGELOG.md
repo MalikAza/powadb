@@ -1,11 +1,8 @@
-## [Unreleased]
-
 ## [0.3.1] — 2026-05-12
 
 ### Added
 - Close a connection from the command palette; opened tabs for that connection are closed automatically.
 - Changelogs panel in settings.
-- CI: lint/format/typecheck checks on PRs, pushes to `main`/`dev`, and as a gate before release builds.
 
 ### Changed
 - Refactorisation of settings panel with tabs.
