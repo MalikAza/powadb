@@ -1,3 +1,11 @@
+## [0.4.0] — 2026-05-12
+
+### Added
+- SQLite support alongside Postgres and MySQL (driver, schema introspection, dump/import, browse and table ops).
+- Multiple databases per connection: switch the active database from the command palette and the schema tree.
+- Create a connection without preselecting a database.
+- Create and delete databases from the schema tree.
+
 ## [0.3.1] — 2026-05-12
 
 ### Added
