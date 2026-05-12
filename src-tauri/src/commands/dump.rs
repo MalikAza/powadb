@@ -139,7 +139,16 @@ pub async fn export_database(
         Engine::Tool => {
             let (conn, password) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
-            export_with_tool(&app, &settings, &conn, password, &options, &output_path, cancel_flag.clone()).await
+            export_with_tool(
+                &app,
+                &settings,
+                &conn,
+                password,
+                &options,
+                &output_path,
+                cancel_flag.clone(),
+            )
+            .await
         }
         Engine::Native => {
             let handle = state.pools.get_or_open(&state, &connection_id).await?;
@@ -168,7 +177,16 @@ pub async fn import_sql(
         Engine::Tool => {
             let (conn, password) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
-            import_with_tool(&app, &settings, &conn, password, &options, &input_path, cancel_flag.clone()).await
+            import_with_tool(
+                &app,
+                &settings,
+                &conn,
+                password,
+                &options,
+                &input_path,
+                cancel_flag.clone(),
+            )
+            .await
         }
         Engine::Native => {
             let handle = state.pools.get_or_open(&state, &connection_id).await?;
@@ -276,7 +294,9 @@ async fn export_with_tool(
         }
     }
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
     let mut child = cmd.spawn()?;
 
     if let Some(stderr) = child.stderr.take() {
@@ -305,10 +325,16 @@ async fn export_with_tool(
         return Err(AppError::Other(format!(
             "{} exited with status {}",
             bin.display(),
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+            status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into())
         )));
     }
-    let bytes = tokio::fs::metadata(output_path).await.map(|m| m.len()).unwrap_or(0);
+    let bytes = tokio::fs::metadata(output_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     Ok(ExportSummary {
         bytes_written: bytes,
         tables_dumped: opts.tables.as_ref().map(|t| t.len()).unwrap_or(0),
@@ -367,7 +393,10 @@ async fn import_with_tool(
     let mut child = cmd.spawn()?;
 
     if feed_via_stdin {
-        let mut stdin = child.stdin.take().ok_or_else(|| AppError::Other("no stdin".into()))?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| AppError::Other("no stdin".into()))?;
         let mut file = tokio::fs::File::open(input_path).await?;
         tokio::io::copy(&mut file, &mut stdin).await?;
         stdin.shutdown().await.ok();
@@ -399,10 +428,15 @@ async fn import_with_tool(
         return Err(AppError::Other(format!(
             "{} exited with status {}",
             bin.display(),
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into())
+            status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into())
         )));
     }
-    Ok(ImportSummary { statements_executed: 0 })
+    Ok(ImportSummary {
+        statements_executed: 0,
+    })
 }
 
 async fn wait_with_cancel(
@@ -459,7 +493,13 @@ async fn export_native(
                 table: Some(format!("{}.{}", table.schema, table.table)),
                 rows_done: None,
                 statements_done: Some(idx as u64),
-                message: Some(format!("({}/{}) {}.{}", idx + 1, total, table.schema, table.table)),
+                message: Some(format!(
+                    "({}/{}) {}.{}",
+                    idx + 1,
+                    total,
+                    table.schema,
+                    table.table
+                )),
             },
         );
 
@@ -475,8 +515,14 @@ async fn export_native(
     }
 
     file.flush().await?;
-    let bytes = tokio::fs::metadata(output_path).await.map(|m| m.len()).unwrap_or(0);
-    Ok(ExportSummary { bytes_written: bytes, tables_dumped: dumped })
+    let bytes = tokio::fs::metadata(output_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+    Ok(ExportSummary {
+        bytes_written: bytes,
+        tables_dumped: dumped,
+    })
 }
 
 async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppResult<Vec<TableRef>> {
@@ -763,7 +809,11 @@ async fn dump_table_data(
                 if j > 0 {
                     sql.push_str(", ");
                 }
-                sql.push_str(&format_sql_literal(value, &result.columns[j].type_name, kind));
+                sql.push_str(&format_sql_literal(
+                    value,
+                    &result.columns[j].type_name,
+                    kind,
+                ));
             }
             sql.push(')');
             if i + 1 < chunk.len() {
@@ -796,18 +846,31 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
     let upper = type_name.to_ascii_uppercase();
     match v {
         Value::Bool(b) => match kind {
-            DbKind::Postgres => if *b { "TRUE".into() } else { "FALSE".into() },
-            DbKind::Mysql => if *b { "1".into() } else { "0".into() },
+            DbKind::Postgres => {
+                if *b {
+                    "TRUE".into()
+                } else {
+                    "FALSE".into()
+                }
+            }
+            DbKind::Mysql => {
+                if *b {
+                    "1".into()
+                } else {
+                    "0".into()
+                }
+            }
         },
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
             // Bytea/blobs were already encoded as hex literals upstream.
             match (kind, upper.as_str()) {
                 (DbKind::Postgres, "BYTEA") => format!("'{}'::bytea", s.replace('\'', "''")),
-                (DbKind::Mysql, t) if matches!(
-                    t,
-                    "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY"
-                ) =>
+                (DbKind::Mysql, t)
+                    if matches!(
+                        t,
+                        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY"
+                    ) =>
                 {
                     s.clone()
                 }
@@ -885,7 +948,10 @@ async fn import_native(
                 let mut tx = pool.begin().await?;
                 for s in &statements {
                     check_cancel!();
-                    sqlx::query(s).execute(&mut *tx).await.map_err(|e| exec_err!(s, e))?;
+                    sqlx::query(s)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| exec_err!(s, e))?;
                     executed += 1;
                     tick!();
                 }
@@ -893,7 +959,10 @@ async fn import_native(
             } else {
                 for s in &statements {
                     check_cancel!();
-                    sqlx::query(s).execute(&pool).await.map_err(|e| exec_err!(s, e))?;
+                    sqlx::query(s)
+                        .execute(&pool)
+                        .await
+                        .map_err(|e| exec_err!(s, e))?;
                     executed += 1;
                     tick!();
                 }
@@ -904,7 +973,10 @@ async fn import_native(
                 let mut tx = pool.begin().await?;
                 for s in &statements {
                     check_cancel!();
-                    sqlx::query(s).execute(&mut *tx).await.map_err(|e| exec_err!(s, e))?;
+                    sqlx::query(s)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(|e| exec_err!(s, e))?;
                     executed += 1;
                     tick!();
                 }
@@ -912,7 +984,10 @@ async fn import_native(
             } else {
                 for s in &statements {
                     check_cancel!();
-                    sqlx::query(s).execute(&pool).await.map_err(|e| exec_err!(s, e))?;
+                    sqlx::query(s)
+                        .execute(&pool)
+                        .await
+                        .map_err(|e| exec_err!(s, e))?;
                     executed += 1;
                     tick!();
                 }
@@ -920,7 +995,9 @@ async fn import_native(
         }
     }
 
-    Ok(ImportSummary { statements_executed: executed })
+    Ok(ImportSummary {
+        statements_executed: executed,
+    })
 }
 
 fn is_copy_from_stdin(stmt: &str) -> bool {
@@ -966,7 +1043,9 @@ fn split_statements(input: &str) -> Vec<String> {
                 }
                 b'$' => {
                     if let Some(end) = find_dollar_tag_end(bytes, i) {
-                        let tag = std::str::from_utf8(&bytes[i..=end]).unwrap_or("").to_string();
+                        let tag = std::str::from_utf8(&bytes[i..=end])
+                            .unwrap_or("")
+                            .to_string();
                         state = St::Dollar(tag);
                         i = end + 1;
                     } else {
@@ -974,7 +1053,10 @@ fn split_statements(input: &str) -> Vec<String> {
                     }
                 }
                 b';' => {
-                    let stmt = std::str::from_utf8(&bytes[start..i]).unwrap_or("").trim().to_string();
+                    let stmt = std::str::from_utf8(&bytes[start..i])
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                     if !stmt.is_empty() {
                         out.push(stmt);
                     }
@@ -1023,7 +1105,10 @@ fn split_statements(input: &str) -> Vec<String> {
             }
             St::Dollar(tag) => {
                 let tag_bytes = tag.as_bytes();
-                if c == b'$' && i + tag_bytes.len() <= n && &bytes[i..i + tag_bytes.len()] == tag_bytes {
+                if c == b'$'
+                    && i + tag_bytes.len() <= n
+                    && &bytes[i..i + tag_bytes.len()] == tag_bytes
+                {
                     i += tag_bytes.len();
                     state = St::Default;
                 } else {
@@ -1032,7 +1117,10 @@ fn split_statements(input: &str) -> Vec<String> {
             }
         }
     }
-    let rest = std::str::from_utf8(&bytes[start..n]).unwrap_or("").trim().to_string();
+    let rest = std::str::from_utf8(&bytes[start..n])
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if !rest.is_empty() {
         out.push(rest);
     }

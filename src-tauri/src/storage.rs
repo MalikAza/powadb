@@ -67,7 +67,10 @@ impl Storage {
         let opts = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true);
-        let pool = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await?;
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts)
+            .await?;
 
         sqlx::query(
             r#"
@@ -319,7 +322,9 @@ impl Storage {
                 .execute(&self.pool)
                 .await?;
         } else {
-            sqlx::query("DELETE FROM query_history").execute(&self.pool).await?;
+            sqlx::query("DELETE FROM query_history")
+                .execute(&self.pool)
+                .await?;
         }
         Ok(())
     }
@@ -511,7 +516,9 @@ pub struct SettingsStore {
 
 impl SettingsStore {
     pub fn new(initial: AppSettings) -> Self {
-        Self { inner: RwLock::new(initial) }
+        Self {
+            inner: RwLock::new(initial),
+        }
     }
 
     pub fn get(&self) -> AppSettings {

@@ -12,7 +12,10 @@ pub struct JobRegistry {
 impl JobRegistry {
     pub async fn register(&self, job_id: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
-        self.jobs.lock().await.insert(job_id.to_string(), flag.clone());
+        self.jobs
+            .lock()
+            .await
+            .insert(job_id.to_string(), flag.clone());
         flag
     }
 

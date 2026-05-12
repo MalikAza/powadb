@@ -43,13 +43,20 @@ impl PoolRegistry {
         }
     }
 
-    pub async fn get_or_open(&self, state: &AppState, connection_id: &str) -> AppResult<PoolHandle> {
+    pub async fn get_or_open(
+        &self,
+        state: &AppState,
+        connection_id: &str,
+    ) -> AppResult<PoolHandle> {
         if let Some(p) = self.pools.lock().await.get(connection_id).cloned() {
             return Ok(p);
         }
         let (conn, password) = resolve_connection(state, connection_id).await?;
         let handle = open_pool(&conn, password.as_deref()).await?;
-        self.pools.lock().await.insert(connection_id.to_string(), handle.clone());
+        self.pools
+            .lock()
+            .await
+            .insert(connection_id.to_string(), handle.clone());
         self.emit_changed().await;
         Ok(handle)
     }

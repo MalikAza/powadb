@@ -80,13 +80,18 @@ pub async fn introspect_schema(
             )
             .fetch_all(&pool)
             .await?;
-            Ok(group_rows(rows.into_iter().map(|r| RowOut {
-                schema: r.try_get::<String, _>("schema_name").unwrap_or_default(),
-                table: r.try_get::<String, _>("table_name").unwrap_or_default(),
-                column: r.try_get::<String, _>("column_name").unwrap_or_default(),
-                data_type: r.try_get::<String, _>("data_type").unwrap_or_default(),
-                nullable: r.try_get::<i64, _>("nullable").map(|x| x != 0).unwrap_or(true),
-                table_type: r.try_get::<String, _>("table_type").unwrap_or_default(),
+            Ok(group_rows(rows.into_iter().map(|r| {
+                RowOut {
+                    schema: r.try_get::<String, _>("schema_name").unwrap_or_default(),
+                    table: r.try_get::<String, _>("table_name").unwrap_or_default(),
+                    column: r.try_get::<String, _>("column_name").unwrap_or_default(),
+                    data_type: r.try_get::<String, _>("data_type").unwrap_or_default(),
+                    nullable: r
+                        .try_get::<i64, _>("nullable")
+                        .map(|x| x != 0)
+                        .unwrap_or(true),
+                    table_type: r.try_get::<String, _>("table_type").unwrap_or_default(),
+                }
             })))
         }
     }
@@ -107,14 +112,21 @@ fn group_rows<I: Iterator<Item = RowOut>>(rows: I) -> Vec<SchemaMeta> {
         let schema = match schemas.iter_mut().find(|s| s.name == r.schema) {
             Some(s) => s,
             None => {
-                schemas.push(SchemaMeta { name: r.schema.clone(), tables: Vec::new() });
+                schemas.push(SchemaMeta {
+                    name: r.schema.clone(),
+                    tables: Vec::new(),
+                });
                 schemas.last_mut().unwrap()
             }
         };
         let table = match schema.tables.iter_mut().find(|t| t.name == r.table) {
             Some(t) => t,
             None => {
-                let kind = if r.table_type.eq_ignore_ascii_case("VIEW") { "view" } else { "table" };
+                let kind = if r.table_type.eq_ignore_ascii_case("VIEW") {
+                    "view"
+                } else {
+                    "table"
+                };
                 schema.tables.push(TableMeta {
                     name: r.table.clone(),
                     kind: kind.to_string(),

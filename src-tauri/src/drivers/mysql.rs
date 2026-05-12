@@ -88,8 +88,12 @@ fn decode_mysql(row: &MySqlRow, idx: usize, type_name: &str) -> AppResult<Value>
         }
         "JSON" => {
             let v: Result<Option<Value>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(x); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(x);
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
             let v: Result<Option<Vec<u8>>, _> = row.try_get(idx);
@@ -101,27 +105,45 @@ fn decode_mysql(row: &MySqlRow, idx: usize, type_name: &str) -> AppResult<Value>
                 }
                 return Ok(json!(s));
             }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "DATETIME" | "TIMESTAMP" => {
             let v: Result<Option<sqlx::types::chrono::NaiveDateTime>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "DATE" => {
             let v: Result<Option<sqlx::types::chrono::NaiveDate>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "TIME" => {
             let v: Result<Option<sqlx::types::chrono::NaiveTime>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "DECIMAL" | "NUMERIC" => {
             let v: Result<Option<sqlx::types::BigDecimal>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         _ => {}
     }

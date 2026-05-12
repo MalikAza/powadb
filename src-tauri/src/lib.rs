@@ -43,7 +43,9 @@ pub fn run() {
                 jobs: job_registry::JobRegistry::default(),
                 settings: storage::SettingsStore::new(settings),
             });
-            app.state::<AppState>().pools.set_app_handle(app.handle().clone());
+            app.state::<AppState>()
+                .pools
+                .set_app_handle(app.handle().clone());
 
             let app_submenu = Submenu::with_items(
                 app,

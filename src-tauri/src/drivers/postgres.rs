@@ -8,10 +8,7 @@ use super::{Column as ColMeta, QueryResult};
 use crate::error::{AppError, AppResult};
 
 pub async fn connect(url: &str) -> AppResult<PgPool> {
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(url)
-        .await?;
+    let pool = PgPoolOptions::new().max_connections(5).connect(url).await?;
     Ok(pool)
 }
 
@@ -105,28 +102,49 @@ fn decode_pg(row: &PgRow, idx: usize, type_name: &str) -> AppResult<Value> {
         }
         "UUID" => {
             let v: Result<Option<sqlx::types::Uuid>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "TIMESTAMP" => {
             let v: Result<Option<sqlx::types::chrono::NaiveDateTime>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "TIMESTAMPTZ" => {
-            let v: Result<Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_rfc3339())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            let v: Result<Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>, _> =
+                row.try_get(idx);
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_rfc3339()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "DATE" => {
             let v: Result<Option<sqlx::types::chrono::NaiveDate>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "TIME" => {
             let v: Result<Option<sqlx::types::chrono::NaiveTime>, _> = row.try_get(idx);
-            if let Ok(Some(x)) = v { return Ok(json!(x.to_string())); }
-            if let Ok(None) = v { return Ok(Value::Null); }
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
         }
         "NUMERIC" => {
             let v: Result<Option<sqlx::types::BigDecimal>, _> = row.try_get(idx);
