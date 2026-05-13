@@ -12,7 +12,7 @@ import {
   Unplug,
   Upload,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -27,7 +27,12 @@ import { useConnections } from "../stores/connections";
 import { useUi } from "../stores/ui";
 import type { Folder, SavedConnection } from "../types";
 import { buildTree, type FolderNode } from "../utils/folderTree";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { FolderForm } from "./FolderForm";
+
+type PendingDelete =
+  | { kind: "conn"; id: string; name: string }
+  | { kind: "folder"; id: string; name: string };
 
 type Props = {
   onAdd: (folderId?: string | null) => void;
@@ -45,25 +50,12 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
     removeFolder,
     disconnect,
   } = useConnections();
-  const [confirmDeleteConn, setConfirmDeleteConn] = useState<string | null>(null);
-  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [folderForm, setFolderForm] = useState<{
     editing: Folder | null;
     initialParentId?: string | null;
   } | null>(null);
-
-  useEffect(() => {
-    if (!confirmDeleteConn) return;
-    const t = setTimeout(() => setConfirmDeleteConn(null), 3000);
-    return () => clearTimeout(t);
-  }, [confirmDeleteConn]);
-
-  useEffect(() => {
-    if (!confirmDeleteFolder) return;
-    const t = setTimeout(() => setConfirmDeleteFolder(null), 3000);
-    return () => clearTimeout(t);
-  }, [confirmDeleteFolder]);
 
   const tree = buildTree(folders, connections);
 
@@ -117,24 +109,10 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
                 setFolderForm({ editing: null, initialParentId: parentId })
               }
               onRenameFolder={(folder) => setFolderForm({ editing: folder })}
-              onDeleteFolder={(folder) => {
-                if (confirmDeleteFolder === folder.id) {
-                  removeFolder(folder.id);
-                  setConfirmDeleteFolder(null);
-                } else {
-                  setConfirmDeleteFolder(folder.id);
-                }
-              }}
-              confirmDeleteFolder={confirmDeleteFolder}
-              onDeleteConn={(c) => {
-                if (confirmDeleteConn === c.id) {
-                  remove(c.id);
-                  setConfirmDeleteConn(null);
-                } else {
-                  setConfirmDeleteConn(c.id);
-                }
-              }}
-              confirmDeleteConn={confirmDeleteConn}
+              onDeleteFolder={(folder) =>
+                setPendingDelete({ kind: "folder", id: folder.id, name: folder.name })
+              }
+              onDeleteConn={(c) => setPendingDelete({ kind: "conn", id: c.id, name: c.name })}
             />
           ))}
 
@@ -148,15 +126,7 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
               onActivate={activate}
               onEdit={onEdit}
               onDisconnect={disconnect}
-              onDelete={(c) => {
-                if (confirmDeleteConn === c.id) {
-                  remove(c.id);
-                  setConfirmDeleteConn(null);
-                } else {
-                  setConfirmDeleteConn(c.id);
-                }
-              }}
-              armed={confirmDeleteConn === c.id}
+              onDelete={(c) => setPendingDelete({ kind: "conn", id: c.id, name: c.name })}
             />
           ))}
         </div>
@@ -170,6 +140,30 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
           onOpenChange={(open) => !open && setFolderForm(null)}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={
+          pendingDelete?.kind === "folder"
+            ? `Delete folder "${pendingDelete.name}"?`
+            : `Delete connection "${pendingDelete?.name ?? ""}"?`
+        }
+        description={
+          pendingDelete?.kind === "folder"
+            ? "Any connections and subfolders inside will be moved to the parent folder."
+            : "The saved connection details will be permanently removed."
+        }
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (!pendingDelete) return;
+          if (pendingDelete.kind === "folder") removeFolder(pendingDelete.id);
+          else remove(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+      />
     </aside>
   );
 }
@@ -188,9 +182,7 @@ function FolderRow({
   onAddSubfolder,
   onRenameFolder,
   onDeleteFolder,
-  confirmDeleteFolder,
   onDeleteConn,
-  confirmDeleteConn,
 }: {
   node: FolderNode;
   depth: number;
@@ -205,12 +197,9 @@ function FolderRow({
   onAddSubfolder: (parentId: string) => void;
   onRenameFolder: (folder: Folder) => void;
   onDeleteFolder: (folder: Folder) => void;
-  confirmDeleteFolder: string | null;
   onDeleteConn: (c: SavedConnection) => void;
-  confirmDeleteConn: string | null;
 }) {
   const isOpen = openFolders[node.folder.id] ?? false;
-  const armed = confirmDeleteFolder === node.folder.id;
 
   return (
     <div>
@@ -269,13 +258,13 @@ function FolderRow({
           </Button>
           <Button
             size="icon"
-            variant={armed ? "destructive" : "ghost"}
+            variant="ghost"
             className="size-5"
             onClick={(e) => {
               e.stopPropagation();
               onDeleteFolder(node.folder);
             }}
-            title={armed ? "Click again to confirm (children promoted to parent)" : "Delete folder"}
+            title="Delete folder"
           >
             <Trash2 className="size-3" />
           </Button>
@@ -300,9 +289,7 @@ function FolderRow({
               onAddSubfolder={onAddSubfolder}
               onRenameFolder={onRenameFolder}
               onDeleteFolder={onDeleteFolder}
-              confirmDeleteFolder={confirmDeleteFolder}
               onDeleteConn={onDeleteConn}
-              confirmDeleteConn={confirmDeleteConn}
             />
           ))}
           {node.connections.map((c) => (
@@ -316,7 +303,6 @@ function FolderRow({
               onEdit={onEdit}
               onDisconnect={onDisconnect}
               onDelete={onDeleteConn}
-              armed={confirmDeleteConn === c.id}
             />
           ))}
         </>
@@ -334,7 +320,6 @@ function ConnRow({
   onEdit,
   onDisconnect,
   onDelete,
-  armed,
 }: {
   c: SavedConnection;
   depth: number;
@@ -344,7 +329,6 @@ function ConnRow({
   onEdit: (id: string) => void;
   onDisconnect: (id: string) => Promise<void>;
   onDelete: (c: SavedConnection) => void;
-  armed: boolean;
 }) {
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
@@ -423,7 +407,7 @@ function ConnRow({
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c)}>
               <Trash2 className="size-3.5" />
-              {armed ? "Confirm delete" : "Delete"}
+              Delete
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

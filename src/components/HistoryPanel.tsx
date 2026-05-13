@@ -4,12 +4,14 @@ import { Button } from "@/components/ui/button";
 import { type HistoryEntry, ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export function HistoryPanel() {
   const { activeId } = useConnections();
   const { tabs, activeTabId, patchTab } = useTabs();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
   async function refresh() {
     if (!activeId) return;
@@ -52,11 +54,11 @@ export function HistoryPanel() {
             size="icon"
             variant="ghost"
             className="size-6"
-            onClick={async () => {
+            onClick={() => {
               if (!activeId) return;
-              await ipc.clearHistory(activeId);
-              await refresh();
+              setConfirmClearOpen(true);
             }}
+            disabled={!activeId || entries.length === 0}
             title="Clear history"
           >
             <Trash2 className="size-3" />
@@ -96,6 +98,20 @@ export function HistoryPanel() {
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={confirmClearOpen}
+        onOpenChange={setConfirmClearOpen}
+        title="Clear query history?"
+        description="All recorded queries for this connection will be permanently removed."
+        confirmLabel="Clear"
+        onConfirm={async () => {
+          if (!activeId) return;
+          setConfirmClearOpen(false);
+          await ipc.clearHistory(activeId);
+          await refresh();
+        }}
+      />
     </div>
   );
 }

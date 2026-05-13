@@ -25,6 +25,7 @@ import { ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 type Props = {
   tab: BrowseTab;
@@ -199,27 +200,14 @@ function BrowseGrid({
 }) {
   const [editing, setEditing] = useState<{ row: number; col: number; value: string } | null>(null);
   const [insertRow, setInsertRow] = useState<(string | null)[] | null>(null);
-  const [confirmDeleteRow, setConfirmDeleteRow] = useState<number | null>(null);
+  const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null);
+  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
-  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [opError, setOpError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (confirmDeleteRow === null) return;
-    const t = setTimeout(() => setConfirmDeleteRow(null), 3000);
-    return () => clearTimeout(t);
-  }, [confirmDeleteRow]);
-
-  useEffect(() => {
-    if (!confirmBulkDelete) return;
-    const t = setTimeout(() => setConfirmBulkDelete(false), 3000);
-    return () => clearTimeout(t);
-  }, [confirmBulkDelete]);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
     setSelected(new Set());
-    setConfirmBulkDelete(false);
   }, [result]);
 
   const canEdit = (tab.pkCols?.length ?? 0) > 0;
@@ -354,7 +342,7 @@ function BrowseGrid({
       const sql = `DELETE FROM ${quoteTable(tab.schema, tab.table, conn.kind)} WHERE ${orPieces.join(" OR ")}`;
       await ipc.executeDml(conn.id, sql, params);
       setSelected(new Set());
-      setConfirmBulkDelete(false);
+      setPendingBulkDelete(false);
       setOpError(null);
       onRefresh();
     } catch (e) {
@@ -379,7 +367,7 @@ function BrowseGrid({
       }
       const sql = `DELETE FROM ${quoteTable(tab.schema, tab.table, conn.kind)} WHERE ${wherePieces.join(" AND ")}`;
       await ipc.executeDml(conn.id, sql, params);
-      setConfirmDeleteRow(null);
+      setPendingDeleteRow(null);
       setOpError(null);
       onRefresh();
     } catch (e) {
@@ -404,21 +392,12 @@ function BrowseGrid({
         {selectedCount > 0 && canEdit && (
           <Button
             size="sm"
-            variant={confirmBulkDelete ? "destructive" : "secondary"}
-            onClick={() => {
-              if (confirmBulkDelete) deleteSelectedRows();
-              else setConfirmBulkDelete(true);
-            }}
-            title={
-              confirmBulkDelete
-                ? "Click again to confirm"
-                : `Delete ${selectedCount} selected row${selectedCount === 1 ? "" : "s"}`
-            }
+            variant="secondary"
+            onClick={() => setPendingBulkDelete(true)}
+            title={`Delete ${selectedCount} selected row${selectedCount === 1 ? "" : "s"}`}
           >
             <Trash2 className="size-3.5" />
-            {confirmBulkDelete
-              ? `Confirm delete (${selectedCount})`
-              : `Delete ${selectedCount} selected`}
+            {`Delete ${selectedCount} selected`}
           </Button>
         )}
         {selectedCount > 0 && (
@@ -555,23 +534,11 @@ function BrowseGrid({
                   <td className="border-b border-r border-border px-1 py-0.5">
                     <Button
                       size="icon"
-                      variant={confirmDeleteRow === rowIdx ? "destructive" : "ghost"}
+                      variant="ghost"
                       className="size-5"
                       disabled={!canEdit}
-                      title={
-                        !canEdit
-                          ? "No primary key — delete disabled"
-                          : confirmDeleteRow === rowIdx
-                            ? "Click again to confirm"
-                            : "Delete"
-                      }
-                      onClick={() => {
-                        if (confirmDeleteRow === rowIdx) {
-                          deleteRow(rowIdx);
-                        } else {
-                          setConfirmDeleteRow(rowIdx);
-                        }
-                      }}
+                      title={!canEdit ? "No primary key — delete disabled" : "Delete"}
+                      onClick={() => setPendingDeleteRow(rowIdx)}
                     >
                       <Trash2 className="size-3" />
                     </Button>
@@ -618,6 +585,30 @@ function BrowseGrid({
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={pendingDeleteRow !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteRow(null);
+        }}
+        title="Delete this row?"
+        description="The row will be permanently removed from the table."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDeleteRow !== null) deleteRow(pendingDeleteRow);
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingBulkDelete}
+        onOpenChange={(open) => {
+          if (!open) setPendingBulkDelete(false);
+        }}
+        title={`Delete ${selectedCount} selected row${selectedCount === 1 ? "" : "s"}?`}
+        description="The selected rows will be permanently removed from the table."
+        confirmLabel="Delete"
+        onConfirm={deleteSelectedRows}
+      />
     </div>
   );
 }
