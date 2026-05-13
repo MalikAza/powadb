@@ -1,3 +1,9 @@
+## [0.6.0] - 2026-05-13
+
+### Added
+- Geometry data vizualisation on a cartography modal by right clicking on the geometry data cell.
+- Multiple geometry data row/column can be vizualised by selecting them before or right clicking the column header.
+
 ## [0.5.0] - 2026-05-13
 
 ### Added
