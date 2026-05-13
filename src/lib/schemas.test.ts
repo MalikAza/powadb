@@ -90,6 +90,67 @@ describe("connectionFormSchema", () => {
   });
 });
 
+describe("connectionFormSchema sqlite branch", () => {
+  const sqliteValid = {
+    name: "local.db",
+    kind: "sqlite" as const,
+    host: "",
+    port: 0,
+    database: "/tmp/local.db",
+    username: "",
+    ssl: false,
+    folder_id: null,
+    color: null,
+  };
+
+  it("accepts sqlite with empty host/username/port and a non-empty database path", () => {
+    const parsed = connectionFormSchema.parse(sqliteValid);
+    expect(parsed.kind).toBe("sqlite");
+    expect(parsed.database).toBe("/tmp/local.db");
+  });
+
+  it("rejects sqlite without a database file path", () => {
+    expect(() => connectionFormSchema.parse({ ...sqliteValid, database: "   " })).toThrow();
+    expect(() => connectionFormSchema.parse({ ...sqliteValid, database: "" })).toThrow();
+  });
+});
+
+describe("connectionFormSchema wireguard branch", () => {
+  const base = {
+    name: "wg pg",
+    kind: "postgres" as const,
+    host: "h",
+    port: 5432,
+    database: "d",
+    username: "u",
+    ssl: false,
+    folder_id: null,
+    color: null,
+    wg_enabled: true,
+  };
+
+  it("requires a wg_config when wireguard is enabled", () => {
+    expect(() => connectionFormSchema.parse({ ...base, wg_config: "" })).toThrow();
+    expect(() => connectionFormSchema.parse({ ...base, wg_config: "   " })).toThrow();
+  });
+
+  it("requires both [Interface] and [Peer] sections", () => {
+    expect(() =>
+      connectionFormSchema.parse({ ...base, wg_config: "[Interface]\nkey=val" }),
+    ).toThrow();
+    expect(() => connectionFormSchema.parse({ ...base, wg_config: "[Peer]\nkey=val" })).toThrow();
+  });
+
+  it("accepts a wg_config with both sections", () => {
+    const parsed = connectionFormSchema.parse({
+      ...base,
+      wg_config: "[Interface]\nPrivateKey=x\n[Peer]\nPublicKey=y",
+    });
+    expect(parsed.wg_enabled).toBe(true);
+    expect(parsed.wg_config).toContain("[Peer]");
+  });
+});
+
 describe("folderFormSchema", () => {
   it("requires a non-empty name", () => {
     expect(() => folderFormSchema.parse({ name: "", parent_id: null })).toThrow();
