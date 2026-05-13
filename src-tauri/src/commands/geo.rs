@@ -36,6 +36,59 @@ pub async fn geometry_to_geojson(
     Ok(geojson)
 }
 
+/// Batched variant of `geometry_to_geojson` — converts a list of EWKB hex
+/// strings to GeoJSON in a single Postgres round-trip via `unnest` +
+/// `WITH ORDINALITY`. Input order is preserved; entries whose source value
+/// was NULL come back as `None`.
+#[tauri::command]
+pub async fn geometries_to_geojson(
+    state: State<'_, AppState>,
+    connection_id: String,
+    ewkb_hex_list: Vec<String>,
+) -> AppResult<Vec<Option<String>>> {
+    let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    let pool = match handle {
+        PoolHandle::Postgres(p) => p,
+        _ => {
+            return Err(AppError::UnsupportedType(
+                "PostGIS geometry conversion is only supported on Postgres".into(),
+            ));
+        }
+    };
+
+    if ewkb_hex_list.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Strip "\x" and validate hex for every entry before hitting the DB. We
+    // keep the stripped strings (not the decoded bytes) because we bind them
+    // as `text[]` and let Postgres do the `decode(..., 'hex')` itself — that
+    // sidesteps sqlx's spotty support for `bytea[]` binding.
+    let stripped: Vec<String> = ewkb_hex_list
+        .iter()
+        .map(|h| {
+            let s = strip_hex_prefix(h);
+            decode_hex(s).map(|_| s.to_string())
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT ST_AsGeoJSON(decode(h, 'hex')::geometry)::text AS geojson, ord
+        FROM unnest($1::text[]) WITH ORDINALITY AS t(h, ord)
+        ORDER BY ord
+        "#,
+    )
+    .bind(&stripped)
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| r.try_get::<Option<String>, _>("geojson").unwrap_or(None))
+        .collect())
+}
+
 fn strip_hex_prefix(s: &str) -> &str {
     s.strip_prefix("\\x").unwrap_or(s)
 }

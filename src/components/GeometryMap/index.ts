@@ -1,1 +1,1 @@
-export { GeometryMapDialog } from "./GeometryMapDialog";
+export { GeometryMapDialog, type GeometryMapInput } from "./GeometryMapDialog";

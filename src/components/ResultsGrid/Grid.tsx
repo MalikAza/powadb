@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import type { Column, DbKind, QueryResult } from "../../types";
-import { GeometryMapDialog } from "../GeometryMap";
+import { GeometryMapDialog, type GeometryMapInput } from "../GeometryMap";
 
 type RowShape = Record<string, unknown>;
 
@@ -30,11 +30,37 @@ function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
 }
 
+function buildShowAllInput(
+  result: QueryResult,
+  column: Column,
+  columnIdx: number,
+): GeometryMapInput | null {
+  const values: Array<{ rowIndex: number; pkLabel: string | null; ewkbHex: string }> = [];
+  result.rows.forEach((row, rowIndex) => {
+    const v = row[columnIdx];
+    if (typeof v === "string" && v !== "") {
+      values.push({ rowIndex, pkLabel: null, ewkbHex: v });
+    }
+  });
+  if (values.length === 0) return null;
+  return {
+    kind: "multi",
+    title: `${column.name} · all rows`,
+    columns: [{ name: column.name, values }],
+  };
+}
+
+function countNonNull(result: QueryResult, columnIdx: number): number {
+  let n = 0;
+  for (const row of result.rows) {
+    const v = row[columnIdx];
+    if (typeof v === "string" && v !== "") n++;
+  }
+  return n;
+}
+
 export function ResultsGrid({ result, connectionId, kind }: Props) {
-  const [mapDialog, setMapDialog] = useState<{
-    columnName: string;
-    ewkbHex: string;
-  } | null>(null);
+  const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
   const data = useMemo<RowShape[]>(
     () =>
       result.rows.map((r) => {
@@ -49,16 +75,38 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
 
   const columns = useMemo(() => {
     const helper = createColumnHelper<RowShape>();
-    return result.columns.map((c: Column) => {
+    return result.columns.map((c: Column, colIdx: number) => {
       const isGeo = isGeoColumn(kind, c);
       return helper.accessor((row) => row[c.name], {
         id: c.name,
-        header: () => (
-          <div>
-            <div className="font-medium">{c.name}</div>
-            <div className="text-[10px] font-normal text-muted-foreground">{c.type_name}</div>
-          </div>
-        ),
+        header: () => {
+          const headerContent = (
+            <div>
+              <div className="font-medium">{c.name}</div>
+              <div className="text-[10px] font-normal text-muted-foreground">{c.type_name}</div>
+            </div>
+          );
+          if (!isGeo) return headerContent;
+          const nonNull = countNonNull(result, colIdx);
+          return (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="cursor-context-menu">{headerContent}</div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem
+                  disabled={nonNull === 0}
+                  onSelect={() => {
+                    const input = buildShowAllInput(result, c, colIdx);
+                    if (input) setMapDialog(input);
+                  }}
+                >
+                  Show all on map ({nonNull})
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          );
+        },
         cell: (info) => {
           const v = info.getValue();
           if (!isGeo || typeof v !== "string" || v === "") {
@@ -70,7 +118,9 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                 <span className="block w-full cursor-context-menu truncate">{formatValue(v)}</span>
               </ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem onSelect={() => setMapDialog({ columnName: c.name, ewkbHex: v })}>
+                <ContextMenuItem
+                  onSelect={() => setMapDialog({ kind: "single", columnName: c.name, ewkbHex: v })}
+                >
                   Open in map
                 </ContextMenuItem>
               </ContextMenuContent>
@@ -188,8 +238,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
             if (!o) setMapDialog(null);
           }}
           connectionId={connectionId}
-          columnName={mapDialog.columnName}
-          ewkbHex={mapDialog.ewkbHex}
+          input={mapDialog}
         />
       )}
       <div

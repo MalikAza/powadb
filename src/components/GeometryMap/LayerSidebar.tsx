@@ -1,11 +1,22 @@
 import { ChevronDown, Eye, EyeOff } from "lucide-react";
 import type BaseLayer from "ol/layer/Base";
+import VectorLayer from "ol/layer/Vector";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import { useMapContext } from "./map-context";
 
 function getLayerName(layer: BaseLayer): string {
   return (layer.get("name") as string | undefined) ?? "Layer";
+}
+
+function getFeatureCount(layer: BaseLayer): number | null {
+  if (!(layer instanceof VectorLayer)) return null;
+  const src = layer.getSource();
+  if (!src) return null;
+  // VectorSource has getFeatures(); other Source types we don't expect here.
+  const getFeatures = (src as { getFeatures?: () => unknown[] }).getFeatures;
+  if (typeof getFeatures !== "function") return null;
+  return getFeatures.call(src).length;
 }
 
 export function LayerSidebar() {
@@ -102,6 +113,12 @@ function LayerControl({ layer }: { layer: BaseLayer }) {
           )}
         >
           {getLayerName(layer)}
+          {(() => {
+            const n = getFeatureCount(layer);
+            return n !== null && n > 1 ? (
+              <span className="ml-1 font-mono text-[10px] text-muted-foreground">({n})</span>
+            ) : null;
+          })()}
         </span>
         <span className="flex items-center gap-1">
           <span

@@ -32,12 +32,23 @@ import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
 import { ConfirmDialog } from "./ConfirmDialog";
-import { GeometryMapDialog } from "./GeometryMap";
+import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap";
 
 const GEO_TYPES = new Set(["geometry", "geography"]);
 
 function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
+}
+
+function formatPkValue(v: unknown): string {
+  if (v === null || v === undefined) return "NULL";
+  if (typeof v === "string") return `'${v.replace(/'/g, "''")}'`;
+  return String(v);
+}
+
+function pkLabelFor(pkColIndexes: number[] | null, cols: Column[], row: unknown[]): string | null {
+  if (!pkColIndexes || pkColIndexes.length === 0) return null;
+  return pkColIndexes.map((idx) => `${cols[idx].name} = ${formatPkValue(row[idx])}`).join(", ");
 }
 
 type Props = {
@@ -217,10 +228,7 @@ function BrowseGrid({
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [opError, setOpError] = useState<string | null>(null);
-  const [mapDialog, setMapDialog] = useState<{
-    columnName: string;
-    ewkbHex: string;
-  } | null>(null);
+  const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
@@ -449,29 +457,81 @@ function BrowseGrid({
                 )}
               </th>
               <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left"></th>
-              {cols.map((c) => (
-                <th
-                  key={c.name}
-                  className="cursor-pointer whitespace-nowrap border-b border-r border-border px-3 py-1.5 text-left hover:bg-muted-foreground/10"
-                  onClick={() => onSort(c.name)}
-                >
-                  <div className="flex items-center gap-1">
-                    {tab.pkCols?.includes(c.name) && (
-                      <span title="Primary key" className="text-primary">
-                        🔑
-                      </span>
-                    )}
-                    <span className="font-medium">{c.name}</span>
-                    {tab.sortCol === c.name &&
-                      (tab.sortDir === "asc" ? (
-                        <ArrowUp className="size-3 text-primary" />
-                      ) : (
-                        <ArrowDown className="size-3 text-primary" />
-                      ))}
-                  </div>
-                  <div className="text-[10px] font-normal text-muted-foreground">{c.type_name}</div>
-                </th>
-              ))}
+              {cols.map((c, colIdx) => {
+                const isGeo = isGeoColumn(conn.kind, c);
+                const headerInner = (
+                  <>
+                    <div className="flex items-center gap-1">
+                      {tab.pkCols?.includes(c.name) && (
+                        <span title="Primary key" className="text-primary">
+                          🔑
+                        </span>
+                      )}
+                      <span className="font-medium">{c.name}</span>
+                      {tab.sortCol === c.name &&
+                        (tab.sortDir === "asc" ? (
+                          <ArrowUp className="size-3 text-primary" />
+                        ) : (
+                          <ArrowDown className="size-3 text-primary" />
+                        ))}
+                    </div>
+                    <div className="text-[10px] font-normal text-muted-foreground">
+                      {c.type_name}
+                    </div>
+                  </>
+                );
+                const th = (
+                  <th
+                    key={c.name}
+                    className="cursor-pointer whitespace-nowrap border-b border-r border-border px-3 py-1.5 text-left hover:bg-muted-foreground/10"
+                    onClick={() => onSort(c.name)}
+                  >
+                    {headerInner}
+                  </th>
+                );
+                if (!isGeo) return th;
+                const nonNull = result.rows.reduce(
+                  (acc, row) =>
+                    typeof row[colIdx] === "string" && row[colIdx] !== "" ? acc + 1 : acc,
+                  0,
+                );
+                return (
+                  <ContextMenu key={c.name}>
+                    <ContextMenuTrigger asChild>{th}</ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        disabled={nonNull === 0}
+                        onSelect={() => {
+                          const values: Array<{
+                            rowIndex: number;
+                            pkLabel: string | null;
+                            ewkbHex: string;
+                          }> = [];
+                          result.rows.forEach((row, rowIndex) => {
+                            const v = row[colIdx];
+                            if (typeof v === "string" && v !== "") {
+                              values.push({
+                                rowIndex,
+                                pkLabel: pkLabelFor(pkColIndexes, cols, row),
+                                ewkbHex: v,
+                              });
+                            }
+                          });
+                          if (values.length > 0) {
+                            setMapDialog({
+                              kind: "multi",
+                              title: `${c.name} · all rows`,
+                              columns: [{ name: c.name, values }],
+                            });
+                          }
+                        }}
+                      >
+                        Show all on map ({nonNull})
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                );
+              })}
             </tr>
             <tr>
               <th className="border-b border-r border-border px-1 py-1"></th>
@@ -539,15 +599,64 @@ function BrowseGrid({
                     isSelected ? "bg-primary/10" : rowIdx % 2 === 0 ? "bg-card" : "bg-muted/30",
                   )}
                 >
-                  <td className="border-b border-r border-border px-2 py-0.5">
-                    {canEdit && (
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggleRow(rowIdx)}
-                        aria-label={`Select row ${rowIdx + 1}`}
-                      />
-                    )}
-                  </td>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <td className="border-b border-r border-border px-2 py-0.5">
+                        {canEdit && (
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => toggleRow(rowIdx)}
+                            aria-label={`Select row ${rowIdx + 1}`}
+                          />
+                        )}
+                      </td>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        disabled={selected.size === 0}
+                        onSelect={() => {
+                          const geoCols = cols
+                            .map((c, i) => ({ c, i }))
+                            .filter(({ c }) => isGeoColumn(conn.kind, c));
+                          if (geoCols.length === 0 || selected.size === 0) return;
+                          const selRows = [...selected];
+                          const columns = geoCols
+                            .map(({ c, i: colIdx }) => ({
+                              name: c.name,
+                              values: selRows
+                                .map((rIdx) => {
+                                  const r = result.rows[rIdx];
+                                  const v = r[colIdx];
+                                  if (typeof v !== "string" || v === "") return null;
+                                  return {
+                                    rowIndex: rIdx,
+                                    pkLabel: pkLabelFor(pkColIndexes, cols, r),
+                                    ewkbHex: v,
+                                  };
+                                })
+                                .filter(
+                                  (
+                                    v,
+                                  ): v is {
+                                    rowIndex: number;
+                                    pkLabel: string | null;
+                                    ewkbHex: string;
+                                  } => v !== null,
+                                ),
+                            }))
+                            .filter((c) => c.values.length > 0);
+                          if (columns.length === 0) return;
+                          setMapDialog({
+                            kind: "multi",
+                            title: `${selected.size} row${selected.size === 1 ? "" : "s"}`,
+                            columns,
+                          });
+                        }}
+                      >
+                        Show {selected.size} selected on map
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                   <td className="border-b border-r border-border px-1 py-0.5">
                     <Button
                       size="icon"
@@ -589,7 +698,11 @@ function BrowseGrid({
                           <GeometryCell
                             value={v as string}
                             onOpen={() =>
-                              setMapDialog({ columnName: col.name, ewkbHex: v as string })
+                              setMapDialog({
+                                kind: "single",
+                                columnName: col.name,
+                                ewkbHex: v as string,
+                              })
                             }
                           />
                         ) : (
@@ -644,8 +757,7 @@ function BrowseGrid({
             if (!o) setMapDialog(null);
           }}
           connectionId={conn.id}
-          columnName={mapDialog.columnName}
-          ewkbHex={mapDialog.ewkbHex}
+          input={mapDialog}
         />
       )}
     </div>
