@@ -40,7 +40,13 @@ pub async fn introspect_schema(
                     c.table_schema::text   AS schema_name,
                     c.table_name::text     AS table_name,
                     c.column_name::text    AS column_name,
-                    c.data_type::text      AS data_type,
+                    -- `data_type` returns 'USER-DEFINED' for extension types like
+                    -- PostGIS `geometry`/`geography`. Fall back to `udt_name` so
+                    -- those columns surface their real type names in the UI.
+                    CASE
+                        WHEN c.data_type = 'USER-DEFINED' THEN c.udt_name
+                        ELSE c.data_type
+                    END::text              AS data_type,
                     (c.is_nullable = 'YES') AS nullable,
                     t.table_type::text     AS table_type
                 FROM information_schema.columns c

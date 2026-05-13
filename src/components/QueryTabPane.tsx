@@ -117,7 +117,7 @@ export function QueryTabPane({ tab, conn }: Props) {
               onCopyCsv={() => navigator.clipboard.writeText(toCsv(tab.result!))}
               onCopyJson={() => navigator.clipboard.writeText(toJson(tab.result!))}
             />
-            <ResultsGrid result={tab.result} />
+            <ResultsGrid result={tab.result} connectionId={conn.id} kind={conn.kind} />
           </>
         ))}
     </div>

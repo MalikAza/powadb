@@ -45,6 +45,9 @@ export const ipc = {
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
 
+  geometryToGeoJSON: (connectionId: string, ewkbHex: string): Promise<string> =>
+    invoke("geometry_to_geojson", { connectionId, ewkbHex }),
+
   listDatabases: (connectionId: string): Promise<string[]> =>
     invoke("list_databases", { connectionId }),
 

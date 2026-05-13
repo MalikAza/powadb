@@ -2,6 +2,7 @@ pub mod connections;
 pub mod databases;
 pub mod dump;
 pub mod folders;
+pub mod geo;
 pub mod history;
 pub mod query;
 pub mod schema;

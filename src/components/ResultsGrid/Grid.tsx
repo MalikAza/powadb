@@ -6,16 +6,35 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
-import type { Column, QueryResult } from "../../types";
+import type { Column, DbKind, QueryResult } from "../../types";
+import { GeometryMapDialog } from "../GeometryMap";
 
 type RowShape = Record<string, unknown>;
 
 type Props = {
   result: QueryResult;
+  connectionId: string;
+  kind: DbKind;
 };
 
-export function ResultsGrid({ result }: Props) {
+const GEO_TYPES = new Set(["geometry", "geography"]);
+
+function isGeoColumn(kind: DbKind, c: Column): boolean {
+  return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
+}
+
+export function ResultsGrid({ result, connectionId, kind }: Props) {
+  const [mapDialog, setMapDialog] = useState<{
+    columnName: string;
+    ewkbHex: string;
+  } | null>(null);
   const data = useMemo<RowShape[]>(
     () =>
       result.rows.map((r) => {
@@ -30,8 +49,9 @@ export function ResultsGrid({ result }: Props) {
 
   const columns = useMemo(() => {
     const helper = createColumnHelper<RowShape>();
-    return result.columns.map((c: Column) =>
-      helper.accessor((row) => row[c.name], {
+    return result.columns.map((c: Column) => {
+      const isGeo = isGeoColumn(kind, c);
+      return helper.accessor((row) => row[c.name], {
         id: c.name,
         header: () => (
           <div>
@@ -39,10 +59,27 @@ export function ResultsGrid({ result }: Props) {
             <div className="text-[10px] font-normal text-muted-foreground">{c.type_name}</div>
           </div>
         ),
-        cell: (info) => formatValue(info.getValue()),
-      }),
-    );
-  }, [result]);
+        cell: (info) => {
+          const v = info.getValue();
+          if (!isGeo || typeof v !== "string" || v === "") {
+            return formatValue(v);
+          }
+          return (
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <span className="block w-full cursor-context-menu truncate">{formatValue(v)}</span>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onSelect={() => setMapDialog({ columnName: c.name, ewkbHex: v })}>
+                  Open in map
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
+          );
+        },
+      });
+    });
+  }, [result, kind]);
 
   const table = useReactTable({
     data,
@@ -143,80 +180,93 @@ export function ResultsGrid({ result }: Props) {
   }
 
   return (
-    <div
-      ref={parentRef}
-      role="grid"
-      tabIndex={0}
-      onKeyDown={onKeyDown}
-      className="relative min-h-0 flex-1 overflow-auto rounded-md border border-border bg-card outline-none focus:ring-1 focus:ring-ring"
-    >
-      <div className="min-w-max">
-        <div
-          className="sticky top-0 z-10 grid border-b border-border bg-muted"
-          style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(120px, max-content))` }}
-        >
-          {table.getHeaderGroups()[0]?.headers.map((header, colIdx) => (
-            <div
-              key={header.id}
-              onClick={() => setSelected((s) => ({ ...s, col: colIdx }))}
-              className={cn(
-                "cursor-pointer whitespace-nowrap border-r border-border px-3 py-1.5 font-mono text-xs",
-                selected.col === colIdx && "bg-primary/20",
-              )}
-            >
-              {flexRender(header.column.columnDef.header, header.getContext())}
-            </div>
-          ))}
-        </div>
-
-        <div
-          style={{
-            height: rowVirtualizer.getTotalSize(),
-            position: "relative",
+    <>
+      {mapDialog && (
+        <GeometryMapDialog
+          open={true}
+          onOpenChange={(o) => {
+            if (!o) setMapDialog(null);
           }}
-        >
-          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const row = table.getRowModel().rows[virtualRow.index];
-            const isSelectedRow = virtualRow.index === selected.row;
-            return (
+          connectionId={connectionId}
+          columnName={mapDialog.columnName}
+          ewkbHex={mapDialog.ewkbHex}
+        />
+      )}
+      <div
+        ref={parentRef}
+        role="grid"
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        className="relative min-h-0 flex-1 overflow-auto rounded-md border border-border bg-card outline-none focus:ring-1 focus:ring-ring"
+      >
+        <div className="min-w-max">
+          <div
+            className="sticky top-0 z-10 grid border-b border-border bg-muted"
+            style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(120px, max-content))` }}
+          >
+            {table.getHeaderGroups()[0]?.headers.map((header, colIdx) => (
               <div
-                key={row.id}
+                key={header.id}
+                onClick={() => setSelected((s) => ({ ...s, col: colIdx }))}
                 className={cn(
-                  "absolute left-0 top-0 grid w-full",
-                  isSelectedRow
-                    ? "bg-primary/10"
-                    : virtualRow.index % 2
-                      ? "bg-card"
-                      : "bg-transparent",
+                  "cursor-pointer whitespace-nowrap border-r border-border px-3 py-1.5 font-mono text-xs",
+                  selected.col === colIdx && "bg-primary/20",
                 )}
-                style={{
-                  transform: `translateY(${virtualRow.start}px)`,
-                  height: virtualRow.size,
-                  gridTemplateColumns: `repeat(${columns.length}, minmax(120px, max-content))`,
-                }}
               >
-                {row.getVisibleCells().map((cell, colIdx) => {
-                  const isSelected = isSelectedRow && colIdx === selected.col;
-                  return (
-                    <div
-                      key={cell.id}
-                      onClick={() => setSelected({ row: virtualRow.index, col: colIdx })}
-                      className={cn(
-                        "overflow-hidden text-ellipsis whitespace-nowrap border-r border-b border-border/50 px-3 py-1 font-mono text-xs",
-                        isSelected &&
-                          "bg-primary/30 outline outline-1 -outline-offset-1 outline-primary",
-                      )}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </div>
-                  );
-                })}
+                {flexRender(header.column.columnDef.header, header.getContext())}
               </div>
-            );
-          })}
+            ))}
+          </div>
+
+          <div
+            style={{
+              height: rowVirtualizer.getTotalSize(),
+              position: "relative",
+            }}
+          >
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const row = table.getRowModel().rows[virtualRow.index];
+              const isSelectedRow = virtualRow.index === selected.row;
+              return (
+                <div
+                  key={row.id}
+                  className={cn(
+                    "absolute left-0 top-0 grid w-full",
+                    isSelectedRow
+                      ? "bg-primary/10"
+                      : virtualRow.index % 2
+                        ? "bg-card"
+                        : "bg-transparent",
+                  )}
+                  style={{
+                    transform: `translateY(${virtualRow.start}px)`,
+                    height: virtualRow.size,
+                    gridTemplateColumns: `repeat(${columns.length}, minmax(120px, max-content))`,
+                  }}
+                >
+                  {row.getVisibleCells().map((cell, colIdx) => {
+                    const isSelected = isSelectedRow && colIdx === selected.col;
+                    return (
+                      <div
+                        key={cell.id}
+                        onClick={() => setSelected({ row: virtualRow.index, col: colIdx })}
+                        className={cn(
+                          "overflow-hidden text-ellipsis whitespace-nowrap border-r border-b border-border/50 px-3 py-1 font-mono text-xs",
+                          isSelected &&
+                            "bg-primary/30 outline outline-1 -outline-offset-1 outline-primary",
+                        )}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 

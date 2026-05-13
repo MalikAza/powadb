@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
-use sqlx::{Column, Executor, Row, TypeInfo};
+use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 
 use super::{Column as ColMeta, QueryResult};
 use crate::error::{AppError, AppResult};
@@ -154,6 +154,27 @@ fn decode_pg(row: &PgRow, idx: usize, type_name: &str) -> AppResult<Value> {
             if let Ok(None) = v {
                 return Ok(Value::Null);
             }
+        }
+        // PostGIS columns: serialize EWKB as upper-case hex string (`\x...`),
+        // mirroring how BYTEA is represented. `try_get::<Vec<u8>>` would fail
+        // sqlx's type-compatibility check (geometry/geography are not BYTEA),
+        // so we read the raw value and grab its bytes directly. The frontend
+        // round-trips this through `ST_AsGeoJSON` on demand via
+        // `geometry_to_geojson`.
+        "geometry" | "geography" => {
+            let raw = row.try_get_raw(idx)?;
+            if raw.is_null() {
+                return Ok(Value::Null);
+            }
+            let bytes = raw
+                .as_bytes()
+                .map_err(|e| AppError::Other(format!("decode {}: {}", type_name, e)))?;
+            let mut s = String::with_capacity(2 + bytes.len() * 2);
+            s.push_str("\\x");
+            for byte in bytes {
+                s.push_str(&format!("{:02X}", byte));
+            }
+            return Ok(json!(s));
         }
         _ => {}
     }

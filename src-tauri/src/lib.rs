@@ -155,6 +155,7 @@ pub fn run() {
             commands::folders::list_folders,
             commands::folders::save_folder,
             commands::folders::delete_folder,
+            commands::geo::geometry_to_geojson,
             commands::dump::export_database,
             commands::dump::import_sql,
             commands::dump::check_dump_tools,

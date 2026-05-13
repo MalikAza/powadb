@@ -12,6 +12,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -23,9 +29,16 @@ import {
 import { cn } from "@/lib/utils";
 import { ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
-import type { DbKind, QueryResult, SavedConnection } from "../types";
+import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { GeometryMapDialog } from "./GeometryMap";
+
+const GEO_TYPES = new Set(["geometry", "geography"]);
+
+function isGeoColumn(kind: DbKind, c: Column): boolean {
+  return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
+}
 
 type Props = {
   tab: BrowseTab;
@@ -204,6 +217,10 @@ function BrowseGrid({
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [opError, setOpError] = useState<string | null>(null);
+  const [mapDialog, setMapDialog] = useState<{
+    columnName: string;
+    ewkbHex: string;
+  } | null>(null);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
@@ -545,6 +562,9 @@ function BrowseGrid({
                   </td>
                   {row.map((v, colIdx) => {
                     const isEditing = editing?.row === rowIdx && editing?.col === colIdx;
+                    const col = cols[colIdx];
+                    const isGeo = isGeoColumn(conn.kind, col);
+                    const canOpenMap = isGeo && typeof v === "string" && v !== "";
                     return (
                       <td
                         key={colIdx}
@@ -564,6 +584,13 @@ function BrowseGrid({
                             onChange={(value) => setEditing({ ...editing, value })}
                             onCommit={commitEdit}
                             onCancel={() => setEditing(null)}
+                          />
+                        ) : canOpenMap ? (
+                          <GeometryCell
+                            value={v as string}
+                            onOpen={() =>
+                              setMapDialog({ columnName: col.name, ewkbHex: v as string })
+                            }
                           />
                         ) : (
                           <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
@@ -609,7 +636,34 @@ function BrowseGrid({
         confirmLabel="Delete"
         onConfirm={deleteSelectedRows}
       />
+
+      {mapDialog && (
+        <GeometryMapDialog
+          open={true}
+          onOpenChange={(o) => {
+            if (!o) setMapDialog(null);
+          }}
+          connectionId={conn.id}
+          columnName={mapDialog.columnName}
+          ewkbHex={mapDialog.ewkbHex}
+        />
+      )}
     </div>
+  );
+}
+
+function GeometryCell({ value, onOpen }: { value: string; onOpen: () => void }) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
+          {value}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onOpen}>Open in map</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
