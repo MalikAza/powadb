@@ -4,6 +4,7 @@ mod error;
 mod job_registry;
 mod pool_registry;
 mod storage;
+mod wireguard;
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{Emitter, Manager};
@@ -138,6 +139,8 @@ pub fn run() {
             commands::connections::disconnect,
             commands::connections::list_active_connections,
             commands::connections::get_connection_password,
+            commands::connections::get_connection_wg_config,
+            commands::connections::read_text_file,
             commands::schema::introspect_schema,
             commands::schema::list_databases,
             commands::databases::create_database,
@@ -158,6 +161,7 @@ pub fn run() {
             commands::dump::cancel_dump,
             commands::dump::pick_save_path,
             commands::dump::pick_open_path,
+            commands::dump::pick_wg_conf_path,
             commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
             commands::settings::save_settings,

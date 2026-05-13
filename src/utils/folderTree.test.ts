@@ -13,6 +13,7 @@ const conn = (over: Partial<SavedConnection>): SavedConnection => ({
   ssl: false,
   folder_id: over.folder_id ?? null,
   color: over.color ?? null,
+  wg: null,
 });
 
 const folder = (id: string, name: string, parent_id: string | null = null): Folder => ({

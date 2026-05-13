@@ -43,6 +43,8 @@ export const connectionFormSchema = z
     ssl: z.boolean(),
     folder_id: optionalFolderId,
     color: z.string().nullable().default(null),
+    wg_enabled: z.boolean().default(false),
+    wg_config: z.string().optional().default(""),
   })
   .superRefine((v, ctx) => {
     if (v.kind === "sqlite") {
@@ -75,6 +77,21 @@ export const connectionFormSchema = z
         path: ["username"],
         message: "Username is required",
       });
+    }
+    if (v.wg_enabled) {
+      if (v.wg_config.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["wg_config"],
+          message: "Paste your wireguard.conf contents",
+        });
+      } else if (!v.wg_config.includes("[Interface]") || !v.wg_config.includes("[Peer]")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["wg_config"],
+          message: "Expected both [Interface] and [Peer] sections",
+        });
+      }
     }
   });
 

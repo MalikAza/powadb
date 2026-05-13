@@ -17,6 +17,9 @@ pub enum AppError {
     #[error("connection not found: {0}")]
     ConnectionNotFound(String),
 
+    #[error("wireguard tunnel error: {0}")]
+    WgTunnel(String),
+
     #[error("{0}")]
     Other(String),
 }

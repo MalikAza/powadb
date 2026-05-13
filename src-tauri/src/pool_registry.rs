@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
 
 use sqlx::mysql::MySqlPool;
@@ -9,8 +10,9 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::commands::connections::resolve_connection;
 use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::storage::{DbKind, SavedConnection};
+use crate::wireguard::{self, TunnelHandle as WgTunnelHandle, WgConfig};
 use crate::AppState;
 
 pub const POOLS_CHANGED_EVENT: &str = "pools-changed";
@@ -22,9 +24,14 @@ pub enum PoolHandle {
     Sqlite(SqlitePool),
 }
 
+struct PoolEntry {
+    handle: PoolHandle,
+    tunnel: Option<WgTunnelHandle>,
+}
+
 #[derive(Default)]
 pub struct PoolRegistry {
-    pools: Mutex<HashMap<String, PoolHandle>>,
+    pools: Mutex<HashMap<String, PoolEntry>>,
     cancels: Mutex<HashMap<String, oneshot::Sender<()>>>,
     app: OnceLock<AppHandle>,
 }
@@ -50,26 +57,68 @@ impl PoolRegistry {
         state: &AppState,
         connection_id: &str,
     ) -> AppResult<PoolHandle> {
-        if let Some(p) = self.pools.lock().await.get(connection_id).cloned() {
-            return Ok(p);
+        if let Some(p) = self.pools.lock().await.get(connection_id) {
+            return Ok(p.handle.clone());
         }
-        let (conn, password) = resolve_connection(state, connection_id).await?;
-        let handle = open_pool(&conn, password.as_deref()).await?;
-        self.pools
-            .lock()
-            .await
-            .insert(connection_id.to_string(), handle.clone());
+        let (conn, password, wg_config_text) = resolve_connection(state, connection_id).await?;
+
+        // If WG is enabled, open the tunnel first and redirect the DB pool at
+        // the local listener it spawned.
+        let (tunnel, effective_host, effective_port) =
+            if conn.wg.is_some() && !matches!(conn.kind, DbKind::Sqlite) {
+                let cfg_text = wg_config_text.ok_or_else(|| {
+                    AppError::WgTunnel(
+                        "wireguard is enabled for this connection but no config is stored".into(),
+                    )
+                })?;
+                let cfg = WgConfig::parse(&cfg_text)?;
+                let target_ip: IpAddr = conn.host.parse().map_err(|_| {
+                    AppError::WgTunnel(format!(
+                        "wireguard target host `{}` must be an IP address (not a hostname) — DNS \
+                         inside the tunnel is not supported yet",
+                        conn.host
+                    ))
+                })?;
+                let target = SocketAddr::new(target_ip, conn.port);
+                let t = wireguard::open_tunnel(&cfg, target).await?;
+                let host = t.local_addr.ip().to_string();
+                let port = t.local_addr.port();
+                (Some(t), host, port)
+            } else {
+                (None, conn.host.clone(), conn.port)
+            };
+
+        let handle =
+            match open_pool(&conn, password.as_deref(), &effective_host, effective_port).await {
+                Ok(h) => h,
+                Err(e) => {
+                    if let Some(t) = tunnel {
+                        t.shutdown().await;
+                    }
+                    return Err(e);
+                }
+            };
+        self.pools.lock().await.insert(
+            connection_id.to_string(),
+            PoolEntry {
+                handle: handle.clone(),
+                tunnel,
+            },
+        );
         self.emit_changed().await;
         Ok(handle)
     }
 
     pub async fn close(&self, connection_id: &str) {
         let removed = self.pools.lock().await.remove(connection_id);
-        if let Some(handle) = removed {
-            match handle {
+        if let Some(entry) = removed {
+            match entry.handle {
                 PoolHandle::Postgres(p) => p.close().await,
                 PoolHandle::MySql(p) => p.close().await,
                 PoolHandle::Sqlite(p) => p.close().await,
+            }
+            if let Some(t) = entry.tunnel {
+                t.shutdown().await;
             }
             self.emit_changed().await;
         }
@@ -95,7 +144,12 @@ impl PoolRegistry {
     }
 }
 
-async fn open_pool(conn: &SavedConnection, password: Option<&str>) -> AppResult<PoolHandle> {
+async fn open_pool(
+    conn: &SavedConnection,
+    password: Option<&str>,
+    host: &str,
+    port: u16,
+) -> AppResult<PoolHandle> {
     if matches!(conn.kind, DbKind::Sqlite) {
         return Ok(PoolHandle::Sqlite(
             sqlite_drv::connect(&conn.database).await?,
@@ -105,8 +159,8 @@ async fn open_pool(conn: &SavedConnection, password: Option<&str>) -> AppResult<
         &conn.kind,
         &conn.username,
         password,
-        &conn.host,
-        conn.port,
+        host,
+        port,
         &conn.database,
         conn.ssl,
     );

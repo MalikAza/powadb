@@ -2,7 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
-use crate::storage::{new_id, DbKind, SavedConnection};
+use crate::storage::{new_id, DbKind, SavedConnection, WgTunnel};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +23,12 @@ pub struct ConnectionInput {
     pub folder_id: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(default)]
+    pub wg_enabled: bool,
+    /// Raw `wireguard.conf` contents. `None` means "don't touch the stored conf";
+    /// pass `Some("")` to clear it.
+    #[serde(default)]
+    pub wg_config: Option<String>,
 }
 
 #[tauri::command]
@@ -36,6 +42,11 @@ pub async fn save_connection(
     input: ConnectionInput,
 ) -> AppResult<SavedConnection> {
     let id = input.id.unwrap_or_else(new_id);
+    let wg = if input.wg_enabled {
+        Some(WgTunnel::default())
+    } else {
+        None
+    };
     let conn = SavedConnection {
         id: id.clone(),
         name: input.name,
@@ -47,6 +58,7 @@ pub async fn save_connection(
         ssl: input.ssl,
         folder_id: input.folder_id,
         color: input.color,
+        wg,
     };
     state.storage.upsert(&conn).await?;
     if let Some(pw) = input.password {
@@ -54,6 +66,16 @@ pub async fn save_connection(
             state.storage.set_password(&id, None).await?;
         } else {
             state.storage.set_password(&id, Some(&pw)).await?;
+        }
+    }
+    if !input.wg_enabled {
+        // Disabling WG clears the stored config so we don't leak it.
+        state.storage.set_wg_config(&id, None).await?;
+    } else if let Some(cfg) = input.wg_config.as_deref() {
+        if cfg.trim().is_empty() {
+            state.storage.set_wg_config(&id, None).await?;
+        } else {
+            state.storage.set_wg_config(&id, Some(cfg)).await?;
         }
     }
     state.pools.close(&id).await;
@@ -86,15 +108,41 @@ pub async fn get_connection_password(
     state.storage.get_password(&id).await
 }
 
+#[tauri::command]
+pub async fn get_connection_wg_config(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<String>> {
+    state.storage.get_wg_config(&id).await
+}
+
+/// Read a small text file (under 1 MiB) from disk. Used by the new-connection
+/// form so the user can "Load wireguard.conf" instead of pasting.
+#[tauri::command]
+pub async fn read_text_file(path: String) -> AppResult<String> {
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| AppError::Other(format!("stat {path}: {e}")))?;
+    if meta.len() > 1024 * 1024 {
+        return Err(AppError::Other(format!(
+            "{path} is larger than 1 MiB; refusing to load"
+        )));
+    }
+    tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| AppError::Other(format!("read {path}: {e}")))
+}
+
 pub async fn resolve_connection(
     state: &AppState,
     connection_id: &str,
-) -> AppResult<(SavedConnection, Option<String>)> {
+) -> AppResult<(SavedConnection, Option<String>, Option<String>)> {
     let all = state.storage.list().await?;
     let conn = all
         .into_iter()
         .find(|c| c.id == connection_id)
         .ok_or_else(|| AppError::ConnectionNotFound(connection_id.to_string()))?;
     let pw = state.storage.get_password(connection_id).await?;
-    Ok((conn, pw))
+    let wg = state.storage.get_wg_config(connection_id).await?;
+    Ok((conn, pw, wg))
 }
