@@ -1,7 +1,7 @@
 {
   "name": "powadb",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -47,6 +47,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "lucide-react": "^1.14.0",
+    "ol": "^10.9.0",
     "radix-ui": "^1.4.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -63,6 +64,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.4.14",
     "@tauri-apps/cli": "^2",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^25.6.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
