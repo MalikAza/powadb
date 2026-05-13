@@ -1,3 +1,12 @@
+## [0.5.0] - 2026-05-13
+
+### Added
+- Wireguard tunnel connections.
+- Connections form now accepts a custom color via a color picker.
+
+### Changed
+- Dangerous actions now triggers an alert as a confirmation dialog as a better UX than a double click.
+
 ## [0.4.1] - 2026-05-12
 
 Oopsie, we forgot about the latest version's changelog... So here it is.

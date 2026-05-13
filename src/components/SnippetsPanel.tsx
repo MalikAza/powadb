@@ -6,13 +6,14 @@ import { Label } from "@/components/ui/label";
 import { ipc, type Snippet } from "../ipc";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export function SnippetsPanel() {
   const { activeId } = useConnections();
   const { tabs, activeTabId, patchTab } = useTabs();
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [loading, setLoading] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
   const [saveScope, setSaveScope] = useState<"connection" | "global">("connection");
@@ -32,12 +33,6 @@ export function SnippetsPanel() {
   useEffect(() => {
     refresh();
   }, [activeId]);
-
-  useEffect(() => {
-    if (!confirmDeleteId) return;
-    const t = setTimeout(() => setConfirmDeleteId(null), 3000);
-    return () => clearTimeout(t);
-  }, [confirmDeleteId]);
 
   async function saveCurrent() {
     if (!activeTab || !saveName.trim()) return;
@@ -143,7 +138,6 @@ export function SnippetsPanel() {
       )}
       <div className="flex flex-col gap-1">
         {snippets.map((s) => {
-          const armed = confirmDeleteId === s.id;
           const oneLine = s.sql.replace(/\s+/g, " ").trim();
           return (
             <div
@@ -156,18 +150,13 @@ export function SnippetsPanel() {
                 <span className="truncate font-medium">{s.name}</span>
                 <Button
                   size="icon"
-                  variant={armed ? "destructive" : "ghost"}
+                  variant="ghost"
                   className="size-5"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (armed) {
-                      ipc.deleteSnippet(s.id).then(refresh);
-                      setConfirmDeleteId(null);
-                    } else {
-                      setConfirmDeleteId(s.id);
-                    }
+                    setPendingDelete(s);
                   }}
-                  title={armed ? "Click again to confirm" : "Delete"}
+                  title="Delete"
                 >
                   <X className="size-3" />
                 </Button>
@@ -180,6 +169,22 @@ export function SnippetsPanel() {
           );
         })}
       </div>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={`Delete snippet "${pendingDelete?.name ?? ""}"?`}
+        description="The snippet will be permanently removed."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (!pendingDelete) return;
+          const id = pendingDelete.id;
+          setPendingDelete(null);
+          ipc.deleteSnippet(id).then(refresh);
+        }}
+      />
     </div>
   );
 }

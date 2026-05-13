@@ -20,6 +20,7 @@ import { useConnections } from "../stores/connections";
 import { useSchema } from "../stores/schema";
 import { useTabs } from "../stores/tabs";
 import { useUi } from "../stores/ui";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export function SchemaTree() {
   const { activeId, connections } = useConnections();
@@ -44,7 +45,7 @@ export function SchemaTree() {
   const [createDbOpen, setCreateDbOpen] = useState(false);
   const [createDbName, setCreateDbName] = useState("");
   const [creatingDb, setCreatingDb] = useState(false);
-  const [confirmDropDb, setConfirmDropDb] = useState<string | null>(null);
+  const [pendingDropDb, setPendingDropDb] = useState<string | null>(null);
   const [droppingDb, setDroppingDb] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -83,15 +84,9 @@ export function SchemaTree() {
     setDatabases(null);
     setCreateDbOpen(false);
     setCreateDbName("");
-    setConfirmDropDb(null);
+    setPendingDropDb(null);
     if (activeId) refresh();
   }, [activeId, conn?.database]);
-
-  useEffect(() => {
-    if (!confirmDropDb) return;
-    const t = setTimeout(() => setConfirmDropDb(null), 3000);
-    return () => clearTimeout(t);
-  }, [confirmDropDb]);
 
   async function refreshDatabases() {
     if (!activeId) return;
@@ -129,7 +124,7 @@ export function SchemaTree() {
     try {
       await ipc.dropDatabase(activeId, db);
       toast.success(`Database "${db}" dropped`);
-      setConfirmDropDb(null);
+      setPendingDropDb(null);
       await refreshDatabases();
     } catch (e) {
       toast.error(`Failed to drop database: ${String(e)}`);
@@ -285,7 +280,6 @@ export function SchemaTree() {
           {databasesOpen &&
             databases.map((db) => {
               const isActive = db === conn?.database;
-              const armed = confirmDropDb === db;
               const isDropping = droppingDb === db;
               return (
                 <div
@@ -309,17 +303,10 @@ export function SchemaTree() {
                   {supportsDbAdmin && !isActive && (
                     <button
                       type="button"
-                      onClick={() => {
-                        if (armed) dropDatabase(db);
-                        else setConfirmDropDb(db);
-                      }}
+                      onClick={() => setPendingDropDb(db)}
                       disabled={isDropping}
-                      title={armed ? `Click again to drop "${db}"` : `Drop ${db}`}
-                      className={`mr-1 rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 ${
-                        armed
-                          ? "text-destructive opacity-100"
-                          : "text-muted-foreground hover:text-destructive"
-                      }`}
+                      title={`Drop ${db}`}
+                      className="mr-1 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
                     >
                       <Trash2 className="size-3" />
                     </button>
@@ -436,6 +423,19 @@ export function SchemaTree() {
             })}
         </div>
       ))}
+
+      <ConfirmDialog
+        open={pendingDropDb !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDropDb(null);
+        }}
+        title={`Drop database "${pendingDropDb ?? ""}"?`}
+        description="This cannot be undone. All tables, views, and data in the database will be lost."
+        confirmLabel="Drop"
+        onConfirm={() => {
+          if (pendingDropDb) dropDatabase(pendingDropDb);
+        }}
+      />
     </div>
   );
 }

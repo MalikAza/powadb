@@ -34,6 +34,11 @@ impl DbKind {
     }
 }
 
+/// Non-secret WireGuard summary attached to a `SavedConnection`. The full conf
+/// (containing the private key) is fetched separately via `get_wg_config`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WgTunnel {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedConnection {
     pub id: String,
@@ -49,6 +54,8 @@ pub struct SavedConnection {
     pub folder_id: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(default)]
+    pub wg: Option<WgTunnel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +107,13 @@ impl Storage {
             .execute(&pool)
             .await;
         let _ = sqlx::query("ALTER TABLE connections ADD COLUMN color TEXT")
+            .execute(&pool)
+            .await;
+        let _ =
+            sqlx::query("ALTER TABLE connections ADD COLUMN wg_enabled INTEGER NOT NULL DEFAULT 0")
+                .execute(&pool)
+                .await;
+        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN wg_config TEXT")
             .execute(&pool)
             .await;
 
@@ -336,7 +350,8 @@ impl Storage {
 
     pub async fn list(&self) -> AppResult<Vec<SavedConnection>> {
         let rows = sqlx::query(
-            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color FROM connections ORDER BY name",
+            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled
+             FROM connections ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -347,6 +362,7 @@ impl Storage {
                 let kind_s: String = r.try_get("kind").ok()?;
                 let port_i: i64 = r.try_get("port").ok()?;
                 let ssl_i: i64 = r.try_get("ssl").ok()?;
+                let wg_enabled_i: i64 = r.try_get("wg_enabled").ok().unwrap_or(0);
                 Some(SavedConnection {
                     id: r.try_get("id").ok()?,
                     name: r.try_get("name").ok()?,
@@ -358,6 +374,11 @@ impl Storage {
                     ssl: ssl_i != 0,
                     folder_id: r.try_get("folder_id").ok().flatten(),
                     color: r.try_get("color").ok().flatten(),
+                    wg: if wg_enabled_i != 0 {
+                        Some(WgTunnel::default())
+                    } else {
+                        None
+                    },
                 })
             })
             .collect())
@@ -366,8 +387,9 @@ impl Storage {
     pub async fn upsert(&self, c: &SavedConnection) -> AppResult<()> {
         sqlx::query(
             r#"
-            INSERT INTO connections (id, name, kind, host, port, database, username, ssl, folder_id, color)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            INSERT INTO connections
+                (id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 kind=excluded.kind,
@@ -377,7 +399,8 @@ impl Storage {
                 username=excluded.username,
                 ssl=excluded.ssl,
                 folder_id=excluded.folder_id,
-                color=excluded.color
+                color=excluded.color,
+                wg_enabled=excluded.wg_enabled
             "#,
         )
         .bind(&c.id)
@@ -390,6 +413,7 @@ impl Storage {
         .bind(c.ssl as i64)
         .bind(&c.folder_id)
         .bind(&c.color)
+        .bind(c.wg.is_some() as i64)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -471,6 +495,23 @@ impl Storage {
     pub async fn set_password(&self, id: &str, password: Option<&str>) -> AppResult<()> {
         sqlx::query("UPDATE connections SET password = ?1 WHERE id = ?2")
             .bind(password)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_wg_config(&self, id: &str) -> AppResult<Option<String>> {
+        let row = sqlx::query("SELECT wg_config FROM connections WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get::<Option<String>, _>("wg_config").ok().flatten()))
+    }
+
+    pub async fn set_wg_config(&self, id: &str, config: Option<&str>) -> AppResult<()> {
+        sqlx::query("UPDATE connections SET wg_config = ?1 WHERE id = ?2")
+            .bind(config)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -560,6 +601,7 @@ mod tests {
             ssl: false,
             folder_id: None,
             color: None,
+            wg: None,
         }
     }
 
@@ -658,6 +700,35 @@ mod tests {
     async fn get_password_for_missing_connection_is_none() {
         let (_d, s) = fresh_storage().await;
         assert_eq!(s.get_password("missing").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn wg_enabled_flag_round_trips() {
+        let (_d, s) = fresh_storage().await;
+        let mut conn = sample_conn("a");
+        conn.wg = Some(WgTunnel::default());
+        s.upsert(&conn).await.unwrap();
+        assert!(s.list().await.unwrap()[0].wg.is_some());
+
+        conn.wg = None;
+        s.upsert(&conn).await.unwrap();
+        assert!(s.list().await.unwrap()[0].wg.is_none());
+    }
+
+    #[tokio::test]
+    async fn wg_config_round_trips() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        assert_eq!(s.get_wg_config("a").await.unwrap(), None);
+
+        s.set_wg_config("a", Some("[Interface]\n…")).await.unwrap();
+        assert_eq!(
+            s.get_wg_config("a").await.unwrap().as_deref(),
+            Some("[Interface]\n…")
+        );
+
+        s.set_wg_config("a", None).await.unwrap();
+        assert_eq!(s.get_wg_config("a").await.unwrap(), None);
     }
 
     #[tokio::test]

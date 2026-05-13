@@ -33,6 +33,11 @@ export const ipc = {
   getConnectionPassword: (id: string): Promise<string | null> =>
     invoke("get_connection_password", { id }),
 
+  getConnectionWgConfig: (id: string): Promise<string | null> =>
+    invoke("get_connection_wg_config", { id }),
+
+  readTextFile: (path: string): Promise<string> => invoke("read_text_file", { path }),
+
   disconnect: (id: string): Promise<void> => invoke("disconnect", { id }),
 
   listActiveConnections: (): Promise<string[]> => invoke("list_active_connections"),
@@ -91,6 +96,8 @@ export const ipc = {
     invoke("pick_save_path", { defaultFilename }),
 
   pickOpenPath: (): Promise<string | null> => invoke("pick_open_path"),
+
+  pickWgConfPath: (): Promise<string | null> => invoke("pick_wg_conf_path"),
 
   pickSqlitePath: (): Promise<string | null> => invoke("pick_sqlite_path"),
 

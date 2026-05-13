@@ -113,6 +113,19 @@ pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
 }
 
 #[tauri::command]
+pub async fn pick_wg_conf_path(app: AppHandle) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .add_filter("WireGuard config", &["conf"])
+        .add_filter("All files", &["*"])
+        .pick_file(move |path| {
+            let _ = tx.send(path.map(|p| p.to_string()));
+        });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+#[tauri::command]
 pub async fn pick_sqlite_path(app: AppHandle) -> AppResult<Option<String>> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
@@ -149,7 +162,7 @@ pub async fn export_database(
     let cancel_flag = state.jobs.register(&options.job_id).await;
     let result = match options.engine {
         Engine::Tool => {
-            let (conn, password) = resolve_connection(&state, &connection_id).await?;
+            let (conn, password, _) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
             export_with_tool(
                 &app,
@@ -187,7 +200,7 @@ pub async fn import_sql(
     let cancel_flag = state.jobs.register(&options.job_id).await;
     let result = match options.engine {
         Engine::Tool => {
-            let (conn, password) = resolve_connection(&state, &connection_id).await?;
+            let (conn, password, _) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
             import_with_tool(
                 &app,
