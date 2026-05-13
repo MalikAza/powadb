@@ -2,6 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import { ColorPicker } from "@/components/ColorPicker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -28,7 +29,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  CONNECTION_COLORS,
   type ConnectionFormInput,
   type ConnectionFormValues,
   connectionFormSchema,
@@ -393,31 +393,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
                         Color tag
                       </FormLabel>
                       <FormControl>
-                        <div className="flex flex-wrap gap-1.5">
-                          {CONNECTION_COLORS.map((c) => {
-                            const selected = (field.value ?? null) === c.value;
-                            const isNone = c.value === null;
-                            return (
-                              <button
-                                key={c.name}
-                                type="button"
-                                onClick={() => field.onChange(c.value)}
-                                aria-label={c.name}
-                                title={c.name}
-                                className={`size-6 rounded-full border transition-all ${
-                                  selected
-                                    ? "border-foreground ring-2 ring-foreground/30"
-                                    : "border-border hover:scale-110"
-                                } ${isNone ? "bg-transparent" : ""}`}
-                                style={isNone ? undefined : { backgroundColor: c.swatch }}
-                              >
-                                {isNone && (
-                                  <span className="text-[10px] text-muted-foreground">∅</span>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        <ColorPicker value={field.value ?? null} onChange={field.onChange} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
