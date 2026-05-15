@@ -7,12 +7,13 @@ import {
   MoreVertical,
   Plus,
   RefreshCw,
+  Search,
   Sun,
   Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ChangelogView } from "@/components/ChangelogView";
 import { ThemeEditor } from "@/components/ThemeEditor";
@@ -31,7 +32,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { COMMUNITY_THEMES, type CommunityTheme } from "@/lib/communityThemes";
 import { type CustomTheme, fromExported, ThemeImportError, toExported } from "@/lib/themeTokens";
 import { runUpdateCheck } from "@/lib/updater";
 import { cn } from "@/lib/utils";
@@ -51,6 +54,18 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<CustomTheme | null>(null);
+
+  const [communityQuery, setCommunityQuery] = useState("");
+  const [communityFilter, setCommunityFilter] = useState<"all" | "light" | "dark">("all");
+
+  const filteredCommunity = useMemo(() => {
+    const q = communityQuery.trim().toLowerCase();
+    return COMMUNITY_THEMES.filter((c) => {
+      if (communityFilter !== "all" && c.theme.base !== communityFilter) return false;
+      if (q && !c.theme.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [communityQuery, communityFilter]);
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [pgStatus, setPgStatus] = useState<{ dump: string | null; client: string | null } | null>(
@@ -154,6 +169,21 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
     }
   }
 
+  async function installCommunity({ theme }: CommunityTheme) {
+    try {
+      const saved = await upsertCustom({
+        name: theme.name,
+        base: theme.base,
+        radius: theme.radius,
+        colors: theme.colors,
+      });
+      await setActiveSelection({ kind: "custom", id: saved.id });
+      toast.success(`Installed "${saved.name}"`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
@@ -244,6 +274,68 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                   )}
                 </div>
               </Section>
+
+              {COMMUNITY_THEMES.length > 0 && (
+                <Section
+                  title="Community themes"
+                  description="Curated palettes shipped with PowaDB. Install one to add a copy to your custom themes."
+                >
+                  <div className="grid gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative min-w-0 flex-1">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={communityQuery}
+                          onChange={(e) => setCommunityQuery(e.target.value)}
+                          placeholder="Search themes…"
+                          className="h-8 pl-7 text-xs"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                        <FilterPill
+                          active={communityFilter === "all"}
+                          onClick={() => setCommunityFilter("all")}
+                        >
+                          All
+                        </FilterPill>
+                        <FilterPill
+                          active={communityFilter === "light"}
+                          onClick={() => setCommunityFilter("light")}
+                          icon={<Sun className="size-3" />}
+                        >
+                          Light
+                        </FilterPill>
+                        <FilterPill
+                          active={communityFilter === "dark"}
+                          onClick={() => setCommunityFilter("dark")}
+                          icon={<Moon className="size-3" />}
+                        >
+                          Dark
+                        </FilterPill>
+                      </div>
+                    </div>
+
+                    {filteredCommunity.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                        No themes match.
+                      </div>
+                    ) : (
+                      <ScrollArea className="h-[208px] rounded-md border">
+                        <div className="grid gap-1 p-1 pr-3">
+                          {filteredCommunity.map((c) => (
+                            <CommunityThemeRow
+                              key={c.slug}
+                              community={c}
+                              onInstall={() => installCommunity(c)}
+                            />
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                  </div>
+                </Section>
+              )}
             </div>
           </TabsContent>
 
@@ -352,6 +444,71 @@ function PresetCard({
       <span className={cn(selected ? "text-primary" : "text-muted-foreground")}>{icon}</span>
       <span className="text-xs font-medium">{label}</span>
     </button>
+  );
+}
+
+function FilterPill({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1 rounded-sm px-2 py-1 text-[11px] font-medium transition-colors",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function CommunityThemeRow({
+  community,
+  onInstall,
+}: {
+  community: CommunityTheme;
+  onInstall: () => void;
+}) {
+  const swatches: Array<keyof typeof community.theme.colors> = [
+    "primary",
+    "background",
+    "accent",
+    "border",
+  ];
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-border p-2">
+      <div className="flex gap-1">
+        {swatches.map((token) => (
+          <span
+            key={token}
+            className="size-4 rounded-sm border"
+            style={{ backgroundColor: community.theme.colors[token] }}
+            aria-hidden="true"
+          />
+        ))}
+      </div>
+      <div className="flex flex-1 items-center gap-2">
+        <span className="text-sm font-medium">{community.theme.name}</span>
+        <span className="text-[11px] text-muted-foreground">{community.theme.base}</span>
+      </div>
+      <Button variant="ghost" size="sm" onClick={onInstall} className="h-7 px-2">
+        <Download className="size-3.5" />
+        Install
+      </Button>
+    </div>
   );
 }
 

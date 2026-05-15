@@ -1,0 +1,32 @@
+{
+  "schema": "powadb-theme/v1",
+  "name": "Catppuccin Latte",
+  "base": "light",
+  "radius": "0.5rem",
+  "colors": {
+    "background": "#eff1f5",
+    "foreground": "#4c4f69",
+    "card": "#e6e9ef",
+    "card-foreground": "#4c4f69",
+    "popover": "#e6e9ef",
+    "popover-foreground": "#4c4f69",
+    "primary": "#8839ef",
+    "primary-foreground": "#eff1f5",
+    "secondary": "#ccd0da",
+    "secondary-foreground": "#4c4f69",
+    "muted": "#ccd0da",
+    "muted-foreground": "#6c6f85",
+    "accent": "#bcc0cc",
+    "accent-foreground": "#4c4f69",
+    "destructive": "#d20f39",
+    "destructive-foreground": "#eff1f5",
+    "border": "#bcc0cc",
+    "input": "#bcc0cc",
+    "ring": "#8839ef",
+    "sidebar": "#e6e9ef",
+    "sidebar-foreground": "#4c4f69",
+    "sidebar-border": "#bcc0cc",
+    "sidebar-accent": "#ccd0da",
+    "sidebar-accent-foreground": "#4c4f69"
+  }
+}

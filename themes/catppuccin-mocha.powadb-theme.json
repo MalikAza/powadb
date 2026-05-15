@@ -1,0 +1,32 @@
+{
+  "schema": "powadb-theme/v1",
+  "name": "Catppuccin Mocha",
+  "base": "dark",
+  "radius": "0.5rem",
+  "colors": {
+    "background": "#1e1e2e",
+    "foreground": "#cdd6f4",
+    "card": "#181825",
+    "card-foreground": "#cdd6f4",
+    "popover": "#181825",
+    "popover-foreground": "#cdd6f4",
+    "primary": "#cba6f7",
+    "primary-foreground": "#1e1e2e",
+    "secondary": "#313244",
+    "secondary-foreground": "#cdd6f4",
+    "muted": "#313244",
+    "muted-foreground": "#a6adc8",
+    "accent": "#45475a",
+    "accent-foreground": "#cdd6f4",
+    "destructive": "#f38ba8",
+    "destructive-foreground": "#1e1e2e",
+    "border": "#45475a",
+    "input": "#45475a",
+    "ring": "#cba6f7",
+    "sidebar": "#181825",
+    "sidebar-foreground": "#cdd6f4",
+    "sidebar-border": "#45475a",
+    "sidebar-accent": "#313244",
+    "sidebar-accent-foreground": "#cdd6f4"
+  }
+}

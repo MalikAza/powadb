@@ -16,6 +16,7 @@
     "lint:fix": "biome check --write src",
     "format": "biome format --write src",
     "check": "npm run typecheck && npm run lint",
+    "validate:themes": "node scripts/validate-themes.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

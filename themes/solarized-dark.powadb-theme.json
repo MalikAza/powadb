@@ -1,0 +1,32 @@
+{
+  "schema": "powadb-theme/v1",
+  "name": "Solarized Dark",
+  "base": "dark",
+  "radius": "0.5rem",
+  "colors": {
+    "background": "#002b36",
+    "foreground": "#839496",
+    "card": "#073642",
+    "card-foreground": "#839496",
+    "popover": "#073642",
+    "popover-foreground": "#839496",
+    "primary": "#268bd2",
+    "primary-foreground": "#002b36",
+    "secondary": "#073642",
+    "secondary-foreground": "#839496",
+    "muted": "#073642",
+    "muted-foreground": "#586e75",
+    "accent": "#073642",
+    "accent-foreground": "#93a1a1",
+    "destructive": "#dc322f",
+    "destructive-foreground": "#fdf6e3",
+    "border": "#586e75",
+    "input": "#586e75",
+    "ring": "#268bd2",
+    "sidebar": "#002b36",
+    "sidebar-foreground": "#839496",
+    "sidebar-border": "#586e75",
+    "sidebar-accent": "#073642",
+    "sidebar-accent-foreground": "#93a1a1"
+  }
+}

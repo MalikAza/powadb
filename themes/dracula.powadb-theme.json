@@ -1,0 +1,32 @@
+{
+  "schema": "powadb-theme/v1",
+  "name": "Dracula",
+  "base": "dark",
+  "radius": "0.5rem",
+  "colors": {
+    "background": "#282a36",
+    "foreground": "#f8f8f2",
+    "card": "#343746",
+    "card-foreground": "#f8f8f2",
+    "popover": "#343746",
+    "popover-foreground": "#f8f8f2",
+    "primary": "#bd93f9",
+    "primary-foreground": "#282a36",
+    "secondary": "#44475a",
+    "secondary-foreground": "#f8f8f2",
+    "muted": "#44475a",
+    "muted-foreground": "#6272a4",
+    "accent": "#6272a4",
+    "accent-foreground": "#f8f8f2",
+    "destructive": "#ff5555",
+    "destructive-foreground": "#f8f8f2",
+    "border": "#44475a",
+    "input": "#44475a",
+    "ring": "#bd93f9",
+    "sidebar": "#21222c",
+    "sidebar-foreground": "#f8f8f2",
+    "sidebar-border": "#44475a",
+    "sidebar-accent": "#44475a",
+    "sidebar-accent-foreground": "#f8f8f2"
+  }
+}
