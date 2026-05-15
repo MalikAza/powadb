@@ -68,15 +68,20 @@ pub async fn introspect_schema(
             })))
         }
         PoolHandle::MySql(pool) => {
+            // MySQL/MariaDB report information_schema string columns with a
+            // binary flag in many setups; without an explicit CAST sqlx decodes
+            // them as `Vec<u8>` and `try_get::<String>` silently fails, leaving
+            // every row with empty schema/table names. CAST AS CHAR forces a
+            // real text column so the decoder picks `String`.
             let rows = sqlx::query(
                 r#"
                 SELECT
-                    c.table_schema AS schema_name,
-                    c.table_name   AS table_name,
-                    c.column_name  AS column_name,
-                    c.data_type    AS data_type,
-                    (c.is_nullable = 'YES') AS nullable,
-                    t.table_type   AS table_type
+                    CAST(c.table_schema AS CHAR) AS schema_name,
+                    CAST(c.table_name   AS CHAR) AS table_name,
+                    CAST(c.column_name  AS CHAR) AS column_name,
+                    CAST(c.data_type    AS CHAR) AS data_type,
+                    (c.is_nullable = 'YES')      AS nullable,
+                    CAST(t.table_type   AS CHAR) AS table_type
                 FROM information_schema.columns c
                 JOIN information_schema.tables t
                   ON t.table_schema = c.table_schema AND t.table_name = c.table_name
@@ -174,9 +179,11 @@ pub async fn list_databases(
                 .collect())
         }
         PoolHandle::MySql(pool) => {
+            // See note in `introspect_schema`: information_schema string
+            // columns can come back binary-flagged, so we CAST to CHAR.
             let rows = sqlx::query(
                 r#"
-                SELECT schema_name AS name
+                SELECT CAST(schema_name AS CHAR) AS name
                 FROM information_schema.schemata
                 WHERE schema_name NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
                 ORDER BY schema_name

@@ -674,9 +674,13 @@ async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppRes
                 .collect())
         }
         PoolHandle::MySql(pool) => {
+            // CAST AS CHAR — see schema.rs note about information_schema text
+            // columns coming back binary-flagged.
             let rows = sqlx::query(
                 r#"
-                SELECT table_schema AS schema_name, table_name AS name
+                SELECT
+                    CAST(table_schema AS CHAR) AS schema_name,
+                    CAST(table_name   AS CHAR) AS name
                 FROM information_schema.tables
                 WHERE table_type = 'BASE TABLE'
                   AND table_schema = DATABASE()
@@ -799,14 +803,16 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
             ))
         }
         PoolHandle::MySql(pool) => {
+            // CAST AS CHAR — see schema.rs note about information_schema text
+            // columns coming back binary-flagged.
             let cols = sqlx::query(
                 r#"
                 SELECT
-                    column_name              AS name,
-                    column_type              AS column_type,
-                    is_nullable              AS nullable,
-                    column_default           AS default_expr,
-                    extra                    AS extra
+                    CAST(column_name    AS CHAR) AS name,
+                    CAST(column_type    AS CHAR) AS column_type,
+                    CAST(is_nullable    AS CHAR) AS nullable,
+                    CAST(column_default AS CHAR) AS default_expr,
+                    CAST(extra          AS CHAR) AS extra
                 FROM information_schema.columns
                 WHERE table_schema = DATABASE() AND table_name = ?
                 ORDER BY ordinal_position
@@ -818,7 +824,7 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
 
             let pk_cols = sqlx::query(
                 r#"
-                SELECT column_name AS name
+                SELECT CAST(column_name AS CHAR) AS name
                 FROM information_schema.key_column_usage
                 WHERE constraint_name = 'PRIMARY'
                   AND table_schema = DATABASE()

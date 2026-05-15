@@ -204,20 +204,22 @@ pub(crate) async fn introspect_postgres(
 }
 
 pub(crate) async fn introspect_mysql(pool: &sqlx::MySqlPool) -> AppResult<DiagramIntrospection> {
+    // CAST AS CHAR forces a non-binary string type so sqlx decodes the column
+    // as `String` instead of `Vec<u8>` — see schema.rs for the full note.
     let col_sql = r#"
         SELECT
-            c.table_schema  AS schema_name,
-            c.table_name    AS table_name,
-            c.column_name   AS column_name,
-            c.data_type     AS data_type,
+            CAST(c.table_schema AS CHAR) AS schema_name,
+            CAST(c.table_name   AS CHAR) AS table_name,
+            CAST(c.column_name  AS CHAR) AS column_name,
+            CAST(c.data_type    AS CHAR) AS data_type,
             (c.is_nullable = 'YES')                AS nullable,
-            c.column_default                       AS column_default,
+            CAST(c.column_default AS CHAR)         AS column_default,
             c.ordinal_position                     AS ordinal,
             c.character_maximum_length             AS char_max_len,
             c.numeric_precision                    AS numeric_precision,
             c.numeric_scale                        AS numeric_scale,
             (c.column_key = 'PRI')                 AS is_pk,
-            t.table_type                           AS table_type
+            CAST(t.table_type AS CHAR)             AS table_type
         FROM information_schema.columns c
         JOIN information_schema.tables t
           ON t.table_schema = c.table_schema AND t.table_name = c.table_name
@@ -256,17 +258,17 @@ pub(crate) async fn introspect_mysql(pool: &sqlx::MySqlPool) -> AppResult<Diagra
 
     let fk_sql = r#"
         SELECT
-            kcu.constraint_schema  AS constraint_schema,
-            kcu.constraint_name    AS constraint_name,
-            kcu.table_schema       AS from_schema,
-            kcu.table_name         AS from_table,
-            kcu.column_name        AS from_column,
-            kcu.ordinal_position   AS ordinal,
-            kcu.referenced_table_schema AS to_schema,
-            kcu.referenced_table_name   AS to_table,
-            kcu.referenced_column_name  AS to_column,
-            rc.update_rule         AS on_update,
-            rc.delete_rule         AS on_delete
+            CAST(kcu.constraint_schema      AS CHAR) AS constraint_schema,
+            CAST(kcu.constraint_name        AS CHAR) AS constraint_name,
+            CAST(kcu.table_schema           AS CHAR) AS from_schema,
+            CAST(kcu.table_name             AS CHAR) AS from_table,
+            CAST(kcu.column_name            AS CHAR) AS from_column,
+            kcu.ordinal_position                     AS ordinal,
+            CAST(kcu.referenced_table_schema AS CHAR) AS to_schema,
+            CAST(kcu.referenced_table_name   AS CHAR) AS to_table,
+            CAST(kcu.referenced_column_name  AS CHAR) AS to_column,
+            CAST(rc.update_rule              AS CHAR) AS on_update,
+            CAST(rc.delete_rule              AS CHAR) AS on_delete
         FROM information_schema.key_column_usage kcu
         JOIN information_schema.referential_constraints rc
           ON rc.constraint_schema = kcu.constraint_schema
