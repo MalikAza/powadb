@@ -9,7 +9,7 @@
 Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust](https://www.rust-lang.org).
 
 [![Latest release](https://img.shields.io/github/v/release/MalikAza/powadb?style=flat-square)](https://github.com/MalikAza/powadb/releases/latest)
-[![Release workflow](https://img.shields.io/github/actions/workflow/status/MalikAza/powadb/release.yml?style=flat-square&label=release)](https://github.com/MalikAza/powadb/actions/workflows/release.yml)
+[![Checks](https://img.shields.io/github/actions/workflow/status/MalikAza/powadb/checks.yml?branch=main&style=flat-square&label=release)](https://github.com/MalikAza/powadb/actions/workflows/checks.yml?query=branch%3Amain)
 ![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=flat-square)
 
 [Download](#download) · [Features](#features) · [Build from source](#build-from-source) · [Contributing](#contributing)
@@ -20,16 +20,21 @@ Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust
 
 ## Features
 
-- 🔌 **Multi-engine** — PostgreSQL and MySQL, connected via [`sqlx`](https://github.com/launchbadge/sqlx).
-- ✍️ **SQL editor** — CodeMirror 6 with syntax highlighting and autocompletion.
-- 📊 **Virtualized results grid** — TanStack Table + Virtual, fluid on millions of rows.
-- 🗂️ **Schema browser** — schemas, tables, columns and indexes at a glance.
+- 🔌 **Multi-engine** — PostgreSQL, MySQL and SQLite via [`sqlx`](https://github.com/launchbadge/sqlx).
+- 🗄️ **Multiple databases per connection** — switch the active database from the command palette or the schema tree; create and drop databases inline.
+- 🔐 **Tunneled connections** — connect through an **SSH** jump host or a **WireGuard** tunnel, with the tunnel managed transparently by the app.
+- ✍️ **SQL editor** — CodeMirror 6 with syntax highlighting and schema-aware autocompletion.
+- 📊 **Virtualized results grid** — TanStack Table + Virtual, fluid on millions of rows; multi-row select and bulk delete.
 - 🛠️ **Inline DML editing** — primary-key-aware updates straight from the grid.
+- 🗂️ **Schema browser** — schemas, tables, columns and indexes at a glance, with full-text search.
+- 🧬 **Schema diagram** — visualize tables and relations on an interactive diagram and export it to image.
+- 🗺️ **Geometry / GIS visualization** — preview geometry columns on a real map (single cell, multi-row, or whole column) directly from the results grid.
 - 🧭 **EXPLAIN view** — visualize query plans.
-- 📁 **Connection manager** — organize connections in folders, optional saved passwords.
+- 📦 **Dump &amp; restore** — export and import databases through `pg_dump` / `mysqldump` / `sqlite3` (configurable binary paths), with progress reporting and cancellation.
+- 📁 **Connection manager** — organize connections in folders, color-tag each one, export / import the whole set, optionally remember passwords.
 - 🕓 **History & snippets** — recall past queries and save reusable SQL.
-- ⌘ **Command palette** — quick navigation across the app.
-- 🌗 **Light & dark themes.**
+- ⌘ **Command palette** — quick navigation, database switching, connection close, all from the keyboard.
+- 🎨 **Themes** — light / dark / system, plus drop-in custom themes via `.powadb-theme.json` files (Catppuccin, Dracula, Gruvbox, Nord, Solarized, Tokyo Night ship with the app).
 - ⬆️ **Auto-update** — built-in, signed updates.
 
 ## Download
@@ -78,8 +83,9 @@ Artifacts land in `src-tauri/target/release/bundle/`.
 ### Quality checks
 
 ```bash
-npm run check         # typecheck + biome lint
-npm run lint:fix      # auto-fix biome issues
+npm run check             # typecheck + biome lint
+npm run lint:fix          # auto-fix biome issues
+npm run validate:themes   # validate bundled theme files against the schema
 cd src-tauri && cargo clippy -- -D warnings && cargo fmt --check
 ```
 
@@ -99,14 +105,16 @@ PowaDB is a single Tauri 2 app — React 19 / TypeScript frontend in `src/`, Rus
 
 ```
 src/                       React app
-  components/              UI (editor, results grid, panels, dialogs)
+  components/              UI (editor, results grid, diagram, geometry map, panels, dialogs)
   stores/                  Zustand stores (connections, tabs, schema, …)
   ipc/index.ts             Typed wrappers for every Tauri command
 src-tauri/src/
-  commands/                Tauri command handlers (query, schema, dump, …)
-  drivers/                 Postgres / MySQL execution + value coercion
+  commands/                Tauri command handlers (query, schema, dump, diagram, geo, …)
+  drivers/                 Postgres / MySQL / SQLite execution + value coercion
+  ssh/                     SSH tunnel manager
+  wireguard/               WireGuard tunnel manager
   pool_registry.rs         Live sqlx pool cache + query cancellation
-  storage.rs               Local SQLite store (connections, history, snippets)
+  storage.rs               Local SQLite store (connections, history, snippets, settings)
 ```
 
 For a deeper tour — IPC contract, the four `AppState` sub-systems, cancellation patterns — see [`CLAUDE.md`](./CLAUDE.md).
