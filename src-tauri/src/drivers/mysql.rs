@@ -109,10 +109,23 @@ fn decode_mysql(row: &MySqlRow, idx: usize, type_name: &str) -> AppResult<Value>
                 return Ok(Value::Null);
             }
         }
-        "DATETIME" | "TIMESTAMP" => {
+        "DATETIME" => {
             let v: Result<Option<sqlx::types::chrono::NaiveDateTime>, _> = row.try_get(idx);
             if let Ok(Some(x)) = v {
                 return Ok(json!(x.to_string()));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
+        }
+        "TIMESTAMP" => {
+            // sqlx-mysql's `NaiveDateTime` decoder rejects the TIMESTAMP column
+            // type (it's only compatible with DATETIME). `DateTime<Utc>` is the
+            // right target — it's marked compatible with both.
+            let v: Result<Option<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>>, _> =
+                row.try_get(idx);
+            if let Ok(Some(x)) = v {
+                return Ok(json!(x.naive_utc().to_string()));
             }
             if let Ok(None) = v {
                 return Ok(Value::Null);
