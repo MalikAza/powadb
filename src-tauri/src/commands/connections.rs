@@ -2,7 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
-use crate::storage::{new_id, DbKind, SavedConnection, WgTunnel};
+use crate::storage::{new_id, DbKind, SavedConnection, SshTunnel, WgTunnel};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +29,12 @@ pub struct ConnectionInput {
     /// pass `Some("")` to clear it.
     #[serde(default)]
     pub wg_config: Option<String>,
+    #[serde(default)]
+    pub ssh_enabled: bool,
+    /// JSON-serialized `SshConfig`. Same semantics as `wg_config`: `None` =
+    /// don't touch, `Some("")` = clear.
+    #[serde(default)]
+    pub ssh_config: Option<String>,
 }
 
 #[tauri::command]
@@ -41,9 +47,19 @@ pub async fn save_connection(
     state: State<'_, AppState>,
     input: ConnectionInput,
 ) -> AppResult<SavedConnection> {
+    if input.wg_enabled && input.ssh_enabled {
+        return Err(AppError::Other(
+            "a connection can use either WireGuard or SSH as its tunnel, not both".into(),
+        ));
+    }
     let id = input.id.unwrap_or_else(new_id);
     let wg = if input.wg_enabled {
         Some(WgTunnel::default())
+    } else {
+        None
+    };
+    let ssh = if input.ssh_enabled {
+        Some(SshTunnel::default())
     } else {
         None
     };
@@ -59,6 +75,7 @@ pub async fn save_connection(
         folder_id: input.folder_id,
         color: input.color,
         wg,
+        ssh,
     };
     state.storage.upsert(&conn).await?;
     if let Some(pw) = input.password {
@@ -76,6 +93,15 @@ pub async fn save_connection(
             state.storage.set_wg_config(&id, None).await?;
         } else {
             state.storage.set_wg_config(&id, Some(cfg)).await?;
+        }
+    }
+    if !input.ssh_enabled {
+        state.storage.set_ssh_config(&id, None).await?;
+    } else if let Some(cfg) = input.ssh_config.as_deref() {
+        if cfg.trim().is_empty() {
+            state.storage.set_ssh_config(&id, None).await?;
+        } else {
+            state.storage.set_ssh_config(&id, Some(cfg)).await?;
         }
     }
     state.pools.close(&id).await;
@@ -114,6 +140,14 @@ pub async fn get_connection_wg_config(
     id: String,
 ) -> AppResult<Option<String>> {
     state.storage.get_wg_config(&id).await
+}
+
+#[tauri::command]
+pub async fn get_connection_ssh_config(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<Option<String>> {
+    state.storage.get_ssh_config(&id).await
 }
 
 /// Read a small text file (under 1 MiB) from disk. Used by the new-connection
@@ -171,7 +205,12 @@ pub async fn write_binary_file(path: String, base64: String) -> AppResult<()> {
 pub async fn resolve_connection(
     state: &AppState,
     connection_id: &str,
-) -> AppResult<(SavedConnection, Option<String>, Option<String>)> {
+) -> AppResult<(
+    SavedConnection,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+)> {
     let all = state.storage.list().await?;
     let conn = all
         .into_iter()
@@ -179,5 +218,6 @@ pub async fn resolve_connection(
         .ok_or_else(|| AppError::ConnectionNotFound(connection_id.to_string()))?;
     let pw = state.storage.get_password(connection_id).await?;
     let wg = state.storage.get_wg_config(connection_id).await?;
-    Ok((conn, pw, wg))
+    let ssh = state.storage.get_ssh_config(connection_id).await?;
+    Ok((conn, pw, wg, ssh))
 }

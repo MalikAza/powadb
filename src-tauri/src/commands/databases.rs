@@ -44,7 +44,7 @@ pub async fn create_database(
     name: String,
 ) -> AppResult<()> {
     validate_db_name(&name)?;
-    let (conn, _, _) = resolve_connection(&state, &connection_id).await?;
+    let (conn, _, _, _) = resolve_connection(&state, &connection_id).await?;
     if matches!(conn.kind, DbKind::Sqlite) {
         return Err(AppError::Other(
             "creating databases is not supported for SQLite".into(),
@@ -74,7 +74,7 @@ pub async fn drop_database(
     name: String,
 ) -> AppResult<()> {
     validate_db_name(&name)?;
-    let (conn, _, _) = resolve_connection(&state, &connection_id).await?;
+    let (conn, _, _, _) = resolve_connection(&state, &connection_id).await?;
     if matches!(conn.kind, DbKind::Sqlite) {
         return Err(AppError::Other(
             "dropping databases is not supported for SQLite".into(),

@@ -36,6 +36,9 @@ export const ipc = {
   getConnectionWgConfig: (id: string): Promise<string | null> =>
     invoke("get_connection_wg_config", { id }),
 
+  getConnectionSshConfig: (id: string): Promise<string | null> =>
+    invoke("get_connection_ssh_config", { id }),
+
   readTextFile: (path: string): Promise<string> => invoke("read_text_file", { path }),
 
   writeTextFile: (path: string, contents: string): Promise<void> =>
@@ -156,6 +159,8 @@ export const ipc = {
     invoke("pick_open_path_with_filter", { filterLabel, extensions }),
 
   pickWgConfPath: (): Promise<string | null> => invoke("pick_wg_conf_path"),
+
+  pickSshKeyPath: (): Promise<string | null> => invoke("pick_ssh_key_path"),
 
   pickSqlitePath: (): Promise<string | null> => invoke("pick_sqlite_path"),
 

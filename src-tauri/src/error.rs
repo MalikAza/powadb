@@ -20,6 +20,15 @@ pub enum AppError {
     #[error("wireguard tunnel error: {0}")]
     WgTunnel(String),
 
+    #[error("ssh tunnel error: {0}")]
+    SshTunnel(String),
+
+    #[error(
+        "ssh host key mismatch — expected {expected}, got {actual}. \
+         If you intentionally changed the server, edit the connection and clear the stored fingerprint."
+    )]
+    SshHostKeyMismatch { expected: String, actual: String },
+
     #[error("{0}")]
     Other(String),
 }

@@ -39,6 +39,11 @@ impl DbKind {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WgTunnel {}
 
+/// Non-secret SSH-tunnel marker. The auth material (password/passphrase/key
+/// path) lives only in `ssh_config` and is fetched via `get_ssh_config`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SshTunnel {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedConnection {
     pub id: String,
@@ -56,6 +61,8 @@ pub struct SavedConnection {
     pub color: Option<String>,
     #[serde(default)]
     pub wg: Option<WgTunnel>,
+    #[serde(default)]
+    pub ssh: Option<SshTunnel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +121,14 @@ impl Storage {
                 .execute(&pool)
                 .await;
         let _ = sqlx::query("ALTER TABLE connections ADD COLUMN wg_config TEXT")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query(
+            "ALTER TABLE connections ADD COLUMN ssh_enabled INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&pool)
+        .await;
+        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN ssh_config TEXT")
             .execute(&pool)
             .await;
 
@@ -535,7 +550,7 @@ impl Storage {
 
     pub async fn list(&self) -> AppResult<Vec<SavedConnection>> {
         let rows = sqlx::query(
-            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled
+            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled, ssh_enabled
              FROM connections ORDER BY name",
         )
         .fetch_all(&self.pool)
@@ -548,6 +563,7 @@ impl Storage {
                 let port_i: i64 = r.try_get("port").ok()?;
                 let ssl_i: i64 = r.try_get("ssl").ok()?;
                 let wg_enabled_i: i64 = r.try_get("wg_enabled").ok().unwrap_or(0);
+                let ssh_enabled_i: i64 = r.try_get("ssh_enabled").ok().unwrap_or(0);
                 Some(SavedConnection {
                     id: r.try_get("id").ok()?,
                     name: r.try_get("name").ok()?,
@@ -564,6 +580,11 @@ impl Storage {
                     } else {
                         None
                     },
+                    ssh: if ssh_enabled_i != 0 {
+                        Some(SshTunnel::default())
+                    } else {
+                        None
+                    },
                 })
             })
             .collect())
@@ -573,8 +594,8 @@ impl Storage {
         sqlx::query(
             r#"
             INSERT INTO connections
-                (id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                (id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled, ssh_enabled)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 kind=excluded.kind,
@@ -585,7 +606,8 @@ impl Storage {
                 ssl=excluded.ssl,
                 folder_id=excluded.folder_id,
                 color=excluded.color,
-                wg_enabled=excluded.wg_enabled
+                wg_enabled=excluded.wg_enabled,
+                ssh_enabled=excluded.ssh_enabled
             "#,
         )
         .bind(&c.id)
@@ -599,6 +621,7 @@ impl Storage {
         .bind(&c.folder_id)
         .bind(&c.color)
         .bind(c.wg.is_some() as i64)
+        .bind(c.ssh.is_some() as i64)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -696,6 +719,23 @@ impl Storage {
 
     pub async fn set_wg_config(&self, id: &str, config: Option<&str>) -> AppResult<()> {
         sqlx::query("UPDATE connections SET wg_config = ?1 WHERE id = ?2")
+            .bind(config)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_ssh_config(&self, id: &str) -> AppResult<Option<String>> {
+        let row = sqlx::query("SELECT ssh_config FROM connections WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get::<Option<String>, _>("ssh_config").ok().flatten()))
+    }
+
+    pub async fn set_ssh_config(&self, id: &str, config: Option<&str>) -> AppResult<()> {
+        sqlx::query("UPDATE connections SET ssh_config = ?1 WHERE id = ?2")
             .bind(config)
             .bind(id)
             .execute(&self.pool)
@@ -816,6 +856,7 @@ mod tests {
             folder_id: None,
             color: None,
             wg: None,
+            ssh: None,
         }
     }
 

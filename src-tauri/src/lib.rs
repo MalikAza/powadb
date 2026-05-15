@@ -3,6 +3,7 @@ mod drivers;
 mod error;
 mod job_registry;
 mod pool_registry;
+mod ssh;
 mod storage;
 mod wireguard;
 
@@ -167,6 +168,7 @@ pub fn run() {
             commands::connections::list_active_connections,
             commands::connections::get_connection_password,
             commands::connections::get_connection_wg_config,
+            commands::connections::get_connection_ssh_config,
             commands::connections::read_text_file,
             commands::connections::write_text_file,
             commands::connections::write_binary_file,
@@ -207,6 +209,7 @@ pub fn run() {
             commands::dump::pick_open_path,
             commands::dump::pick_open_path_with_filter,
             commands::dump::pick_wg_conf_path,
+            commands::dump::pick_ssh_key_path,
             commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
             commands::settings::save_settings,

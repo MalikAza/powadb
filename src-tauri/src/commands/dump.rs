@@ -166,6 +166,25 @@ pub async fn pick_wg_conf_path(app: AppHandle) -> AppResult<Option<String>> {
 }
 
 #[tauri::command]
+pub async fn pick_ssh_key_path(app: AppHandle) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // No `add_filter`: SSH key files have inconsistent extensions (none,
+    // `.pem`, `.key`, `id_*`…) and any filter on macOS would grey out everything
+    // that doesn't match. Letting all files through is the right default here.
+    let mut builder = app.dialog().file();
+    if let Some(home) = std::env::var_os("HOME") {
+        let ssh_dir = std::path::PathBuf::from(home).join(".ssh");
+        if ssh_dir.is_dir() {
+            builder = builder.set_directory(&ssh_dir);
+        }
+    }
+    builder.pick_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+#[tauri::command]
 pub async fn pick_sqlite_path(app: AppHandle) -> AppResult<Option<String>> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
@@ -202,7 +221,7 @@ pub async fn export_database(
     let cancel_flag = state.jobs.register(&options.job_id).await;
     let result = match options.engine {
         Engine::Tool => {
-            let (conn, password, _) = resolve_connection(&state, &connection_id).await?;
+            let (conn, password, _, _) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
             export_with_tool(
                 &app,
@@ -240,7 +259,7 @@ pub async fn import_sql(
     let cancel_flag = state.jobs.register(&options.job_id).await;
     let result = match options.engine {
         Engine::Tool => {
-            let (conn, password, _) = resolve_connection(&state, &connection_id).await?;
+            let (conn, password, _, _) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
             import_with_tool(
                 &app,

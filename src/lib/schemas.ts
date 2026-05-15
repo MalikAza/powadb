@@ -31,6 +31,9 @@ export const CONNECTION_COLORS = [
   { name: "pink", value: "#ec4899", swatch: "#ec4899" },
 ] as const;
 
+export const sshAuthMethodSchema = z.enum(["key", "password"]);
+export type SshAuthMethodEnum = z.infer<typeof sshAuthMethodSchema>;
+
 export const connectionFormSchema = z
   .object({
     name: z.string().min(1, "Name is required"),
@@ -45,6 +48,15 @@ export const connectionFormSchema = z
     color: z.string().nullable().default(null),
     wg_enabled: z.boolean().default(false),
     wg_config: z.string().optional().default(""),
+    ssh_enabled: z.boolean().default(false),
+    ssh_host: z.string().optional().default(""),
+    ssh_port: portSchema.optional().default(22),
+    ssh_username: z.string().optional().default(""),
+    ssh_auth_method: sshAuthMethodSchema.default("key"),
+    ssh_password: z.string().optional().default(""),
+    ssh_key_path: z.string().optional().default(""),
+    ssh_passphrase: z.string().optional().default(""),
+    ssh_known_host_fingerprint: z.string().nullable().default(null),
   })
   .superRefine((v, ctx) => {
     if (v.kind === "sqlite") {
@@ -78,6 +90,13 @@ export const connectionFormSchema = z
         message: "Username is required",
       });
     }
+    if (v.wg_enabled && v.ssh_enabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ssh_enabled"],
+        message: "Choose either WireGuard or SSH, not both",
+      });
+    }
     if (v.wg_enabled) {
       if (v.wg_config.trim() === "") {
         ctx.addIssue({
@@ -90,6 +109,44 @@ export const connectionFormSchema = z
           code: z.ZodIssueCode.custom,
           path: ["wg_config"],
           message: "Expected both [Interface] and [Peer] sections",
+        });
+      }
+    }
+    if (v.ssh_enabled) {
+      if (v.ssh_host.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_host"],
+          message: "SSH host is required",
+        });
+      }
+      if (v.ssh_username.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_username"],
+          message: "SSH username is required",
+        });
+      }
+      if (v.ssh_port < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_port"],
+          message: "Port must be ≥ 1",
+        });
+      }
+      if (v.ssh_auth_method === "password") {
+        if (v.ssh_password === "") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ssh_password"],
+            message: "SSH password is required",
+          });
+        }
+      } else if (v.ssh_key_path.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_key_path"],
+          message: "Select a private key file",
         });
       }
     }

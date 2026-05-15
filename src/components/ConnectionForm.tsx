@@ -38,7 +38,7 @@ import {
 } from "@/lib/schemas";
 import { ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
-import type { ConnectionInput, SavedConnection } from "../types";
+import type { ConnectionInput, SavedConnection, SshConfigPayload } from "../types";
 import { folderPaths } from "../utils/folderTree";
 
 type Props = {
@@ -72,10 +72,19 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
       color: editing?.color ?? null,
       wg_enabled: !!editing?.wg,
       wg_config: "",
+      ssh_enabled: !!editing?.ssh,
+      ssh_host: "",
+      ssh_port: 22,
+      ssh_username: "",
+      ssh_auth_method: "key",
+      ssh_password: "",
+      ssh_key_path: "",
+      ssh_passphrase: "",
+      ssh_known_host_fingerprint: null,
     },
   });
 
-  // Load existing password / WG config from backend when editing
+  // Load existing password / WG config / SSH config from backend when editing.
   useEffect(() => {
     if (!editing) return;
     ipc.getConnectionPassword(editing.id).then((pw) => {
@@ -84,6 +93,28 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
     if (editing.wg) {
       ipc.getConnectionWgConfig(editing.id).then((cfg) => {
         if (cfg) form.setValue("wg_config", cfg);
+      });
+    }
+    if (editing.ssh) {
+      ipc.getConnectionSshConfig(editing.id).then((cfg) => {
+        if (!cfg) return;
+        try {
+          const parsed = JSON.parse(cfg) as SshConfigPayload;
+          form.setValue("ssh_host", parsed.host ?? "");
+          form.setValue("ssh_port", parsed.port ?? 22);
+          form.setValue("ssh_username", parsed.username ?? "");
+          form.setValue("ssh_known_host_fingerprint", parsed.known_host_fingerprint ?? null);
+          if (parsed.auth?.kind === "password") {
+            form.setValue("ssh_auth_method", "password");
+            form.setValue("ssh_password", parsed.auth.password ?? "");
+          } else if (parsed.auth?.kind === "private_key") {
+            form.setValue("ssh_auth_method", "key");
+            form.setValue("ssh_key_path", parsed.auth.path ?? "");
+            form.setValue("ssh_passphrase", parsed.auth.passphrase ?? "");
+          }
+        } catch {
+          // Malformed stored config — leave fields blank so the user can re-enter.
+        }
       });
     }
   }, [editing?.id]);
@@ -104,7 +135,9 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
 
   const isSqlite = watchedKind === "sqlite";
   const wgEnabled = form.watch("wg_enabled");
-  const isMultiStep = wgEnabled && !isSqlite;
+  const sshEnabled = form.watch("ssh_enabled");
+  const isMultiStep = (wgEnabled || sshEnabled) && !isSqlite;
+  const sshAuthMethod = form.watch("ssh_auth_method");
 
   useEffect(() => {
     if (open) setStep(1);
@@ -112,6 +145,18 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
   useEffect(() => {
     if (!isMultiStep) setStep(1);
   }, [isMultiStep]);
+
+  // Mutual exclusion: WireGuard and SSH cannot both be enabled.
+  useEffect(() => {
+    if (wgEnabled && sshEnabled) {
+      form.setValue("ssh_enabled", false);
+    }
+  }, [wgEnabled]);
+  useEffect(() => {
+    if (wgEnabled && sshEnabled) {
+      form.setValue("wg_enabled", false);
+    }
+  }, [sshEnabled]);
 
   const STEP1_FIELDS = [
     "name",
@@ -125,9 +170,16 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
     "folder_id",
     "color",
     "wg_enabled",
+    "ssh_enabled",
   ] as const;
 
-  async function goToStep2() {
+  async function goToStep2(e?: React.MouseEvent) {
+    // Defensive: the Next/Save button share a slot in the footer, and when
+    // React swaps the type from "button" to "submit" mid-click some webviews
+    // re-deliver the click and immediately submit the form. Stopping the event
+    // here keeps the click from leaking into the freshly-rendered Save button.
+    e?.preventDefault();
+    e?.stopPropagation();
     setSubmitError(null);
     const ok = await form.trigger([...STEP1_FIELDS]);
     if (ok) setStep(2);
@@ -149,6 +201,11 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
     }
   }
 
+  async function pickSshKeyPath() {
+    const picked = await ipc.pickSshKeyPath();
+    if (picked) form.setValue("ssh_key_path", picked, { shouldValidate: true });
+  }
+
   async function onSubmit(values: ConnectionFormValues) {
     if (isMultiStep && step === 1) {
       setStep(2);
@@ -156,6 +213,24 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
     }
     setSubmitError(null);
     try {
+      let sshConfigJson: string | undefined;
+      if (values.ssh_enabled) {
+        const payload: SshConfigPayload = {
+          host: values.ssh_host,
+          port: values.ssh_port,
+          username: values.ssh_username,
+          auth:
+            values.ssh_auth_method === "password"
+              ? { kind: "password", password: values.ssh_password }
+              : {
+                  kind: "private_key",
+                  path: values.ssh_key_path,
+                  passphrase: values.ssh_passphrase || null,
+                },
+          known_host_fingerprint: values.ssh_known_host_fingerprint ?? null,
+        };
+        sshConfigJson = JSON.stringify(payload);
+      }
       const input: ConnectionInput = {
         id: editing?.id,
         name: values.name,
@@ -170,6 +245,8 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
         ...(values.password ? { password: values.password } : {}),
         wg_enabled: values.wg_enabled,
         ...(values.wg_enabled ? { wg_config: values.wg_config } : {}),
+        ssh_enabled: values.ssh_enabled,
+        ...(sshConfigJson !== undefined ? { ssh_config: sshConfigJson } : {}),
       };
       await save(input);
       onOpenChange(false);
@@ -381,6 +458,21 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
                         </FormItem>
                       )}
                     />
+
+                    <FormField
+                      control={form.control}
+                      name="ssh_enabled"
+                      render={({ field }) => (
+                        <FormItem className="flex items-center gap-2 space-y-0">
+                          <FormControl>
+                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                          </FormControl>
+                          <FormLabel className="cursor-pointer text-xs font-normal">
+                            Connect through SSH tunnel
+                          </FormLabel>
+                        </FormItem>
+                      )}
+                    />
                   </>
                 )}
 
@@ -433,7 +525,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
               </>
             )}
 
-            {step === 2 && (
+            {step === 2 && wgEnabled && (
               <div className="grid gap-3">
                 <p className="text-xs text-muted-foreground">
                   Paste the contents of your <code>wireguard.conf</code> below, or load it from a
@@ -474,6 +566,174 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
               </div>
             )}
 
+            {step === 2 && sshEnabled && (
+              <div className="grid gap-3">
+                <p className="text-xs text-muted-foreground">
+                  PowaDB will open an SSH session to the host below and tunnel the DB connection
+                  through it. The <em>Host</em> on step 1 is the DB address as seen{" "}
+                  <em>from the SSH server</em> — usually <code>127.0.0.1</code>.
+                </p>
+
+                <div className="grid grid-cols-[2fr_1fr] gap-3">
+                  <FormField
+                    control={form.control}
+                    name="ssh_host"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-normal text-muted-foreground">
+                          SSH host
+                        </FormLabel>
+                        <FormControl>
+                          <Input placeholder="vps.example.com" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="ssh_port"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-normal text-muted-foreground">
+                          Port
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="number" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="ssh_username"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        SSH username
+                      </FormLabel>
+                      <FormControl>
+                        <Input placeholder="deploy" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="ssh_auth_method"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        Authentication
+                      </FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="key">Private key</SelectItem>
+                          <SelectItem value="password">Password</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {sshAuthMethod === "key" ? (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="ssh_key_path"
+                      render={({ field }) => (
+                        <FormItem>
+                          <div className="flex items-center justify-between">
+                            <FormLabel className="text-xs font-normal text-muted-foreground">
+                              Private key file
+                            </FormLabel>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={pickSshKeyPath}
+                            >
+                              <FolderOpen className="size-3.5" />
+                              Browse…
+                            </Button>
+                          </div>
+                          <FormControl>
+                            <Input placeholder="~/.ssh/id_ed25519" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name="ssh_passphrase"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel className="text-xs font-normal text-muted-foreground">
+                            Key passphrase (optional)
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="password" autoComplete="new-password" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                ) : (
+                  <FormField
+                    control={form.control}
+                    name="ssh_password"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel className="text-xs font-normal text-muted-foreground">
+                          SSH password
+                        </FormLabel>
+                        <FormControl>
+                          <Input type="password" autoComplete="new-password" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                <FormField
+                  control={form.control}
+                  name="ssh_known_host_fingerprint"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel className="text-xs font-normal text-muted-foreground">
+                        Pinned host key (auto-filled on first connect)
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="SHA256:… (leave empty for trust-on-first-use)"
+                          value={field.value ?? ""}
+                          onChange={(e) => field.onChange(e.target.value || null)}
+                          onBlur={field.onBlur}
+                          name={field.name}
+                          ref={field.ref}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            )}
+
             {submitError && <p className="text-xs text-destructive">{submitError}</p>}
             {Object.keys(form.formState.errors).length > 0 && (
               <p className="text-xs text-destructive">
@@ -494,11 +754,11 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
                 </Button>
               )}
               {isMultiStep && step === 1 ? (
-                <Button type="button" onClick={goToStep2}>
+                <Button key="next" type="button" onClick={goToStep2}>
                   Next →
                 </Button>
               ) : (
-                <Button type="submit" disabled={form.formState.isSubmitting}>
+                <Button key="save" type="submit" disabled={form.formState.isSubmitting}>
                   {form.formState.isSubmitting ? "Saving…" : "Save"}
                 </Button>
               )}
