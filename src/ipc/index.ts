@@ -106,6 +106,10 @@ export const ipc = {
 
   deleteSnippet: (id: string): Promise<void> => invoke("delete_snippet", { id }),
 
+  listThemes: (): Promise<StoredTheme[]> => invoke("list_themes"),
+  saveTheme: (input: ThemeSaveInput): Promise<StoredTheme> => invoke("save_theme", { input }),
+  deleteTheme: (id: string): Promise<void> => invoke("delete_theme", { id }),
+
   getPrimaryKeyColumns: (connectionId: string, schema: string, table: string): Promise<string[]> =>
     invoke("get_primary_key_columns", { connectionId, schema, table }),
 
@@ -207,6 +211,26 @@ export type AppSettings = {
   psql_path: string | null;
   mysql_path: string | null;
   sqlite3_path: string | null;
+  theme_kind: string | null;
+  theme_value: string | null;
+};
+
+export type StoredTheme = {
+  id: string;
+  name: string;
+  base: string;
+  radius: string;
+  colors_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ThemeSaveInput = {
+  id?: string;
+  name: string;
+  base: string;
+  radius: string;
+  colors_json: string;
 };
 
 export type HistoryEntry = {

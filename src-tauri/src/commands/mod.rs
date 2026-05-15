@@ -13,3 +13,4 @@ pub mod schema;
 pub mod settings;
 pub mod snippets;
 pub mod table_ops;
+pub mod themes;

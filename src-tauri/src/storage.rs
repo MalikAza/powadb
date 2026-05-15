@@ -198,6 +198,22 @@ impl Storage {
         .execute(&pool)
         .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS themes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                base TEXT NOT NULL,
+                radius TEXT NOT NULL,
+                colors_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
     }
 
@@ -215,6 +231,8 @@ impl Storage {
                 "psql_path" => s.psql_path = val,
                 "mysql_path" => s.mysql_path = val,
                 "sqlite3_path" => s.sqlite3_path = val,
+                "theme_kind" => s.theme_kind = val,
+                "theme_value" => s.theme_value = val,
                 _ => {}
             }
         }
@@ -222,12 +240,14 @@ impl Storage {
     }
 
     pub async fn save_settings(&self, s: &AppSettings) -> AppResult<()> {
-        let entries: [(&str, Option<&str>); 5] = [
+        let entries: [(&str, Option<&str>); 7] = [
             ("pg_dump_path", s.pg_dump_path.as_deref()),
             ("mysqldump_path", s.mysqldump_path.as_deref()),
             ("psql_path", s.psql_path.as_deref()),
             ("mysql_path", s.mysql_path.as_deref()),
             ("sqlite3_path", s.sqlite3_path.as_deref()),
+            ("theme_kind", s.theme_kind.as_deref()),
+            ("theme_value", s.theme_value.as_deref()),
         ];
         for (k, v) in entries {
             sqlx::query(
@@ -293,6 +313,79 @@ impl Storage {
 
     pub async fn delete_snippet(&self, id: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM snippets WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_themes(&self) -> AppResult<Vec<CustomTheme>> {
+        let rows = sqlx::query(
+            "SELECT id, name, base, radius, colors_json, created_at, updated_at
+             FROM themes ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                Some(CustomTheme {
+                    id: r.try_get("id").ok()?,
+                    name: r.try_get("name").ok()?,
+                    base: r.try_get("base").ok()?,
+                    radius: r.try_get("radius").ok()?,
+                    colors_json: r.try_get("colors_json").ok()?,
+                    created_at: r.try_get("created_at").ok()?,
+                    updated_at: r.try_get("updated_at").ok()?,
+                })
+            })
+            .collect())
+    }
+
+    pub async fn get_theme(&self, id: &str) -> AppResult<Option<CustomTheme>> {
+        let row = sqlx::query(
+            "SELECT id, name, base, radius, colors_json, created_at, updated_at
+             FROM themes WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| CustomTheme {
+            id: r.try_get("id").unwrap_or_default(),
+            name: r.try_get("name").unwrap_or_default(),
+            base: r.try_get("base").unwrap_or_default(),
+            radius: r.try_get("radius").unwrap_or_default(),
+            colors_json: r.try_get("colors_json").unwrap_or_default(),
+            created_at: r.try_get("created_at").unwrap_or_default(),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        }))
+    }
+
+    pub async fn upsert_theme(&self, t: &CustomTheme) -> AppResult<CustomTheme> {
+        sqlx::query(
+            r#"
+            INSERT INTO themes (id, name, base, radius, colors_json)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                base=excluded.base,
+                radius=excluded.radius,
+                colors_json=excluded.colors_json,
+                updated_at=datetime('now')
+            "#,
+        )
+        .bind(&t.id)
+        .bind(&t.name)
+        .bind(&t.base)
+        .bind(&t.radius)
+        .bind(&t.colors_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(self.get_theme(&t.id).await?.unwrap_or_else(|| t.clone()))
+    }
+
+    pub async fn delete_theme(&self, id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM themes WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -660,6 +753,23 @@ pub struct AppSettings {
     pub mysql_path: Option<String>,
     #[serde(default)]
     pub sqlite3_path: Option<String>,
+    #[serde(default)]
+    pub theme_kind: Option<String>,
+    #[serde(default)]
+    pub theme_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    pub base: String,
+    pub radius: String,
+    pub colors_json: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 pub struct SettingsStore {
@@ -923,6 +1033,51 @@ mod tests {
         assert_eq!(loaded.mysql_path.as_deref(), Some("/usr/bin/mysql"));
         assert_eq!(loaded.psql_path, None);
         assert_eq!(loaded.mysqldump_path, None);
+    }
+
+    #[tokio::test]
+    async fn theme_round_trip() {
+        let (_d, s) = fresh_storage().await;
+        let t = CustomTheme {
+            id: "t1".into(),
+            name: "Solar".into(),
+            base: "dark".into(),
+            radius: "0.5rem".into(),
+            colors_json: "{\"background\":\"oklch(0.1 0 0)\"}".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let saved = s.upsert_theme(&t).await.unwrap();
+        assert_eq!(saved.id, "t1");
+        assert!(!saved.created_at.is_empty());
+
+        let updated = CustomTheme {
+            name: "Solar v2".into(),
+            ..t.clone()
+        };
+        s.upsert_theme(&updated).await.unwrap();
+
+        let listed = s.list_themes().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Solar v2");
+        assert_eq!(listed[0].base, "dark");
+
+        s.delete_theme("t1").await.unwrap();
+        assert!(s.list_themes().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn theme_selection_persists_via_app_settings() {
+        let (_d, s) = fresh_storage().await;
+        let settings = AppSettings {
+            theme_kind: Some("custom".into()),
+            theme_value: Some("theme-id".into()),
+            ..AppSettings::default()
+        };
+        s.save_settings(&settings).await.unwrap();
+        let loaded = s.load_settings().await.unwrap();
+        assert_eq!(loaded.theme_kind.as_deref(), Some("custom"));
+        assert_eq!(loaded.theme_value.as_deref(), Some("theme-id"));
     }
 
     #[tokio::test]
