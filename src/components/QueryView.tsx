@@ -11,6 +11,10 @@ const BrowseTabPane = lazy(() =>
   import("./BrowseTabPane").then((m) => ({ default: m.BrowseTabPane })),
 );
 
+const DiagramTabPane = lazy(() =>
+  import("./Diagram/DiagramTabPane").then((m) => ({ default: m.DiagramTabPane })),
+);
+
 const STARTER_SQL: Record<string, string> = {
   postgres: "SELECT 1 AS one, 'hello' AS greeting, now() AS ts;",
   mysql: "SELECT 1 AS one, 'hello' AS greeting, NOW() AS ts;",
@@ -90,6 +94,10 @@ export function QueryView() {
         <Suspense fallback={<div className="flex-1" />}>
           <BrowseTabPane key={activeTab.id} tab={activeTab} conn={conn} />
         </Suspense>
+      ) : activeTab.kind === "diagram" ? (
+        <Suspense fallback={<div className="flex-1" />}>
+          <DiagramTabPane key={activeTab.id} tab={activeTab} conn={conn} />
+        </Suspense>
       ) : (
         <QueryTabPane key={activeTab.id} tab={activeTab} conn={conn} />
       )}
@@ -104,7 +112,7 @@ function TabBar({
   onClose,
   onNew,
 }: {
-  tabs: { id: string; title: string; kind: "query" | "browse" }[];
+  tabs: { id: string; title: string; kind: "query" | "browse" | "diagram" }[];
   activeId: string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
@@ -135,10 +143,12 @@ function TabBar({
                 "shrink-0 rounded px-1 font-mono text-[9px] uppercase",
                 t.kind === "browse"
                   ? "bg-primary/30 text-foreground"
-                  : "bg-muted text-muted-foreground",
+                  : t.kind === "diagram"
+                    ? "bg-sky-500/30 text-foreground"
+                    : "bg-muted text-muted-foreground",
               )}
             >
-              {t.kind === "browse" ? "T" : "Q"}
+              {t.kind === "browse" ? "T" : t.kind === "diagram" ? "D" : "Q"}
             </span>
             <span className="truncate">{t.title}</span>
             <button

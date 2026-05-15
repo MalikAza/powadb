@@ -143,6 +143,7 @@ pub fn run() {
             commands::connections::read_text_file,
             commands::schema::introspect_schema,
             commands::schema::list_databases,
+            commands::diagram::introspect_diagram,
             commands::databases::create_database,
             commands::databases::drop_database,
             commands::history::list_history,

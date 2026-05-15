@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Database,
   Eye,
+  Network,
   Plus,
   RefreshCw,
   Search,
@@ -27,6 +28,7 @@ export function SchemaTree() {
   const saveConnection = useConnections((s) => s.save);
   const conn = connections.find((c) => c.id === activeId);
   const openBrowseTab = useTabs((s) => s.openBrowseTab);
+  const openDiagramTab = useTabs((s) => s.openDiagramTab);
   const setSchemaInStore = useSchema((s) => s.set);
   const setDatabasesInStore = useSchema((s) => s.setDatabases);
   const openSchemas = useUi((s) => s.openSchemas);
@@ -321,9 +323,27 @@ export function SchemaTree() {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Schema
         </span>
-        <Button size="icon" variant="ghost" className="size-6" onClick={refresh} disabled={loading}>
-          <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-6"
+            onClick={() => activeId && openDiagramTab(activeId)}
+            disabled={!activeId}
+            title="Open diagram"
+          >
+            <Network className="size-3" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-6"
+            onClick={refresh}
+            disabled={loading}
+          >
+            <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
+          </Button>
+        </div>
       </div>
 
       <div className="relative mb-2">

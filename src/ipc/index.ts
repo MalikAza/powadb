@@ -45,6 +45,12 @@ export const ipc = {
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
 
+  introspectDiagram: (
+    connectionId: string,
+    schema?: string | null,
+  ): Promise<DiagramIntrospection> =>
+    invoke("introspect_diagram", { connectionId, schema: schema ?? null }),
+
   geometryToGeoJSON: (connectionId: string, ewkbHex: string): Promise<string> =>
     invoke("geometry_to_geojson", { connectionId, ewkbHex }),
 
@@ -184,4 +190,40 @@ export type SnippetInput = {
   connection_id?: string | null;
   name: string;
   sql: string;
+};
+
+export type DiagColumn = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+  default: string | null;
+  ordinal: number;
+  char_max_len: number | null;
+  numeric_precision: number | null;
+  numeric_scale: number | null;
+};
+
+export type DiagTable = {
+  schema: string;
+  name: string;
+  columns: DiagColumn[];
+};
+
+export type DiagFk = {
+  id: string;
+  name: string | null;
+  from_schema: string;
+  from_table: string;
+  from_columns: string[];
+  to_schema: string;
+  to_table: string;
+  to_columns: string[];
+  on_update: string | null;
+  on_delete: string | null;
+};
+
+export type DiagramIntrospection = {
+  tables: DiagTable[];
+  foreign_keys: DiagFk[];
 };
