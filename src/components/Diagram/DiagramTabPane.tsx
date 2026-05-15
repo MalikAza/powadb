@@ -28,6 +28,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Upload,
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -47,6 +48,7 @@ import { useTabs } from "../../stores/tabs";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { ApplyDialog } from "./dialogs/ApplyDialog";
 import { GenerateScriptDialog } from "./dialogs/GenerateScriptDialog";
+import { ImportDialog } from "./dialogs/ImportDialog";
 import { LoadDiagramDialog } from "./dialogs/LoadDiagramDialog";
 import { SaveDiagramDialog } from "./dialogs/SaveDiagramDialog";
 import { TableFormDialog } from "./dialogs/TableFormDialog";
@@ -129,6 +131,7 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   const [loadOpen, setLoadOpen] = useState(false);
   const [scriptOpen, setScriptOpen] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [mode, setMode] = useState<"modeler" | "live">(tab.mode);
   // Captured by useCallback handlers (which we memoise with empty deps so they
   // don't churn React Flow's listeners). Reading via ref keeps the handlers
@@ -412,6 +415,15 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
           >
             <FolderOpen className="size-3.5" /> Load
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => setImportOpen(true)}
+            title="Import a diagram from a JSON or SQL file"
+          >
+            <Upload className="size-3.5" /> Import
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -557,6 +569,19 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
           }}
         />
       )}
+
+      <ImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        engine={conn.kind}
+        onImport={(imported, _path) => {
+          setDoc(imported);
+          setDiagramId(null);
+          setDiagramName("");
+          setDirty(true);
+          patchTab(tab.id, { diagramId: null, title: "Imported" });
+        }}
+      />
 
       <ConfirmDialog
         open={confirmEdgeDelete !== null}

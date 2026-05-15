@@ -133,6 +133,25 @@ pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
     rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
+/// Generic open-file picker the frontend can call when it needs to control
+/// the filter label and accepted extensions (diagram import, etc.).
+#[tauri::command]
+pub async fn pick_open_path_with_filter(
+    app: AppHandle,
+    filter_label: String,
+    extensions: Vec<String>,
+) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ext_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+    app.dialog()
+        .file()
+        .add_filter(&filter_label, &ext_refs)
+        .pick_file(move |path| {
+            let _ = tx.send(path.map(|p| p.to_string()));
+        });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
 #[tauri::command]
 pub async fn pick_wg_conf_path(app: AppHandle) -> AppResult<Option<String>> {
     let (tx, rx) = tokio::sync::oneshot::channel();

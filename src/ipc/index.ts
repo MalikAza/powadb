@@ -148,6 +148,9 @@ export const ipc = {
 
   pickOpenPath: (): Promise<string | null> => invoke("pick_open_path"),
 
+  pickOpenPathWithFilter: (filterLabel: string, extensions: string[]): Promise<string | null> =>
+    invoke("pick_open_path_with_filter", { filterLabel, extensions }),
+
   pickWgConfPath: (): Promise<string | null> => invoke("pick_wg_conf_path"),
 
   pickSqlitePath: (): Promise<string | null> => invoke("pick_sqlite_path"),

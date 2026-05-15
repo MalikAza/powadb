@@ -202,6 +202,7 @@ pub fn run() {
             commands::dump::pick_save_path,
             commands::dump::pick_save_path_with_filter,
             commands::dump::pick_open_path,
+            commands::dump::pick_open_path_with_filter,
             commands::dump::pick_wg_conf_path,
             commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
