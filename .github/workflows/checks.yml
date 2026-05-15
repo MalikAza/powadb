@@ -27,6 +27,9 @@ jobs:
       - name: Frontend typecheck (tsc)
         run: npm run typecheck
 
+      - name: Validate bundled themes
+        run: npm run validate:themes
+
       - name: Frontend tests (vitest + coverage)
         run: npm run test:coverage
 
