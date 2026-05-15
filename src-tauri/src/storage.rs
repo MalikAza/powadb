@@ -177,6 +177,27 @@ impl Storage {
         .execute(&pool)
         .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS diagrams (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                doc_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_diagrams_connection ON diagrams(connection_id)",
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
     }
 
@@ -272,6 +293,77 @@ impl Storage {
 
     pub async fn delete_snippet(&self, id: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM snippets WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_diagrams(&self, connection_id: &str) -> AppResult<Vec<Diagram>> {
+        let rows = sqlx::query(
+            "SELECT id, connection_id, name, doc_json, created_at, updated_at
+             FROM diagrams WHERE connection_id = ?1 ORDER BY name",
+        )
+        .bind(connection_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                Some(Diagram {
+                    id: r.try_get("id").ok()?,
+                    connection_id: r.try_get("connection_id").ok()?,
+                    name: r.try_get("name").ok()?,
+                    doc_json: r.try_get("doc_json").ok()?,
+                    created_at: r.try_get("created_at").ok()?,
+                    updated_at: r.try_get("updated_at").ok()?,
+                })
+            })
+            .collect())
+    }
+
+    pub async fn get_diagram(&self, id: &str) -> AppResult<Option<Diagram>> {
+        let row = sqlx::query(
+            "SELECT id, connection_id, name, doc_json, created_at, updated_at
+             FROM diagrams WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| Diagram {
+            id: r.try_get("id").unwrap_or_default(),
+            connection_id: r.try_get("connection_id").unwrap_or_default(),
+            name: r.try_get("name").unwrap_or_default(),
+            doc_json: r.try_get("doc_json").unwrap_or_default(),
+            created_at: r.try_get("created_at").unwrap_or_default(),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        }))
+    }
+
+    pub async fn upsert_diagram(&self, d: &Diagram) -> AppResult<Diagram> {
+        sqlx::query(
+            r#"
+            INSERT INTO diagrams (id, connection_id, name, doc_json)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(id) DO UPDATE SET
+                connection_id=excluded.connection_id,
+                name=excluded.name,
+                doc_json=excluded.doc_json,
+                updated_at=datetime('now')
+            "#,
+        )
+        .bind(&d.id)
+        .bind(&d.connection_id)
+        .bind(&d.name)
+        .bind(&d.doc_json)
+        .execute(&self.pool)
+        .await?;
+        // Re-read so the caller gets the canonical created_at/updated_at.
+        Ok(self.get_diagram(&d.id).await?.unwrap_or_else(|| d.clone()))
+    }
+
+    pub async fn delete_diagram(&self, id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM diagrams WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -527,6 +619,18 @@ pub struct Snippet {
     pub sql: String,
     #[serde(default)]
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Diagram {
+    pub id: String,
+    pub connection_id: String,
+    pub name: String,
+    pub doc_json: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -845,6 +949,47 @@ mod tests {
 
         s.delete_snippet("s1").await.unwrap();
         assert!(s.list_snippets(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn diagram_round_trip_is_scoped_per_connection() {
+        let (_d, s) = fresh_storage().await;
+        let d1 = Diagram {
+            id: "d1".into(),
+            connection_id: "c1".into(),
+            name: "schema overview".into(),
+            doc_json: "{\"version\":1,\"engine\":\"postgres\",\"tables\":[],\"edges\":[]}".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let saved = s.upsert_diagram(&d1).await.unwrap();
+        assert_eq!(saved.id, "d1");
+        assert!(
+            !saved.created_at.is_empty(),
+            "created_at should be populated"
+        );
+
+        // Same id, new name + payload -> updates.
+        let d1b = Diagram {
+            name: "schema v2".into(),
+            doc_json: "{\"version\":1,\"engine\":\"postgres\",\"tables\":[{\"id\":\"main.t\",\"schema\":\"public\",\"name\":\"t\",\"columns\":[],\"position\":{\"x\":0,\"y\":0}}],\"edges\":[]}".into(),
+            ..d1.clone()
+        };
+        s.upsert_diagram(&d1b).await.unwrap();
+
+        let c1 = s.list_diagrams("c1").await.unwrap();
+        assert_eq!(c1.len(), 1);
+        assert_eq!(c1[0].name, "schema v2");
+        assert!(c1[0].doc_json.contains("\"main.t\""));
+
+        let c2 = s.list_diagrams("c2").await.unwrap();
+        assert!(c2.is_empty(), "diagrams must be scoped per connection");
+
+        let one = s.get_diagram("d1").await.unwrap();
+        assert!(one.is_some());
+
+        s.delete_diagram("d1").await.unwrap();
+        assert!(s.get_diagram("d1").await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -133,6 +133,41 @@ pub async fn read_text_file(path: String) -> AppResult<String> {
         .map_err(|e| AppError::Other(format!("read {path}: {e}")))
 }
 
+/// Write a text payload to disk. Used by diagram export (JSON/SVG) so the
+/// frontend doesn't need its own filesystem plugin.
+#[tauri::command]
+pub async fn write_text_file(path: String, contents: String) -> AppResult<()> {
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AppError::Other(format!("mkdir {parent:?}: {e}")))?;
+        }
+    }
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|e| AppError::Other(format!("write {path}: {e}")))
+}
+
+/// Write raw bytes (base64-encoded) to disk. Used by diagram PNG export.
+#[tauri::command]
+pub async fn write_binary_file(path: String, base64: String) -> AppResult<()> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|e| AppError::Other(format!("invalid base64 payload: {e}")))?;
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AppError::Other(format!("mkdir {parent:?}: {e}")))?;
+        }
+    }
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|e| AppError::Other(format!("write {path}: {e}")))
+}
+
 pub async fn resolve_connection(
     state: &AppState,
     connection_id: &str,

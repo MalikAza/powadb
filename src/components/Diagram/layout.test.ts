@@ -5,6 +5,7 @@ import type { DiagramDoc } from "./types";
 function makeDoc(tableCount: number): DiagramDoc {
   return {
     version: 1,
+    engine: "sqlite",
     tables: Array.from({ length: tableCount }, (_, i) => ({
       id: `t${i}`,
       schema: "main",
@@ -17,6 +18,7 @@ function makeDoc(tableCount: number): DiagramDoc {
           nullable: false,
           isPk: true,
           isFk: false,
+          defaultValue: null,
         },
       ],
       position: { x: 0, y: 0 },

@@ -100,6 +100,27 @@ pub async fn pick_save_path(
     rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
+/// Generic save-file picker the frontend can call when it needs to control the
+/// filter label and accepted extensions (diagram exports, etc.).
+#[tauri::command]
+pub async fn pick_save_path_with_filter(
+    app: AppHandle,
+    default_filename: Option<String>,
+    filter_label: String,
+    extensions: Vec<String>,
+) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ext_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+    let mut dialog = app.dialog().file().add_filter(&filter_label, &ext_refs);
+    if let Some(name) = default_filename {
+        dialog = dialog.set_file_name(&name);
+    }
+    dialog.save_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
 #[tauri::command]
 pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
     let (tx, rx) = tokio::sync::oneshot::channel();

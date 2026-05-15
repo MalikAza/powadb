@@ -1,17 +1,19 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
-import { Key, Link2, Table2 } from "lucide-react";
+import { Key, Link2, Pencil, Table2, Trash2 } from "lucide-react";
 import { memo } from "react";
 import type { DiagramTable } from "./types";
 
 export type TableNodeData = {
   table: DiagramTable;
+  onEdit?: (id: string) => void;
+  onDelete?: (id: string) => void;
 };
 
 function TableNodeInner({ data, selected }: NodeProps) {
-  const { table } = data as TableNodeData;
+  const { table, onEdit, onDelete } = data as TableNodeData;
   return (
     <div
-      className={`min-w-60 overflow-hidden rounded-md border bg-card text-xs shadow-sm ${
+      className={`group/table min-w-60 overflow-hidden rounded-md border bg-card text-xs shadow-sm ${
         selected ? "border-primary" : "border-border"
       }`}
     >
@@ -21,8 +23,36 @@ function TableNodeInner({ data, selected }: NodeProps) {
           {table.name}
         </span>
         {table.schema !== "main" && table.schema !== "public" && (
-          <span className="ml-auto truncate text-[10px] text-muted-foreground">{table.schema}</span>
+          <span className="truncate text-[10px] text-muted-foreground">{table.schema}</span>
         )}
+        <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover/table:opacity-100">
+          {onEdit && (
+            <button
+              type="button"
+              className="rounded p-0.5 text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+              title="Edit table"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(table.id);
+              }}
+            >
+              <Pencil className="size-3" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              className="rounded p-0.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive"
+              title="Remove table from diagram"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(table.id);
+              }}
+            >
+              <Trash2 className="size-3" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="divide-y divide-border/50">
         {table.columns.map((c) => (

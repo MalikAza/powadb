@@ -38,6 +38,12 @@ export const ipc = {
 
   readTextFile: (path: string): Promise<string> => invoke("read_text_file", { path }),
 
+  writeTextFile: (path: string, contents: string): Promise<void> =>
+    invoke("write_text_file", { path, contents }),
+
+  writeBinaryFile: (path: string, base64: string): Promise<void> =>
+    invoke("write_binary_file", { path, base64 }),
+
   disconnect: (id: string): Promise<void> => invoke("disconnect", { id }),
 
   listActiveConnections: (): Promise<string[]> => invoke("list_active_connections"),
@@ -50,6 +56,19 @@ export const ipc = {
     schema?: string | null,
   ): Promise<DiagramIntrospection> =>
     invoke("introspect_diagram", { connectionId, schema: schema ?? null }),
+
+  listDiagrams: (connectionId: string): Promise<SavedDiagram[]> =>
+    invoke("list_diagrams", { connectionId }),
+
+  getDiagram: (id: string): Promise<SavedDiagram | null> => invoke("get_diagram", { id }),
+
+  saveDiagram: (input: DiagramSaveInput): Promise<SavedDiagram> =>
+    invoke("save_diagram", { input }),
+
+  deleteDiagram: (id: string): Promise<void> => invoke("delete_diagram", { id }),
+
+  generateDiagramDdl: (docJson: string, engine: DbKind): Promise<string> =>
+    invoke("generate_diagram_ddl_cmd", { docJson, engine }),
 
   geometryToGeoJSON: (connectionId: string, ewkbHex: string): Promise<string> =>
     invoke("geometry_to_geojson", { connectionId, ewkbHex }),
@@ -106,6 +125,17 @@ export const ipc = {
 
   pickSavePath: (defaultFilename?: string): Promise<string | null> =>
     invoke("pick_save_path", { defaultFilename }),
+
+  pickSavePathWithFilter: (
+    defaultFilename: string | undefined,
+    filterLabel: string,
+    extensions: string[],
+  ): Promise<string | null> =>
+    invoke("pick_save_path_with_filter", {
+      defaultFilename: defaultFilename ?? null,
+      filterLabel,
+      extensions,
+    }),
 
   pickOpenPath: (): Promise<string | null> => invoke("pick_open_path"),
 
@@ -226,4 +256,20 @@ export type DiagFk = {
 export type DiagramIntrospection = {
   tables: DiagTable[];
   foreign_keys: DiagFk[];
+};
+
+export type SavedDiagram = {
+  id: string;
+  connection_id: string;
+  name: string;
+  doc_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DiagramSaveInput = {
+  id?: string;
+  connection_id: string;
+  name: string;
+  doc_json: string;
 };

@@ -1,9 +1,10 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::State;
 
 use crate::error::AppResult;
 use crate::pool_registry::PoolHandle;
+use crate::storage::{new_id, Diagram};
 use crate::AppState;
 
 #[derive(Debug, Serialize, Clone)]
@@ -392,6 +393,46 @@ async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<DiagramIntrospe
         tables,
         foreign_keys,
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DiagramInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub connection_id: String,
+    pub name: String,
+    pub doc_json: String,
+}
+
+#[tauri::command]
+pub async fn list_diagrams(
+    state: State<'_, AppState>,
+    connection_id: String,
+) -> AppResult<Vec<Diagram>> {
+    state.storage.list_diagrams(&connection_id).await
+}
+
+#[tauri::command]
+pub async fn get_diagram(state: State<'_, AppState>, id: String) -> AppResult<Option<Diagram>> {
+    state.storage.get_diagram(&id).await
+}
+
+#[tauri::command]
+pub async fn save_diagram(state: State<'_, AppState>, input: DiagramInput) -> AppResult<Diagram> {
+    let diagram = Diagram {
+        id: input.id.unwrap_or_else(new_id),
+        connection_id: input.connection_id,
+        name: input.name,
+        doc_json: input.doc_json,
+        created_at: String::new(),
+        updated_at: String::new(),
+    };
+    state.storage.upsert_diagram(&diagram).await
+}
+
+#[tauri::command]
+pub async fn delete_diagram(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.storage.delete_diagram(&id).await
 }
 
 fn upsert_table<'a>(tables: &'a mut Vec<DiagTable>, schema: &str, name: &str) -> &'a mut DiagTable {

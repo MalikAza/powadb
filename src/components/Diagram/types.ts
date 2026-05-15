@@ -1,4 +1,5 @@
-import type { DiagFk, DiagramIntrospection, DiagTable } from "@/ipc";
+import type { DiagColumn, DiagFk, DiagramIntrospection, DiagTable } from "@/ipc";
+import type { DbKind } from "@/types";
 
 export type DiagramColumn = {
   id: string;
@@ -7,6 +8,7 @@ export type DiagramColumn = {
   nullable: boolean;
   isPk: boolean;
   isFk: boolean;
+  defaultValue: string | null;
 };
 
 export type DiagramTable = {
@@ -30,6 +32,7 @@ export type DiagramEdge = {
 
 export type DiagramDoc = {
   version: 1;
+  engine: DbKind;
   tables: DiagramTable[];
   edges: DiagramEdge[];
 };
@@ -45,6 +48,27 @@ function isFkColumn(fks: DiagFk[], schema: string, table: string, column: string
   );
 }
 
+/**
+ * Render a precise type string from introspection metadata so the doc carries
+ * something usable for DDL generation (e.g. `varchar(255)` not just `varchar`).
+ */
+export function renderDataType(c: DiagColumn): string {
+  const base = c.data_type;
+  if (base === "character varying") {
+    return c.char_max_len != null ? `varchar(${c.char_max_len})` : "varchar";
+  }
+  if (base === "character") {
+    return c.char_max_len != null ? `char(${c.char_max_len})` : "char";
+  }
+  if (base === "numeric" || base === "decimal") {
+    if (c.numeric_precision != null && c.numeric_scale != null) {
+      return `${base}(${c.numeric_precision},${c.numeric_scale})`;
+    }
+    if (c.numeric_precision != null) return `${base}(${c.numeric_precision})`;
+  }
+  return base;
+}
+
 function tableFromIntro(t: DiagTable, fks: DiagFk[]): DiagramTable {
   const id = tableId(t.schema, t.name);
   return {
@@ -54,22 +78,22 @@ function tableFromIntro(t: DiagTable, fks: DiagFk[]): DiagramTable {
     columns: t.columns.map((c) => ({
       id: `${id}.${c.name}`,
       name: c.name,
-      dataType: c.data_type,
+      dataType: renderDataType(c),
       nullable: c.nullable,
       isPk: c.is_pk,
       isFk: isFkColumn(fks, t.schema, t.name, c.name),
+      defaultValue: c.default,
     })),
     position: { x: 0, y: 0 },
   };
 }
 
-export function introspectionToDoc(intro: DiagramIntrospection): DiagramDoc {
+export function introspectionToDoc(intro: DiagramIntrospection, engine: DbKind): DiagramDoc {
   const tables = intro.tables.map((t) => tableFromIntro(t, intro.foreign_keys));
   const edges: DiagramEdge[] = intro.foreign_keys
     .map((fk) => {
       const source = tableId(fk.from_schema, fk.from_table);
       const target = tableId(fk.to_schema, fk.to_table);
-      // Drop edges whose target isn't in the doc (cross-schema FKs outside scope).
       if (!tables.some((t) => t.id === source)) return null;
       if (!tables.some((t) => t.id === target)) return null;
       return {
@@ -84,5 +108,23 @@ export function introspectionToDoc(intro: DiagramIntrospection): DiagramDoc {
       } satisfies DiagramEdge;
     })
     .filter((e): e is DiagramEdge => e !== null);
-  return { version: 1, tables, edges };
+  return { version: 1, engine, tables, edges };
+}
+
+/**
+ * Recompute every column's `isFk` flag from the edge list. Call after the user
+ * adds/removes an edge so the column row icons stay in sync.
+ */
+export function syncFkFlags(doc: DiagramDoc): DiagramDoc {
+  const fkCols = new Set<string>();
+  for (const e of doc.edges) {
+    for (const c of e.sourceColumns) fkCols.add(`${e.source}.${c}`);
+  }
+  return {
+    ...doc,
+    tables: doc.tables.map((t) => ({
+      ...t,
+      columns: t.columns.map((c) => ({ ...c, isFk: fkCols.has(c.id) })),
+    })),
+  };
 }

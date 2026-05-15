@@ -113,6 +113,86 @@ export const snippetSaveSchema = z.object({
 
 export type SnippetSaveValues = z.infer<typeof snippetSaveSchema>;
 
+export const diagramColumnSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1, "Column name is required"),
+  dataType: z.string().min(1, "Type is required"),
+  nullable: z.boolean(),
+  isPk: z.boolean(),
+  isFk: z.boolean(),
+  defaultValue: z.string().nullable().default(null),
+});
+
+export const diagramTableSchema = z.object({
+  id: z.string(),
+  schema: z.string(),
+  name: z.string().min(1, "Table name is required"),
+  columns: z.array(diagramColumnSchema).min(1, "At least one column is required"),
+  position: z.object({ x: z.number(), y: z.number() }),
+});
+
+export const diagramEdgeSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  source: z.string(),
+  target: z.string(),
+  sourceColumns: z.array(z.string()).min(1),
+  targetColumns: z.array(z.string()).min(1),
+  onUpdate: z.string().nullable(),
+  onDelete: z.string().nullable(),
+});
+
+export const diagramDocSchema = z.object({
+  version: z.literal(1),
+  engine: dbKindSchema,
+  tables: z.array(diagramTableSchema),
+  edges: z.array(diagramEdgeSchema),
+});
+
+export type DiagramColumnValues = z.infer<typeof diagramColumnSchema>;
+export type DiagramTableValues = z.infer<typeof diagramTableSchema>;
+export type DiagramEdgeValues = z.infer<typeof diagramEdgeSchema>;
+export type DiagramDocValues = z.infer<typeof diagramDocSchema>;
+
+export const newTableFormSchema = z
+  .object({
+    name: z.string().min(1, "Table name is required"),
+    columns: z
+      .array(
+        z.object({
+          name: z.string().min(1, "Column name is required"),
+          dataType: z.string().min(1, "Type is required"),
+          nullable: z.boolean(),
+          isPk: z.boolean(),
+          defaultValue: z.string(),
+        }),
+      )
+      .min(1, "At least one column is required"),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.columns.some((c) => c.isPk)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["columns"],
+        message: "Mark at least one column as primary key",
+      });
+    }
+    const seen = new Set<string>();
+    v.columns.forEach((c, i) => {
+      const key = c.name.trim().toLowerCase();
+      if (key && seen.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["columns", i, "name"],
+          message: "Duplicate column name",
+        });
+      }
+      seen.add(key);
+    });
+  });
+
+export type NewTableFormValues = z.infer<typeof newTableFormSchema>;
+
 export const KIND_DEFAULTS: Record<
   DbKindEnum,
   { port: number; database: string; username: string }
