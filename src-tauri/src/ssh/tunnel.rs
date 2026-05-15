@@ -179,9 +179,12 @@ async fn run_accept_loop(
                 let target_host = target.ip().to_string();
                 let target_port = target.port() as u32;
                 tokio::spawn(async move {
-                    if let Err(e) = forward_one(handle, stream, target_host, target_port).await {
-                        eprintln!("ssh tunnel forward error: {e}");
-                    }
+                    // `forward_one` returns Err on *any* end-of-stream, including
+                    // perfectly normal closes (server-side connection drop, pool
+                    // reaping an idle connection, etc.). We can't reliably tell
+                    // those apart from genuine I/O errors, and they're frequent
+                    // enough that logging them clutters the dev console.
+                    let _ = forward_one(handle, stream, target_host, target_port).await;
                 });
             }
         }

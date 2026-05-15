@@ -8,7 +8,14 @@ use super::{Column as ColMeta, QueryResult};
 use crate::error::{AppError, AppResult};
 
 pub async fn connect(url: &str) -> AppResult<PgPool> {
-    let pool = PgPoolOptions::new().max_connections(5).connect(url).await?;
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        // See the matching note in drivers/mysql.rs.
+        .test_before_acquire(true)
+        .idle_timeout(Some(std::time::Duration::from_secs(60)))
+        .max_lifetime(Some(std::time::Duration::from_secs(30 * 60)))
+        .connect(url)
+        .await?;
     Ok(pool)
 }
 

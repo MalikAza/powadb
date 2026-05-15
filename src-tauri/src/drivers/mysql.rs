@@ -10,6 +10,15 @@ use crate::error::{AppError, AppResult};
 pub async fn connect(url: &str) -> AppResult<MySqlPool> {
     let pool = MySqlPoolOptions::new()
         .max_connections(5)
+        // The server (and intermediate tunnels like SSH or WireGuard) sometimes
+        // close a connection silently. `test_before_acquire` sends a cheap ping
+        // before handing one out — that catches stale sockets so the user
+        // doesn't see a rustls "peer closed without close_notify" error on the
+        // first query after the connection went stale. Idle/lifetime caps are
+        // belt-and-suspenders to keep pools from accumulating zombies.
+        .test_before_acquire(true)
+        .idle_timeout(Some(std::time::Duration::from_secs(60)))
+        .max_lifetime(Some(std::time::Duration::from_secs(30 * 60)))
         .connect(url)
         .await?;
     Ok(pool)
