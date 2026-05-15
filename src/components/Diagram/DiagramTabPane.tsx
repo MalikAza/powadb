@@ -24,11 +24,13 @@ import {
   FolderOpen,
   ImageIcon,
   Loader2,
+  Play,
   Plus,
   RefreshCw,
   Save,
+  Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +45,7 @@ import type { SavedConnection } from "@/types";
 import type { DiagramTab } from "../../stores/tabs";
 import { useTabs } from "../../stores/tabs";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { ApplyDialog } from "./dialogs/ApplyDialog";
 import { GenerateScriptDialog } from "./dialogs/GenerateScriptDialog";
 import { LoadDiagramDialog } from "./dialogs/LoadDiagramDialog";
 import { SaveDiagramDialog } from "./dialogs/SaveDiagramDialog";
@@ -125,6 +128,19 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   const [saveOpen, setSaveOpen] = useState(false);
   const [loadOpen, setLoadOpen] = useState(false);
   const [scriptOpen, setScriptOpen] = useState(false);
+  const [applyOpen, setApplyOpen] = useState(false);
+  const [mode, setMode] = useState<"modeler" | "live">(tab.mode);
+  // Captured by useCallback handlers (which we memoise with empty deps so they
+  // don't churn React Flow's listeners). Reading via ref keeps the handlers
+  // tracking the latest mode without re-binding.
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  function maybeAutoApply() {
+    if (modeRef.current === "live") setApplyOpen(true);
+  }
   const [confirmEdgeDelete, setConfirmEdgeDelete] = useState<string | null>(null);
   const [confirmTableDelete, setConfirmTableDelete] = useState<string | null>(null);
 
@@ -199,6 +215,7 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
       if (next !== cur) setDirty(true);
       return next;
     });
+    if (modeRef.current === "live") setApplyOpen(true);
   }, []);
 
   const onEdgeClick: EdgeMouseHandler = useCallback((_e, edge) => {
@@ -211,23 +228,24 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
       if (originalId) {
         const next = {
           ...cur,
-          tables: cur.tables.map((t) =>
-            t.id === originalId
-              ? {
-                  ...t,
-                  name: values.name,
-                  columns: values.columns.map((c) => ({
-                    id: `${t.id}.${c.name}`,
-                    name: c.name,
-                    dataType: c.dataType,
-                    nullable: c.nullable,
-                    isPk: c.isPk,
-                    isFk: false,
-                    defaultValue: c.defaultValue.trim() === "" ? null : c.defaultValue,
-                  })),
-                }
-              : t,
-          ),
+          tables: cur.tables.map((t) => {
+            if (t.id !== originalId) return t;
+            return {
+              ...t,
+              name: values.name,
+              columns: values.columns.map((c) => ({
+                // Preserve identity for edits; mint a fresh id for additions.
+                id: c.id ?? `${t.id}.__new__.${c.name}.${Math.random().toString(36).slice(2, 8)}`,
+                name: c.name,
+                originalName: c.originalName,
+                dataType: c.dataType,
+                nullable: c.nullable,
+                isPk: c.isPk,
+                isFk: false,
+                defaultValue: c.defaultValue.trim() === "" ? null : c.defaultValue,
+              })),
+            };
+          }),
         };
         setDirty(true);
         return syncFkFlags(next);
@@ -245,6 +263,7 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
       setDirty(true);
       return nextDoc;
     });
+    maybeAutoApply();
   }
 
   function loadDiagramFromSaved(saved: SavedDiagram) {
@@ -271,12 +290,14 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
     setDoc((cur) => (cur ? docRemoveTable(cur, id) : cur));
     setDirty(true);
     setConfirmTableDelete(null);
+    maybeAutoApply();
   }
 
   function deleteEdge(id: string) {
     setDoc((cur) => (cur ? docRemoveEdge(cur, id) : cur));
     setDirty(true);
     setConfirmEdgeDelete(null);
+    maybeAutoApply();
   }
 
   function suggestedFilename(): string {
@@ -309,6 +330,38 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
           {diagramName || "Untitled"}
           {dirty && <span className="ml-1 text-primary">•</span>}
         </span>
+        <div className="ml-3 inline-flex overflow-hidden rounded-md border border-border text-[10px]">
+          <button
+            type="button"
+            onClick={() => {
+              setMode("modeler");
+              patchTab(tab.id, { mode: "modeler" });
+            }}
+            className={`px-2 py-1 ${
+              mode === "modeler"
+                ? "bg-primary/15 text-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent"
+            }`}
+            title="Modeler — edits stay local until you Apply"
+          >
+            Modeler
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode("live");
+              patchTab(tab.id, { mode: "live" });
+            }}
+            className={`flex items-center gap-1 px-2 py-1 ${
+              mode === "live"
+                ? "bg-amber-500/20 text-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent"
+            }`}
+            title="Live — each edit runs DDL immediately"
+          >
+            <Zap className="size-3" /> Live
+          </button>
+        </div>
         <div className="ml-auto flex items-center gap-1">
           <Button
             size="sm"
@@ -329,6 +382,16 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
             title="Generate SQL DDL script"
           >
             <FileCode2 className="size-3.5" /> Generate script
+          </Button>
+          <Button
+            size="sm"
+            variant="default"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => setApplyOpen(true)}
+            disabled={!hasLoaded}
+            title="Diff against the live database and run the resulting ALTER script"
+          >
+            <Play className="size-3.5" /> Apply to DB…
           </Button>
           <Button
             size="sm"
@@ -477,6 +540,20 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
           doc={doc}
           onOpenInQueryTab={(script) => {
             newQueryTab(tab.connectionId, script);
+          }}
+        />
+      )}
+
+      {doc && (
+        <ApplyDialog
+          open={applyOpen}
+          onOpenChange={setApplyOpen}
+          connectionId={tab.connectionId}
+          engine={conn.kind}
+          doc={doc}
+          onApplied={() => {
+            // Re-introspect so originalName + ids reflect the now-current live state.
+            refresh();
           }}
         />
       )}

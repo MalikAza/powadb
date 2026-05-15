@@ -70,6 +70,15 @@ export const ipc = {
   generateDiagramDdl: (docJson: string, engine: DbKind): Promise<string> =>
     invoke("generate_diagram_ddl_cmd", { docJson, engine }),
 
+  diffDiagram: (connectionId: string, docJson: string): Promise<DiffResult> =>
+    invoke("diff_diagram", { connectionId, docJson }),
+
+  generateAlterDdl: (ops: DiffOp[], engine: DbKind): Promise<string> =>
+    invoke("generate_alter_ddl_cmd", { ops, engine }),
+
+  executeDdl: (connectionId: string, sql: string): Promise<void> =>
+    invoke("execute_ddl", { connectionId, sql }),
+
   geometryToGeoJSON: (connectionId: string, ewkbHex: string): Promise<string> =>
     invoke("geometry_to_geojson", { connectionId, ewkbHex }),
 
@@ -273,3 +282,76 @@ export type DiagramSaveInput = {
   name: string;
   doc_json: string;
 };
+
+export type OpColumn = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+  default_value: string | null;
+};
+
+export type DiffOp =
+  | { kind: "add_table"; schema: string; name: string; columns: OpColumn[] }
+  | { kind: "drop_table"; schema: string; name: string }
+  | { kind: "rename_table"; schema: string; from: string; to: string }
+  | { kind: "add_column"; schema: string; table: string; column: OpColumn }
+  | { kind: "drop_column"; schema: string; table: string; column: string }
+  | { kind: "rename_column"; schema: string; table: string; from: string; to: string }
+  | { kind: "alter_column_type"; schema: string; table: string; column: string; new_type: string }
+  | {
+      kind: "alter_column_nullable";
+      schema: string;
+      table: string;
+      column: string;
+      nullable: boolean;
+    }
+  | {
+      kind: "alter_column_default";
+      schema: string;
+      table: string;
+      column: string;
+      default: string | null;
+    }
+  | {
+      kind: "add_fk";
+      schema: string;
+      table: string;
+      constraint_name: string | null;
+      columns: string[];
+      target_schema: string;
+      target_table: string;
+      target_columns: string[];
+      on_update: string | null;
+      on_delete: string | null;
+    }
+  | { kind: "drop_fk"; schema: string; table: string; constraint_name: string };
+
+export type DiffResult = { ops: DiffOp[] };
+
+export function diffOpSummary(op: DiffOp): string {
+  switch (op.kind) {
+    case "add_table":
+      return `+ table ${op.schema ? `${op.schema}.` : ""}${op.name}`;
+    case "drop_table":
+      return `− table ${op.schema ? `${op.schema}.` : ""}${op.name}`;
+    case "rename_table":
+      return `~ rename table ${op.from} → ${op.to}`;
+    case "add_column":
+      return `+ column ${op.table}.${op.column.name}`;
+    case "drop_column":
+      return `− column ${op.table}.${op.column}`;
+    case "rename_column":
+      return `~ rename column ${op.table}.${op.from} → ${op.to}`;
+    case "alter_column_type":
+      return `~ ${op.table}.${op.column} type → ${op.new_type}`;
+    case "alter_column_nullable":
+      return `~ ${op.table}.${op.column} ${op.nullable ? "NULL" : "NOT NULL"}`;
+    case "alter_column_default":
+      return `~ ${op.table}.${op.column} DEFAULT ${op.default ?? "—"}`;
+    case "add_fk":
+      return `+ FK ${op.table}(${op.columns.join(",")}) → ${op.target_table}(${op.target_columns.join(",")})`;
+    case "drop_fk":
+      return `− FK ${op.constraint_name}`;
+  }
+}

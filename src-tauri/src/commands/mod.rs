@@ -3,6 +3,7 @@ pub mod databases;
 pub mod ddl_util;
 pub mod diagram;
 pub mod diagram_ddl;
+pub mod diagram_diff;
 pub mod dump;
 pub mod folders;
 pub mod geo;

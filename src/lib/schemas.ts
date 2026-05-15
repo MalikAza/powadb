@@ -160,6 +160,10 @@ export const newTableFormSchema = z
     columns: z
       .array(
         z.object({
+          // Carried through the form so edits preserve column identity and
+          // original-name tracking for diff/rename detection.
+          id: z.string().optional(),
+          originalName: z.string().optional(),
           name: z.string().min(1, "Column name is required"),
           dataType: z.string().min(1, "Type is required"),
           nullable: z.boolean(),

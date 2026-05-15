@@ -61,7 +61,7 @@ pub async fn introspect_diagram(
     }
 }
 
-async fn introspect_postgres(
+pub(crate) async fn introspect_postgres(
     pool: &sqlx::PgPool,
     schema_filter: Option<&str>,
 ) -> AppResult<DiagramIntrospection> {
@@ -203,7 +203,7 @@ async fn introspect_postgres(
     })
 }
 
-async fn introspect_mysql(pool: &sqlx::MySqlPool) -> AppResult<DiagramIntrospection> {
+pub(crate) async fn introspect_mysql(pool: &sqlx::MySqlPool) -> AppResult<DiagramIntrospection> {
     let col_sql = r#"
         SELECT
             c.table_schema  AS schema_name,
@@ -310,7 +310,7 @@ async fn introspect_mysql(pool: &sqlx::MySqlPool) -> AppResult<DiagramIntrospect
     })
 }
 
-async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<DiagramIntrospection> {
+pub(crate) async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<DiagramIntrospection> {
     let table_rows = sqlx::query(
         r#"
         SELECT name FROM sqlite_master

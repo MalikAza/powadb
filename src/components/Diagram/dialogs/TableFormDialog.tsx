@@ -62,6 +62,8 @@ function TableFormBody({
     ? {
         name: initial.name,
         columns: initial.columns.map((c) => ({
+          id: c.id,
+          originalName: c.originalName,
           name: c.name,
           dataType: c.dataType,
           nullable: c.nullable,

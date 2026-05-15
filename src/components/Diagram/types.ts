@@ -4,6 +4,10 @@ import type { DbKind } from "@/types";
 export type DiagramColumn = {
   id: string;
   name: string;
+  /** Name as it exists in the live DB. Undefined for columns the user added
+   * since the last successful Apply. Set on introspect and re-set after Apply.
+   * If `originalName !== name`, the diff engine emits a RENAME. */
+  originalName?: string;
   dataType: string;
   nullable: boolean;
   isPk: boolean;
@@ -15,6 +19,8 @@ export type DiagramTable = {
   id: string;
   schema: string;
   name: string;
+  /** Same contract as DiagramColumn.originalName but for tables. */
+  originalName?: string;
   columns: DiagramColumn[];
   position: { x: number; y: number };
 };
@@ -75,9 +81,11 @@ function tableFromIntro(t: DiagTable, fks: DiagFk[]): DiagramTable {
     id,
     schema: t.schema,
     name: t.name,
+    originalName: t.name,
     columns: t.columns.map((c) => ({
       id: `${id}.${c.name}`,
       name: c.name,
+      originalName: c.name,
       dataType: renderDataType(c),
       nullable: c.nullable,
       isPk: c.is_pk,
