@@ -26,7 +26,21 @@ pub async fn get_primary_key_columns(
           AND tc.table_name = $2
         ORDER BY kcu.ordinal_position
     "#;
-    let mysql_sql = sql.replace("$1", "?").replace("$2", "?");
+    // MySQL: information_schema string columns are binary-flagged in many
+    // setups, so we CAST AS CHAR to make sqlx decode them as `String`.
+    // See schema.rs for the full note.
+    let mysql_sql = r#"
+        SELECT CAST(kcu.column_name AS CHAR) AS column_name
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+         AND tc.table_name = kcu.table_name
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema = ?
+          AND tc.table_name = ?
+        ORDER BY kcu.ordinal_position
+    "#;
 
     match handle {
         PoolHandle::Postgres(pool) => {
@@ -41,7 +55,7 @@ pub async fn get_primary_key_columns(
                 .collect())
         }
         PoolHandle::MySql(pool) => {
-            let rows = sqlx::query(&mysql_sql)
+            let rows = sqlx::query(mysql_sql)
                 .bind(&schema)
                 .bind(&table)
                 .fetch_all(&pool)

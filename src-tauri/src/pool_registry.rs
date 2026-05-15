@@ -11,6 +11,7 @@ use tokio::sync::{oneshot, Mutex};
 use crate::commands::connections::resolve_connection;
 use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult};
 use crate::error::{AppError, AppResult};
+use crate::ssh::{self, SshConfig, SshTunnelHandle};
 use crate::storage::{DbKind, SavedConnection};
 use crate::wireguard::{self, TunnelHandle as WgTunnelHandle, WgConfig};
 use crate::AppState;
@@ -24,9 +25,23 @@ pub enum PoolHandle {
     Sqlite(SqlitePool),
 }
 
+enum Tunnel {
+    Wg(WgTunnelHandle),
+    Ssh(SshTunnelHandle),
+}
+
+impl Tunnel {
+    async fn shutdown(self) {
+        match self {
+            Self::Wg(t) => t.shutdown().await,
+            Self::Ssh(t) => t.shutdown().await,
+        }
+    }
+}
+
 struct PoolEntry {
     handle: PoolHandle,
-    tunnel: Option<WgTunnelHandle>,
+    tunnel: Option<Tunnel>,
 }
 
 #[derive(Default)]
@@ -60,12 +75,45 @@ impl PoolRegistry {
         if let Some(p) = self.pools.lock().await.get(connection_id) {
             return Ok(p.handle.clone());
         }
-        let (conn, password, wg_config_text) = resolve_connection(state, connection_id).await?;
+        let (conn, password, wg_config_text, ssh_config_text) =
+            resolve_connection(state, connection_id).await?;
 
-        // If WG is enabled, open the tunnel first and redirect the DB pool at
-        // the local listener it spawned.
+        // If WG or SSH is enabled, open the tunnel first and redirect the DB
+        // pool at the local listener it spawned. They are mutually exclusive
+        // (enforced at save_connection), so the order of these branches is fine.
         let (tunnel, effective_host, effective_port) =
-            if conn.wg.is_some() && !matches!(conn.kind, DbKind::Sqlite) {
+            if conn.ssh.is_some() && !matches!(conn.kind, DbKind::Sqlite) {
+                let cfg_text = ssh_config_text.ok_or_else(|| {
+                    AppError::SshTunnel(
+                        "ssh is enabled for this connection but no config is stored".into(),
+                    )
+                })?;
+                let cfg = SshConfig::parse(&cfg_text)?;
+                // SSH supports hostnames as DB targets — resolution happens
+                // server-side over the direct-tcpip channel.
+                let db_target_ip: IpAddr = conn
+                    .host
+                    .parse()
+                    .unwrap_or_else(|_| IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
+                let target = SocketAddr::new(db_target_ip, conn.port);
+                let t = ssh::open_tunnel(&cfg, target).await?;
+                // TOFU writeback: persist the captured host fingerprint so future
+                // connects can verify it.
+                if cfg.known_host_fingerprint.is_none() {
+                    if let Some(fp) = t.captured_fingerprint.clone() {
+                        let updated = cfg.with_fingerprint(fp);
+                        if let Ok(json) = serde_json::to_string(&updated) {
+                            let _ = state
+                                .storage
+                                .set_ssh_config(connection_id, Some(&json))
+                                .await;
+                        }
+                    }
+                }
+                let host = t.local_addr.ip().to_string();
+                let port = t.local_addr.port();
+                (Some(Tunnel::Ssh(t)), host, port)
+            } else if conn.wg.is_some() && !matches!(conn.kind, DbKind::Sqlite) {
                 let cfg_text = wg_config_text.ok_or_else(|| {
                     AppError::WgTunnel(
                         "wireguard is enabled for this connection but no config is stored".into(),
@@ -75,7 +123,7 @@ impl PoolRegistry {
                 let target_ip: IpAddr = conn.host.parse().map_err(|_| {
                     AppError::WgTunnel(format!(
                         "wireguard target host `{}` must be an IP address (not a hostname) — DNS \
-                         inside the tunnel is not supported yet",
+                     inside the tunnel is not supported yet",
                         conn.host
                     ))
                 })?;
@@ -83,7 +131,7 @@ impl PoolRegistry {
                 let t = wireguard::open_tunnel(&cfg, target).await?;
                 let host = t.local_addr.ip().to_string();
                 let port = t.local_addr.port();
-                (Some(t), host, port)
+                (Some(Tunnel::Wg(t)), host, port)
             } else {
                 (None, conn.host.clone(), conn.port)
             };

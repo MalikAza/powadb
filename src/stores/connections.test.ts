@@ -36,6 +36,7 @@ function makeConn(over: Partial<SavedConnection> = {}): SavedConnection {
     folder_id: over.folder_id ?? null,
     color: over.color ?? null,
     wg: null,
+    ssh: null,
   };
 }
 

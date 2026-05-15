@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { DiagramIntrospection } from "../ipc";
 import type { QueryResult } from "../types";
 
 let counter = 0;
@@ -32,7 +33,14 @@ export type BrowseTab = BaseTab & {
   totalRows: number | null;
 };
 
-export type Tab = QueryTab | BrowseTab;
+export type DiagramTab = BaseTab & {
+  kind: "diagram";
+  diagramId: string | null;
+  mode: "modeler" | "live";
+  introspection: DiagramIntrospection | null;
+};
+
+export type Tab = QueryTab | BrowseTab | DiagramTab;
 
 type State = {
   tabs: Tab[];
@@ -42,6 +50,7 @@ type State = {
 type Actions = {
   newQueryTab: (connectionId: string, sql?: string) => string;
   openBrowseTab: (connectionId: string, schema: string, table: string) => string;
+  openDiagramTab: (connectionId: string) => string;
   closeTab: (id: string) => void;
   closeTabsForConnection: (connectionId: string) => void;
   setActiveTab: (id: string) => void;
@@ -101,6 +110,32 @@ export const useTabs = create<State & Actions>((set, get) => ({
       loading: false,
       pkCols: null,
       totalRows: null,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
+    return id;
+  },
+
+  openDiagramTab(connectionId): string {
+    // Phase 1: one diagram tab per connection. Reuse the existing one if open.
+    const existing = get().tabs.find(
+      (t): t is DiagramTab => t.kind === "diagram" && t.connectionId === connectionId,
+    );
+    if (existing) {
+      set({ activeTabId: existing.id });
+      return existing.id;
+    }
+    const id = newId("tab");
+    const tab: DiagramTab = {
+      id,
+      kind: "diagram",
+      connectionId,
+      title: "Diagram",
+      result: null,
+      error: null,
+      loading: false,
+      diagramId: null,
+      mode: "modeler",
+      introspection: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
     return id;

@@ -1,7 +1,13 @@
 import { listen } from "@tauri-apps/api/event";
-import { Plus, X } from "lucide-react";
+import { Network, Plus, SquareCode, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
@@ -9,6 +15,10 @@ import { QueryTabPane } from "./QueryTabPane";
 
 const BrowseTabPane = lazy(() =>
   import("./BrowseTabPane").then((m) => ({ default: m.BrowseTabPane })),
+);
+
+const DiagramTabPane = lazy(() =>
+  import("./Diagram/DiagramTabPane").then((m) => ({ default: m.DiagramTabPane })),
 );
 
 const STARTER_SQL: Record<string, string> = {
@@ -19,7 +29,7 @@ const STARTER_SQL: Record<string, string> = {
 export function QueryView() {
   const { connections, activeId } = useConnections();
   const conn = connections.find((c) => c.id === activeId);
-  const { tabs, activeTabId, newQueryTab, closeTab, setActiveTab } = useTabs();
+  const { tabs, activeTabId, newQueryTab, openDiagramTab, closeTab, setActiveTab } = useTabs();
 
   const visibleTabs = useMemo(
     () => (activeId ? tabs.filter((t) => t.connectionId === activeId) : []),
@@ -48,14 +58,19 @@ export function QueryView() {
   }, [activeTab, closeTab]);
 
   useEffect(() => {
-    const unlisten = listen("new-tab", () => {
+    const unlistenQuery = listen("new-tab", () => {
       if (!activeId || !conn) return;
       newQueryTab(activeId, STARTER_SQL[conn.kind]);
     });
+    const unlistenDiagram = listen("new-diagram-tab", () => {
+      if (!activeId) return;
+      openDiagramTab(activeId);
+    });
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenQuery.then((fn) => fn());
+      unlistenDiagram.then((fn) => fn());
     };
-  }, [activeId, conn, newQueryTab]);
+  }, [activeId, conn, newQueryTab, openDiagramTab]);
 
   if (!activeId || !conn) {
     return (
@@ -84,11 +99,16 @@ export function QueryView() {
         activeId={activeTab.id}
         onSelect={(id) => setActiveTab(id)}
         onClose={(id) => closeTab(id)}
-        onNew={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}
+        onNewQuery={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}
+        onNewDiagram={() => openDiagramTab(activeId)}
       />
       {activeTab.kind === "browse" ? (
         <Suspense fallback={<div className="flex-1" />}>
           <BrowseTabPane key={activeTab.id} tab={activeTab} conn={conn} />
+        </Suspense>
+      ) : activeTab.kind === "diagram" ? (
+        <Suspense fallback={<div className="flex-1" />}>
+          <DiagramTabPane key={activeTab.id} tab={activeTab} conn={conn} />
         </Suspense>
       ) : (
         <QueryTabPane key={activeTab.id} tab={activeTab} conn={conn} />
@@ -102,13 +122,15 @@ function TabBar({
   activeId,
   onSelect,
   onClose,
-  onNew,
+  onNewQuery,
+  onNewDiagram,
 }: {
-  tabs: { id: string; title: string; kind: "query" | "browse" }[];
+  tabs: { id: string; title: string; kind: "query" | "browse" | "diagram" }[];
   activeId: string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  onNew: () => void;
+  onNewQuery: () => void;
+  onNewDiagram: () => void;
 }) {
   return (
     <div className="flex h-9 shrink-0 items-center border-b border-border bg-sidebar">
@@ -135,10 +157,12 @@ function TabBar({
                 "shrink-0 rounded px-1 font-mono text-[9px] uppercase",
                 t.kind === "browse"
                   ? "bg-primary/30 text-foreground"
-                  : "bg-muted text-muted-foreground",
+                  : t.kind === "diagram"
+                    ? "bg-sky-500/30 text-foreground"
+                    : "bg-muted text-muted-foreground",
               )}
             >
-              {t.kind === "browse" ? "T" : "Q"}
+              {t.kind === "browse" ? "T" : t.kind === "diagram" ? "D" : "Q"}
             </span>
             <span className="truncate">{t.title}</span>
             <button
@@ -154,9 +178,27 @@ function TabBar({
           </div>
         ))}
       </div>
-      <Button onClick={onNew} size="icon" variant="ghost" className="mr-2 size-6 shrink-0">
-        <Plus className="size-3.5" />
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="mr-2 size-6 shrink-0"
+            title="New tab"
+            aria-label="New tab"
+          >
+            <Plus className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={onNewQuery}>
+            <SquareCode className="size-3.5" /> New query tab
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onNewDiagram}>
+            <Network className="size-3.5" /> New diagram tab
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

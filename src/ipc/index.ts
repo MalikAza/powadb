@@ -36,7 +36,16 @@ export const ipc = {
   getConnectionWgConfig: (id: string): Promise<string | null> =>
     invoke("get_connection_wg_config", { id }),
 
+  getConnectionSshConfig: (id: string): Promise<string | null> =>
+    invoke("get_connection_ssh_config", { id }),
+
   readTextFile: (path: string): Promise<string> => invoke("read_text_file", { path }),
+
+  writeTextFile: (path: string, contents: string): Promise<void> =>
+    invoke("write_text_file", { path, contents }),
+
+  writeBinaryFile: (path: string, base64: string): Promise<void> =>
+    invoke("write_binary_file", { path, base64 }),
 
   disconnect: (id: string): Promise<void> => invoke("disconnect", { id }),
 
@@ -44,6 +53,34 @@ export const ipc = {
 
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
+
+  introspectDiagram: (
+    connectionId: string,
+    schema?: string | null,
+  ): Promise<DiagramIntrospection> =>
+    invoke("introspect_diagram", { connectionId, schema: schema ?? null }),
+
+  listDiagrams: (connectionId: string): Promise<SavedDiagram[]> =>
+    invoke("list_diagrams", { connectionId }),
+
+  getDiagram: (id: string): Promise<SavedDiagram | null> => invoke("get_diagram", { id }),
+
+  saveDiagram: (input: DiagramSaveInput): Promise<SavedDiagram> =>
+    invoke("save_diagram", { input }),
+
+  deleteDiagram: (id: string): Promise<void> => invoke("delete_diagram", { id }),
+
+  generateDiagramDdl: (docJson: string, engine: DbKind): Promise<string> =>
+    invoke("generate_diagram_ddl_cmd", { docJson, engine }),
+
+  diffDiagram: (connectionId: string, docJson: string): Promise<DiffResult> =>
+    invoke("diff_diagram", { connectionId, docJson }),
+
+  generateAlterDdl: (ops: DiffOp[], engine: DbKind): Promise<string> =>
+    invoke("generate_alter_ddl_cmd", { ops, engine }),
+
+  executeDdl: (connectionId: string, sql: string): Promise<void> =>
+    invoke("execute_ddl", { connectionId, sql }),
 
   geometryToGeoJSON: (connectionId: string, ewkbHex: string): Promise<string> =>
     invoke("geometry_to_geojson", { connectionId, ewkbHex }),
@@ -71,6 +108,10 @@ export const ipc = {
   saveSnippet: (input: SnippetInput): Promise<Snippet> => invoke("save_snippet", { input }),
 
   deleteSnippet: (id: string): Promise<void> => invoke("delete_snippet", { id }),
+
+  listThemes: (): Promise<StoredTheme[]> => invoke("list_themes"),
+  saveTheme: (input: ThemeSaveInput): Promise<StoredTheme> => invoke("save_theme", { input }),
+  deleteTheme: (id: string): Promise<void> => invoke("delete_theme", { id }),
 
   getPrimaryKeyColumns: (connectionId: string, schema: string, table: string): Promise<string[]> =>
     invoke("get_primary_key_columns", { connectionId, schema, table }),
@@ -101,9 +142,25 @@ export const ipc = {
   pickSavePath: (defaultFilename?: string): Promise<string | null> =>
     invoke("pick_save_path", { defaultFilename }),
 
+  pickSavePathWithFilter: (
+    defaultFilename: string | undefined,
+    filterLabel: string,
+    extensions: string[],
+  ): Promise<string | null> =>
+    invoke("pick_save_path_with_filter", {
+      defaultFilename: defaultFilename ?? null,
+      filterLabel,
+      extensions,
+    }),
+
   pickOpenPath: (): Promise<string | null> => invoke("pick_open_path"),
 
+  pickOpenPathWithFilter: (filterLabel: string, extensions: string[]): Promise<string | null> =>
+    invoke("pick_open_path_with_filter", { filterLabel, extensions }),
+
   pickWgConfPath: (): Promise<string | null> => invoke("pick_wg_conf_path"),
+
+  pickSshKeyPath: (): Promise<string | null> => invoke("pick_ssh_key_path"),
 
   pickSqlitePath: (): Promise<string | null> => invoke("pick_sqlite_path"),
 
@@ -159,6 +216,26 @@ export type AppSettings = {
   psql_path: string | null;
   mysql_path: string | null;
   sqlite3_path: string | null;
+  theme_kind: string | null;
+  theme_value: string | null;
+};
+
+export type StoredTheme = {
+  id: string;
+  name: string;
+  base: string;
+  radius: string;
+  colors_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ThemeSaveInput = {
+  id?: string;
+  name: string;
+  base: string;
+  radius: string;
+  colors_json: string;
 };
 
 export type HistoryEntry = {
@@ -185,3 +262,128 @@ export type SnippetInput = {
   name: string;
   sql: string;
 };
+
+export type DiagColumn = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+  default: string | null;
+  ordinal: number;
+  char_max_len: number | null;
+  numeric_precision: number | null;
+  numeric_scale: number | null;
+};
+
+export type DiagTable = {
+  schema: string;
+  name: string;
+  columns: DiagColumn[];
+};
+
+export type DiagFk = {
+  id: string;
+  name: string | null;
+  from_schema: string;
+  from_table: string;
+  from_columns: string[];
+  to_schema: string;
+  to_table: string;
+  to_columns: string[];
+  on_update: string | null;
+  on_delete: string | null;
+};
+
+export type DiagramIntrospection = {
+  tables: DiagTable[];
+  foreign_keys: DiagFk[];
+};
+
+export type SavedDiagram = {
+  id: string;
+  connection_id: string;
+  name: string;
+  doc_json: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DiagramSaveInput = {
+  id?: string;
+  connection_id: string;
+  name: string;
+  doc_json: string;
+};
+
+export type OpColumn = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+  default_value: string | null;
+};
+
+export type DiffOp =
+  | { kind: "add_table"; schema: string; name: string; columns: OpColumn[] }
+  | { kind: "drop_table"; schema: string; name: string }
+  | { kind: "rename_table"; schema: string; from: string; to: string }
+  | { kind: "add_column"; schema: string; table: string; column: OpColumn }
+  | { kind: "drop_column"; schema: string; table: string; column: string }
+  | { kind: "rename_column"; schema: string; table: string; from: string; to: string }
+  | { kind: "alter_column_type"; schema: string; table: string; column: string; new_type: string }
+  | {
+      kind: "alter_column_nullable";
+      schema: string;
+      table: string;
+      column: string;
+      nullable: boolean;
+    }
+  | {
+      kind: "alter_column_default";
+      schema: string;
+      table: string;
+      column: string;
+      default: string | null;
+    }
+  | {
+      kind: "add_fk";
+      schema: string;
+      table: string;
+      constraint_name: string | null;
+      columns: string[];
+      target_schema: string;
+      target_table: string;
+      target_columns: string[];
+      on_update: string | null;
+      on_delete: string | null;
+    }
+  | { kind: "drop_fk"; schema: string; table: string; constraint_name: string };
+
+export type DiffResult = { ops: DiffOp[] };
+
+export function diffOpSummary(op: DiffOp): string {
+  switch (op.kind) {
+    case "add_table":
+      return `+ table ${op.schema ? `${op.schema}.` : ""}${op.name}`;
+    case "drop_table":
+      return `− table ${op.schema ? `${op.schema}.` : ""}${op.name}`;
+    case "rename_table":
+      return `~ rename table ${op.from} → ${op.to}`;
+    case "add_column":
+      return `+ column ${op.table}.${op.column.name}`;
+    case "drop_column":
+      return `− column ${op.table}.${op.column}`;
+    case "rename_column":
+      return `~ rename column ${op.table}.${op.from} → ${op.to}`;
+    case "alter_column_type":
+      return `~ ${op.table}.${op.column} type → ${op.new_type}`;
+    case "alter_column_nullable":
+      return `~ ${op.table}.${op.column} ${op.nullable ? "NULL" : "NOT NULL"}`;
+    case "alter_column_default":
+      return `~ ${op.table}.${op.column} DEFAULT ${op.default ?? "—"}`;
+    case "add_fk":
+      return `+ FK ${op.table}(${op.columns.join(",")}) → ${op.target_table}(${op.target_columns.join(",")})`;
+    case "drop_fk":
+      return `− FK ${op.constraint_name}`;
+  }
+}

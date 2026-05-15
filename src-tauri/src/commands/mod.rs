@@ -1,5 +1,9 @@
 pub mod connections;
 pub mod databases;
+pub mod ddl_util;
+pub mod diagram;
+pub mod diagram_ddl;
+pub mod diagram_diff;
 pub mod dump;
 pub mod folders;
 pub mod geo;
@@ -9,3 +13,4 @@ pub mod schema;
 pub mod settings;
 pub mod snippets;
 pub mod table_ops;
+pub mod themes;

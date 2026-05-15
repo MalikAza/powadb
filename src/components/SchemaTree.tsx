@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Database,
   Eye,
+  Network,
   Plus,
   RefreshCw,
   Search,
@@ -27,6 +28,7 @@ export function SchemaTree() {
   const saveConnection = useConnections((s) => s.save);
   const conn = connections.find((c) => c.id === activeId);
   const openBrowseTab = useTabs((s) => s.openBrowseTab);
+  const openDiagramTab = useTabs((s) => s.openDiagramTab);
   const setSchemaInStore = useSchema((s) => s.set);
   const setDatabasesInStore = useSchema((s) => s.setDatabases);
   const openSchemas = useUi((s) => s.openSchemas);
@@ -141,6 +143,10 @@ export function SchemaTree() {
   async function switchDatabase(db: string) {
     if (!conn || db === conn.database) return;
     try {
+      // Carry the tunnel flags across — omitting them defaults the backend
+      // to `false`, which would silently disable WG/SSH and wipe their config.
+      // The full tunnel payloads (wg_config / ssh_config) are NOT sent: the
+      // backend preserves the stored ones when those fields are absent.
       await saveConnection({
         id: conn.id,
         name: conn.name,
@@ -152,6 +158,8 @@ export function SchemaTree() {
         ssl: conn.ssl,
         folder_id: conn.folder_id,
         color: conn.color,
+        wg_enabled: !!conn.wg,
+        ssh_enabled: !!conn.ssh,
       });
       toast.success(`Switched to ${db}`);
     } catch (e) {
@@ -321,9 +329,27 @@ export function SchemaTree() {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           Schema
         </span>
-        <Button size="icon" variant="ghost" className="size-6" onClick={refresh} disabled={loading}>
-          <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-6"
+            onClick={() => activeId && openDiagramTab(activeId)}
+            disabled={!activeId}
+            title="Open diagram"
+          >
+            <Network className="size-3" />
+          </Button>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-6"
+            onClick={refresh}
+            disabled={loading}
+          >
+            <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
+          </Button>
+        </div>
       </div>
 
       <div className="relative mb-2">

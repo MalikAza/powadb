@@ -100,12 +100,52 @@ pub async fn pick_save_path(
     rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
+/// Generic save-file picker the frontend can call when it needs to control the
+/// filter label and accepted extensions (diagram exports, etc.).
+#[tauri::command]
+pub async fn pick_save_path_with_filter(
+    app: AppHandle,
+    default_filename: Option<String>,
+    filter_label: String,
+    extensions: Vec<String>,
+) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ext_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+    let mut dialog = app.dialog().file().add_filter(&filter_label, &ext_refs);
+    if let Some(name) = default_filename {
+        dialog = dialog.set_file_name(&name);
+    }
+    dialog.save_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
 #[tauri::command]
 pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.dialog()
         .file()
         .add_filter("SQL", &["sql"])
+        .pick_file(move |path| {
+            let _ = tx.send(path.map(|p| p.to_string()));
+        });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+/// Generic open-file picker the frontend can call when it needs to control
+/// the filter label and accepted extensions (diagram import, etc.).
+#[tauri::command]
+pub async fn pick_open_path_with_filter(
+    app: AppHandle,
+    filter_label: String,
+    extensions: Vec<String>,
+) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let ext_refs: Vec<&str> = extensions.iter().map(|s| s.as_str()).collect();
+    app.dialog()
+        .file()
+        .add_filter(&filter_label, &ext_refs)
         .pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
@@ -122,6 +162,25 @@ pub async fn pick_wg_conf_path(app: AppHandle) -> AppResult<Option<String>> {
         .pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn pick_ssh_key_path(app: AppHandle) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    // No `add_filter`: SSH key files have inconsistent extensions (none,
+    // `.pem`, `.key`, `id_*`…) and any filter on macOS would grey out everything
+    // that doesn't match. Letting all files through is the right default here.
+    let mut builder = app.dialog().file();
+    if let Some(home) = std::env::var_os("HOME") {
+        let ssh_dir = std::path::PathBuf::from(home).join(".ssh");
+        if ssh_dir.is_dir() {
+            builder = builder.set_directory(&ssh_dir);
+        }
+    }
+    builder.pick_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
     rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
@@ -162,7 +221,7 @@ pub async fn export_database(
     let cancel_flag = state.jobs.register(&options.job_id).await;
     let result = match options.engine {
         Engine::Tool => {
-            let (conn, password, _) = resolve_connection(&state, &connection_id).await?;
+            let (conn, password, _, _) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
             export_with_tool(
                 &app,
@@ -200,7 +259,7 @@ pub async fn import_sql(
     let cancel_flag = state.jobs.register(&options.job_id).await;
     let result = match options.engine {
         Engine::Tool => {
-            let (conn, password, _) = resolve_connection(&state, &connection_id).await?;
+            let (conn, password, _, _) = resolve_connection(&state, &connection_id).await?;
             let settings = state.settings.get();
             import_with_tool(
                 &app,
@@ -615,9 +674,13 @@ async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppRes
                 .collect())
         }
         PoolHandle::MySql(pool) => {
+            // CAST AS CHAR — see schema.rs note about information_schema text
+            // columns coming back binary-flagged.
             let rows = sqlx::query(
                 r#"
-                SELECT table_schema AS schema_name, table_name AS name
+                SELECT
+                    CAST(table_schema AS CHAR) AS schema_name,
+                    CAST(table_name   AS CHAR) AS name
                 FROM information_schema.tables
                 WHERE table_type = 'BASE TABLE'
                   AND table_schema = DATABASE()
@@ -740,14 +803,16 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
             ))
         }
         PoolHandle::MySql(pool) => {
+            // CAST AS CHAR — see schema.rs note about information_schema text
+            // columns coming back binary-flagged.
             let cols = sqlx::query(
                 r#"
                 SELECT
-                    column_name              AS name,
-                    column_type              AS column_type,
-                    is_nullable              AS nullable,
-                    column_default           AS default_expr,
-                    extra                    AS extra
+                    CAST(column_name    AS CHAR) AS name,
+                    CAST(column_type    AS CHAR) AS column_type,
+                    CAST(is_nullable    AS CHAR) AS nullable,
+                    CAST(column_default AS CHAR) AS default_expr,
+                    CAST(extra          AS CHAR) AS extra
                 FROM information_schema.columns
                 WHERE table_schema = DATABASE() AND table_name = ?
                 ORDER BY ordinal_position
@@ -759,7 +824,7 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
 
             let pk_cols = sqlx::query(
                 r#"
-                SELECT column_name AS name
+                SELECT CAST(column_name AS CHAR) AS name
                 FROM information_schema.key_column_usage
                 WHERE constraint_name = 'PRIMARY'
                   AND table_schema = DATABASE()

@@ -31,6 +31,9 @@ export const CONNECTION_COLORS = [
   { name: "pink", value: "#ec4899", swatch: "#ec4899" },
 ] as const;
 
+export const sshAuthMethodSchema = z.enum(["key", "password"]);
+export type SshAuthMethodEnum = z.infer<typeof sshAuthMethodSchema>;
+
 export const connectionFormSchema = z
   .object({
     name: z.string().min(1, "Name is required"),
@@ -45,6 +48,15 @@ export const connectionFormSchema = z
     color: z.string().nullable().default(null),
     wg_enabled: z.boolean().default(false),
     wg_config: z.string().optional().default(""),
+    ssh_enabled: z.boolean().default(false),
+    ssh_host: z.string().optional().default(""),
+    ssh_port: portSchema.optional().default(22),
+    ssh_username: z.string().optional().default(""),
+    ssh_auth_method: sshAuthMethodSchema.default("key"),
+    ssh_password: z.string().optional().default(""),
+    ssh_key_path: z.string().optional().default(""),
+    ssh_passphrase: z.string().optional().default(""),
+    ssh_known_host_fingerprint: z.string().nullable().default(null),
   })
   .superRefine((v, ctx) => {
     if (v.kind === "sqlite") {
@@ -78,6 +90,13 @@ export const connectionFormSchema = z
         message: "Username is required",
       });
     }
+    if (v.wg_enabled && v.ssh_enabled) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ssh_enabled"],
+        message: "Choose either WireGuard or SSH, not both",
+      });
+    }
     if (v.wg_enabled) {
       if (v.wg_config.trim() === "") {
         ctx.addIssue({
@@ -90,6 +109,44 @@ export const connectionFormSchema = z
           code: z.ZodIssueCode.custom,
           path: ["wg_config"],
           message: "Expected both [Interface] and [Peer] sections",
+        });
+      }
+    }
+    if (v.ssh_enabled) {
+      if (v.ssh_host.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_host"],
+          message: "SSH host is required",
+        });
+      }
+      if (v.ssh_username.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_username"],
+          message: "SSH username is required",
+        });
+      }
+      if (v.ssh_port < 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_port"],
+          message: "Port must be ≥ 1",
+        });
+      }
+      if (v.ssh_auth_method === "password") {
+        if (v.ssh_password === "") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["ssh_password"],
+            message: "SSH password is required",
+          });
+        }
+      } else if (v.ssh_key_path.trim() === "") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["ssh_key_path"],
+          message: "Select a private key file",
         });
       }
     }
@@ -112,6 +169,90 @@ export const snippetSaveSchema = z.object({
 });
 
 export type SnippetSaveValues = z.infer<typeof snippetSaveSchema>;
+
+export const diagramColumnSchema = z.object({
+  id: z.string(),
+  name: z.string().min(1, "Column name is required"),
+  dataType: z.string().min(1, "Type is required"),
+  nullable: z.boolean(),
+  isPk: z.boolean(),
+  isFk: z.boolean(),
+  defaultValue: z.string().nullable().default(null),
+});
+
+export const diagramTableSchema = z.object({
+  id: z.string(),
+  schema: z.string(),
+  name: z.string().min(1, "Table name is required"),
+  columns: z.array(diagramColumnSchema).min(1, "At least one column is required"),
+  position: z.object({ x: z.number(), y: z.number() }),
+});
+
+export const diagramEdgeSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  source: z.string(),
+  target: z.string(),
+  sourceColumns: z.array(z.string()).min(1),
+  targetColumns: z.array(z.string()).min(1),
+  onUpdate: z.string().nullable(),
+  onDelete: z.string().nullable(),
+});
+
+export const diagramDocSchema = z.object({
+  version: z.literal(1),
+  engine: dbKindSchema,
+  tables: z.array(diagramTableSchema),
+  edges: z.array(diagramEdgeSchema),
+});
+
+export type DiagramColumnValues = z.infer<typeof diagramColumnSchema>;
+export type DiagramTableValues = z.infer<typeof diagramTableSchema>;
+export type DiagramEdgeValues = z.infer<typeof diagramEdgeSchema>;
+export type DiagramDocValues = z.infer<typeof diagramDocSchema>;
+
+export const newTableFormSchema = z
+  .object({
+    name: z.string().min(1, "Table name is required"),
+    columns: z
+      .array(
+        z.object({
+          // Carried through the form so edits preserve column identity and
+          // original-name tracking for diff/rename detection.
+          id: z.string().optional(),
+          originalName: z.string().optional(),
+          name: z.string().min(1, "Column name is required"),
+          dataType: z.string().min(1, "Type is required"),
+          nullable: z.boolean(),
+          isPk: z.boolean(),
+          defaultValue: z.string(),
+        }),
+      )
+      .min(1, "At least one column is required"),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.columns.some((c) => c.isPk)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["columns"],
+        message: "Mark at least one column as primary key",
+      });
+    }
+    const seen = new Set<string>();
+    v.columns.forEach((c, i) => {
+      const key = c.name.trim().toLowerCase();
+      if (key && seen.has(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["columns", i, "name"],
+          message: "Duplicate column name",
+        });
+      }
+      seen.add(key);
+    });
+  });
+
+export type NewTableFormValues = z.infer<typeof newTableFormSchema>;
 
 export const KIND_DEFAULTS: Record<
   DbKindEnum,

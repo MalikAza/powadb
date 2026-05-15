@@ -1,0 +1,32 @@
+{
+  "schema": "powadb-theme/v1",
+  "name": "Gruvbox Dark",
+  "base": "dark",
+  "radius": "0.5rem",
+  "colors": {
+    "background": "#282828",
+    "foreground": "#ebdbb2",
+    "card": "#3c3836",
+    "card-foreground": "#ebdbb2",
+    "popover": "#3c3836",
+    "popover-foreground": "#ebdbb2",
+    "primary": "#fe8019",
+    "primary-foreground": "#282828",
+    "secondary": "#504945",
+    "secondary-foreground": "#ebdbb2",
+    "muted": "#504945",
+    "muted-foreground": "#a89984",
+    "accent": "#665c54",
+    "accent-foreground": "#ebdbb2",
+    "destructive": "#fb4934",
+    "destructive-foreground": "#282828",
+    "border": "#665c54",
+    "input": "#665c54",
+    "ring": "#fe8019",
+    "sidebar": "#1d2021",
+    "sidebar-foreground": "#ebdbb2",
+    "sidebar-border": "#504945",
+    "sidebar-accent": "#3c3836",
+    "sidebar-accent-foreground": "#ebdbb2"
+  }
+}

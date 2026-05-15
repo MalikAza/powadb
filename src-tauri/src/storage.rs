@@ -39,6 +39,11 @@ impl DbKind {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WgTunnel {}
 
+/// Non-secret SSH-tunnel marker. The auth material (password/passphrase/key
+/// path) lives only in `ssh_config` and is fetched via `get_ssh_config`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SshTunnel {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedConnection {
     pub id: String,
@@ -56,6 +61,8 @@ pub struct SavedConnection {
     pub color: Option<String>,
     #[serde(default)]
     pub wg: Option<WgTunnel>,
+    #[serde(default)]
+    pub ssh: Option<SshTunnel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +121,14 @@ impl Storage {
                 .execute(&pool)
                 .await;
         let _ = sqlx::query("ALTER TABLE connections ADD COLUMN wg_config TEXT")
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query(
+            "ALTER TABLE connections ADD COLUMN ssh_enabled INTEGER NOT NULL DEFAULT 0",
+        )
+        .execute(&pool)
+        .await;
+        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN ssh_config TEXT")
             .execute(&pool)
             .await;
 
@@ -177,6 +192,43 @@ impl Storage {
         .execute(&pool)
         .await?;
 
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS diagrams (
+                id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                doc_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_diagrams_connection ON diagrams(connection_id)",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS themes (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                base TEXT NOT NULL,
+                radius TEXT NOT NULL,
+                colors_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
     }
 
@@ -194,6 +246,8 @@ impl Storage {
                 "psql_path" => s.psql_path = val,
                 "mysql_path" => s.mysql_path = val,
                 "sqlite3_path" => s.sqlite3_path = val,
+                "theme_kind" => s.theme_kind = val,
+                "theme_value" => s.theme_value = val,
                 _ => {}
             }
         }
@@ -201,12 +255,14 @@ impl Storage {
     }
 
     pub async fn save_settings(&self, s: &AppSettings) -> AppResult<()> {
-        let entries: [(&str, Option<&str>); 5] = [
+        let entries: [(&str, Option<&str>); 7] = [
             ("pg_dump_path", s.pg_dump_path.as_deref()),
             ("mysqldump_path", s.mysqldump_path.as_deref()),
             ("psql_path", s.psql_path.as_deref()),
             ("mysql_path", s.mysql_path.as_deref()),
             ("sqlite3_path", s.sqlite3_path.as_deref()),
+            ("theme_kind", s.theme_kind.as_deref()),
+            ("theme_value", s.theme_value.as_deref()),
         ];
         for (k, v) in entries {
             sqlx::query(
@@ -272,6 +328,150 @@ impl Storage {
 
     pub async fn delete_snippet(&self, id: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM snippets WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_themes(&self) -> AppResult<Vec<CustomTheme>> {
+        let rows = sqlx::query(
+            "SELECT id, name, base, radius, colors_json, created_at, updated_at
+             FROM themes ORDER BY name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                Some(CustomTheme {
+                    id: r.try_get("id").ok()?,
+                    name: r.try_get("name").ok()?,
+                    base: r.try_get("base").ok()?,
+                    radius: r.try_get("radius").ok()?,
+                    colors_json: r.try_get("colors_json").ok()?,
+                    created_at: r.try_get("created_at").ok()?,
+                    updated_at: r.try_get("updated_at").ok()?,
+                })
+            })
+            .collect())
+    }
+
+    pub async fn get_theme(&self, id: &str) -> AppResult<Option<CustomTheme>> {
+        let row = sqlx::query(
+            "SELECT id, name, base, radius, colors_json, created_at, updated_at
+             FROM themes WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| CustomTheme {
+            id: r.try_get("id").unwrap_or_default(),
+            name: r.try_get("name").unwrap_or_default(),
+            base: r.try_get("base").unwrap_or_default(),
+            radius: r.try_get("radius").unwrap_or_default(),
+            colors_json: r.try_get("colors_json").unwrap_or_default(),
+            created_at: r.try_get("created_at").unwrap_or_default(),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        }))
+    }
+
+    pub async fn upsert_theme(&self, t: &CustomTheme) -> AppResult<CustomTheme> {
+        sqlx::query(
+            r#"
+            INSERT INTO themes (id, name, base, radius, colors_json)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name,
+                base=excluded.base,
+                radius=excluded.radius,
+                colors_json=excluded.colors_json,
+                updated_at=datetime('now')
+            "#,
+        )
+        .bind(&t.id)
+        .bind(&t.name)
+        .bind(&t.base)
+        .bind(&t.radius)
+        .bind(&t.colors_json)
+        .execute(&self.pool)
+        .await?;
+        Ok(self.get_theme(&t.id).await?.unwrap_or_else(|| t.clone()))
+    }
+
+    pub async fn delete_theme(&self, id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM themes WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_diagrams(&self, connection_id: &str) -> AppResult<Vec<Diagram>> {
+        let rows = sqlx::query(
+            "SELECT id, connection_id, name, doc_json, created_at, updated_at
+             FROM diagrams WHERE connection_id = ?1 ORDER BY name",
+        )
+        .bind(connection_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                Some(Diagram {
+                    id: r.try_get("id").ok()?,
+                    connection_id: r.try_get("connection_id").ok()?,
+                    name: r.try_get("name").ok()?,
+                    doc_json: r.try_get("doc_json").ok()?,
+                    created_at: r.try_get("created_at").ok()?,
+                    updated_at: r.try_get("updated_at").ok()?,
+                })
+            })
+            .collect())
+    }
+
+    pub async fn get_diagram(&self, id: &str) -> AppResult<Option<Diagram>> {
+        let row = sqlx::query(
+            "SELECT id, connection_id, name, doc_json, created_at, updated_at
+             FROM diagrams WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| Diagram {
+            id: r.try_get("id").unwrap_or_default(),
+            connection_id: r.try_get("connection_id").unwrap_or_default(),
+            name: r.try_get("name").unwrap_or_default(),
+            doc_json: r.try_get("doc_json").unwrap_or_default(),
+            created_at: r.try_get("created_at").unwrap_or_default(),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        }))
+    }
+
+    pub async fn upsert_diagram(&self, d: &Diagram) -> AppResult<Diagram> {
+        sqlx::query(
+            r#"
+            INSERT INTO diagrams (id, connection_id, name, doc_json)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(id) DO UPDATE SET
+                connection_id=excluded.connection_id,
+                name=excluded.name,
+                doc_json=excluded.doc_json,
+                updated_at=datetime('now')
+            "#,
+        )
+        .bind(&d.id)
+        .bind(&d.connection_id)
+        .bind(&d.name)
+        .bind(&d.doc_json)
+        .execute(&self.pool)
+        .await?;
+        // Re-read so the caller gets the canonical created_at/updated_at.
+        Ok(self.get_diagram(&d.id).await?.unwrap_or_else(|| d.clone()))
+    }
+
+    pub async fn delete_diagram(&self, id: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM diagrams WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -350,7 +550,7 @@ impl Storage {
 
     pub async fn list(&self) -> AppResult<Vec<SavedConnection>> {
         let rows = sqlx::query(
-            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled
+            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled, ssh_enabled
              FROM connections ORDER BY name",
         )
         .fetch_all(&self.pool)
@@ -363,6 +563,7 @@ impl Storage {
                 let port_i: i64 = r.try_get("port").ok()?;
                 let ssl_i: i64 = r.try_get("ssl").ok()?;
                 let wg_enabled_i: i64 = r.try_get("wg_enabled").ok().unwrap_or(0);
+                let ssh_enabled_i: i64 = r.try_get("ssh_enabled").ok().unwrap_or(0);
                 Some(SavedConnection {
                     id: r.try_get("id").ok()?,
                     name: r.try_get("name").ok()?,
@@ -379,6 +580,11 @@ impl Storage {
                     } else {
                         None
                     },
+                    ssh: if ssh_enabled_i != 0 {
+                        Some(SshTunnel::default())
+                    } else {
+                        None
+                    },
                 })
             })
             .collect())
@@ -388,8 +594,8 @@ impl Storage {
         sqlx::query(
             r#"
             INSERT INTO connections
-                (id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                (id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled, ssh_enabled)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 kind=excluded.kind,
@@ -400,7 +606,8 @@ impl Storage {
                 ssl=excluded.ssl,
                 folder_id=excluded.folder_id,
                 color=excluded.color,
-                wg_enabled=excluded.wg_enabled
+                wg_enabled=excluded.wg_enabled,
+                ssh_enabled=excluded.ssh_enabled
             "#,
         )
         .bind(&c.id)
@@ -414,6 +621,7 @@ impl Storage {
         .bind(&c.folder_id)
         .bind(&c.color)
         .bind(c.wg.is_some() as i64)
+        .bind(c.ssh.is_some() as i64)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -517,6 +725,23 @@ impl Storage {
             .await?;
         Ok(())
     }
+
+    pub async fn get_ssh_config(&self, id: &str) -> AppResult<Option<String>> {
+        let row = sqlx::query("SELECT ssh_config FROM connections WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get::<Option<String>, _>("ssh_config").ok().flatten()))
+    }
+
+    pub async fn set_ssh_config(&self, id: &str, config: Option<&str>) -> AppResult<()> {
+        sqlx::query("UPDATE connections SET ssh_config = ?1 WHERE id = ?2")
+            .bind(config)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -527,6 +752,18 @@ pub struct Snippet {
     pub sql: String,
     #[serde(default)]
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Diagram {
+    pub id: String,
+    pub connection_id: String,
+    pub name: String,
+    pub doc_json: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -556,6 +793,23 @@ pub struct AppSettings {
     pub mysql_path: Option<String>,
     #[serde(default)]
     pub sqlite3_path: Option<String>,
+    #[serde(default)]
+    pub theme_kind: Option<String>,
+    #[serde(default)]
+    pub theme_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomTheme {
+    pub id: String,
+    pub name: String,
+    pub base: String,
+    pub radius: String,
+    pub colors_json: String,
+    #[serde(default)]
+    pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
 }
 
 pub struct SettingsStore {
@@ -602,6 +856,7 @@ mod tests {
             folder_id: None,
             color: None,
             wg: None,
+            ssh: None,
         }
     }
 
@@ -822,6 +1077,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn theme_round_trip() {
+        let (_d, s) = fresh_storage().await;
+        let t = CustomTheme {
+            id: "t1".into(),
+            name: "Solar".into(),
+            base: "dark".into(),
+            radius: "0.5rem".into(),
+            colors_json: "{\"background\":\"oklch(0.1 0 0)\"}".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let saved = s.upsert_theme(&t).await.unwrap();
+        assert_eq!(saved.id, "t1");
+        assert!(!saved.created_at.is_empty());
+
+        let updated = CustomTheme {
+            name: "Solar v2".into(),
+            ..t.clone()
+        };
+        s.upsert_theme(&updated).await.unwrap();
+
+        let listed = s.list_themes().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Solar v2");
+        assert_eq!(listed[0].base, "dark");
+
+        s.delete_theme("t1").await.unwrap();
+        assert!(s.list_themes().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn theme_selection_persists_via_app_settings() {
+        let (_d, s) = fresh_storage().await;
+        let settings = AppSettings {
+            theme_kind: Some("custom".into()),
+            theme_value: Some("theme-id".into()),
+            ..AppSettings::default()
+        };
+        s.save_settings(&settings).await.unwrap();
+        let loaded = s.load_settings().await.unwrap();
+        assert_eq!(loaded.theme_kind.as_deref(), Some("custom"));
+        assert_eq!(loaded.theme_value.as_deref(), Some("theme-id"));
+    }
+
+    #[tokio::test]
     async fn snippet_round_trip() {
         let (_d, s) = fresh_storage().await;
         let snip = Snippet {
@@ -845,6 +1145,47 @@ mod tests {
 
         s.delete_snippet("s1").await.unwrap();
         assert!(s.list_snippets(None).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn diagram_round_trip_is_scoped_per_connection() {
+        let (_d, s) = fresh_storage().await;
+        let d1 = Diagram {
+            id: "d1".into(),
+            connection_id: "c1".into(),
+            name: "schema overview".into(),
+            doc_json: "{\"version\":1,\"engine\":\"postgres\",\"tables\":[],\"edges\":[]}".into(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let saved = s.upsert_diagram(&d1).await.unwrap();
+        assert_eq!(saved.id, "d1");
+        assert!(
+            !saved.created_at.is_empty(),
+            "created_at should be populated"
+        );
+
+        // Same id, new name + payload -> updates.
+        let d1b = Diagram {
+            name: "schema v2".into(),
+            doc_json: "{\"version\":1,\"engine\":\"postgres\",\"tables\":[{\"id\":\"main.t\",\"schema\":\"public\",\"name\":\"t\",\"columns\":[],\"position\":{\"x\":0,\"y\":0}}],\"edges\":[]}".into(),
+            ..d1.clone()
+        };
+        s.upsert_diagram(&d1b).await.unwrap();
+
+        let c1 = s.list_diagrams("c1").await.unwrap();
+        assert_eq!(c1.len(), 1);
+        assert_eq!(c1[0].name, "schema v2");
+        assert!(c1[0].doc_json.contains("\"main.t\""));
+
+        let c2 = s.list_diagrams("c2").await.unwrap();
+        assert!(c2.is_empty(), "diagrams must be scoped per connection");
+
+        let one = s.get_diagram("d1").await.unwrap();
+        assert!(one.is_some());
+
+        s.delete_diagram("d1").await.unwrap();
+        assert!(s.get_diagram("d1").await.unwrap().is_none());
     }
 
     #[tokio::test]

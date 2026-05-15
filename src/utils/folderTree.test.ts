@@ -14,6 +14,7 @@ const conn = (over: Partial<SavedConnection>): SavedConnection => ({
   folder_id: over.folder_id ?? null,
   color: over.color ?? null,
   wg: null,
+  ssh: null,
 });
 
 const folder = (id: string, name: string, parent_id: string | null = null): Folder => ({

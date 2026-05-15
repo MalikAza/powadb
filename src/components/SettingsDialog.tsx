@@ -1,7 +1,22 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { CheckCircle2, Laptop, Moon, RefreshCw, Sun, XCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import {
+  CheckCircle2,
+  Download,
+  Laptop,
+  Moon,
+  MoreVertical,
+  Plus,
+  RefreshCw,
+  Search,
+  Sun,
+  Trash2,
+  Upload,
+  XCircle,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { ChangelogView } from "@/components/ChangelogView";
+import { ThemeEditor } from "@/components/ThemeEditor";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,13 +25,21 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { COMMUNITY_THEMES, type CommunityTheme } from "@/lib/communityThemes";
+import { type CustomTheme, fromExported, ThemeImportError, toExported } from "@/lib/themeTokens";
 import { runUpdateCheck } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { type AppSettings, ipc } from "../ipc";
-import { type ThemeMode, useTheme } from "../stores/theme";
+import { type ThemeMode, type ThemeSelection, useTheme } from "../stores/theme";
 
 type Props = {
   open: boolean;
@@ -24,8 +47,25 @@ type Props = {
 };
 
 export function SettingsDialog({ open, onOpenChange }: Props) {
-  const mode = useTheme((s) => s.mode);
-  const setMode = useTheme((s) => s.setMode);
+  const selection = useTheme((s) => s.selection);
+  const setSelection = useTheme((s) => s.setSelection);
+  const customThemes = useTheme((s) => s.customThemes);
+  const deleteCustom = useTheme((s) => s.deleteCustom);
+
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<CustomTheme | null>(null);
+
+  const [communityQuery, setCommunityQuery] = useState("");
+  const [communityFilter, setCommunityFilter] = useState<"all" | "light" | "dark">("all");
+
+  const filteredCommunity = useMemo(() => {
+    const q = communityQuery.trim().toLowerCase();
+    return COMMUNITY_THEMES.filter((c) => {
+      if (communityFilter !== "all" && c.theme.base !== communityFilter) return false;
+      if (q && !c.theme.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [communityQuery, communityFilter]);
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [pgStatus, setPgStatus] = useState<{ dump: string | null; client: string | null } | null>(
@@ -79,6 +119,7 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
   async function persist() {
     if (!settings) return;
     const saved = await ipc.saveSettings({
+      ...settings,
       pg_dump_path: emptyToNull(settings.pg_dump_path),
       psql_path: emptyToNull(settings.psql_path),
       mysqldump_path: emptyToNull(settings.mysqldump_path),
@@ -87,6 +128,60 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
     });
     setSettings(saved);
     onOpenChange(false);
+  }
+
+  async function exportTheme(theme: CustomTheme) {
+    const path = await ipc.pickSavePathWithFilter(
+      `${theme.name || "theme"}.powadb-theme.json`,
+      "PowaDB Theme",
+      ["json"],
+    );
+    if (!path) return;
+    try {
+      await ipc.writeTextFile(path, JSON.stringify(toExported(theme), null, 2));
+      toast.success("Theme exported");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const upsertCustom = useTheme((s) => s.upsertCustom);
+  const setActiveSelection = useTheme((s) => s.setSelection);
+
+  async function importTheme() {
+    const path = await ipc.pickOpenPathWithFilter("PowaDB Theme", ["json"]);
+    if (!path) return;
+    try {
+      const contents = await ipc.readTextFile(path);
+      const parsed = fromExported(JSON.parse(contents));
+      const saved = await upsertCustom({
+        name: parsed.name,
+        base: parsed.base,
+        radius: parsed.radius,
+        colors: parsed.colors,
+      });
+      await setActiveSelection({ kind: "custom", id: saved.id });
+      toast.success(`Imported "${saved.name}"`);
+    } catch (e) {
+      if (e instanceof ThemeImportError) toast.error(e.message);
+      else if (e instanceof SyntaxError) toast.error("File is not valid JSON");
+      else toast.error(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function installCommunity({ theme }: CommunityTheme) {
+    try {
+      const saved = await upsertCustom({
+        name: theme.name,
+        base: theme.base,
+        radius: theme.radius,
+        colors: theme.colors,
+      });
+      await setActiveSelection({ kind: "custom", id: saved.id });
+      toast.success(`Installed "${saved.name}"`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
   }
 
   return (
@@ -105,32 +200,143 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
           </TabsList>
 
           <TabsContent value="appearance" className="mt-6">
-            <Section title="Appearance" description="Light, dark, or follow your system theme.">
-              <RadioGroup
-                value={mode}
-                onValueChange={(v) => setMode(v as ThemeMode)}
-                className="grid grid-cols-3 gap-2"
+            <div className="grid gap-6">
+              <Section title="Built-in" description="Light, dark, or follow your system theme.">
+                <div className="grid grid-cols-3 gap-2">
+                  <PresetCard
+                    mode="light"
+                    selection={selection}
+                    onPick={() => setSelection({ kind: "preset", mode: "light" })}
+                    icon={<Sun className="size-5" />}
+                    label="Light"
+                  />
+                  <PresetCard
+                    mode="dark"
+                    selection={selection}
+                    onPick={() => setSelection({ kind: "preset", mode: "dark" })}
+                    icon={<Moon className="size-5" />}
+                    label="Dark"
+                  />
+                  <PresetCard
+                    mode="system"
+                    selection={selection}
+                    onPick={() => setSelection({ kind: "preset", mode: "system" })}
+                    icon={<Laptop className="size-5" />}
+                    label="System"
+                  />
+                </div>
+              </Section>
+
+              <Section
+                title="Custom themes"
+                description="Design your own palette, or import one shared by someone else."
               >
-                <ThemeCard
-                  value="light"
-                  current={mode}
-                  icon={<Sun className="size-5" />}
-                  label="Light"
-                />
-                <ThemeCard
-                  value="dark"
-                  current={mode}
-                  icon={<Moon className="size-5" />}
-                  label="Dark"
-                />
-                <ThemeCard
-                  value="system"
-                  current={mode}
-                  icon={<Laptop className="size-5" />}
-                  label="System"
-                />
-              </RadioGroup>
-            </Section>
+                <div className="grid gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setEditing(null);
+                        setEditorOpen(true);
+                      }}
+                    >
+                      <Plus className="size-3.5" />
+                      New theme
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={importTheme}>
+                      <Upload className="size-3.5" />
+                      Import
+                    </Button>
+                  </div>
+
+                  {customThemes.length === 0 ? (
+                    <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                      No custom themes yet.
+                    </div>
+                  ) : (
+                    <div className="grid gap-1">
+                      {customThemes.map((t) => (
+                        <CustomThemeRow
+                          key={t.id}
+                          theme={t}
+                          active={selection.kind === "custom" && selection.id === t.id}
+                          onSelect={() => setSelection({ kind: "custom", id: t.id })}
+                          onEdit={() => {
+                            setEditing(t);
+                            setEditorOpen(true);
+                          }}
+                          onDelete={() => deleteCustom(t.id)}
+                          onExport={() => exportTheme(t)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </Section>
+
+              {COMMUNITY_THEMES.length > 0 && (
+                <Section
+                  title="Community themes"
+                  description="Curated palettes shipped with PowaDB. Install one to add a copy to your custom themes."
+                >
+                  <div className="grid gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="relative min-w-0 flex-1">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={communityQuery}
+                          onChange={(e) => setCommunityQuery(e.target.value)}
+                          placeholder="Search themes…"
+                          className="h-8 pl-7 text-xs"
+                          spellCheck={false}
+                        />
+                      </div>
+                      <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+                        <FilterPill
+                          active={communityFilter === "all"}
+                          onClick={() => setCommunityFilter("all")}
+                        >
+                          All
+                        </FilterPill>
+                        <FilterPill
+                          active={communityFilter === "light"}
+                          onClick={() => setCommunityFilter("light")}
+                          icon={<Sun className="size-3" />}
+                        >
+                          Light
+                        </FilterPill>
+                        <FilterPill
+                          active={communityFilter === "dark"}
+                          onClick={() => setCommunityFilter("dark")}
+                          icon={<Moon className="size-3" />}
+                        >
+                          Dark
+                        </FilterPill>
+                      </div>
+                    </div>
+
+                    {filteredCommunity.length === 0 ? (
+                      <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                        No themes match.
+                      </div>
+                    ) : (
+                      <ScrollArea className="h-[208px] rounded-md border">
+                        <div className="grid gap-1 p-1 pr-3">
+                          {filteredCommunity.map((c) => (
+                            <CommunityThemeRow
+                              key={c.slug}
+                              community={c}
+                              onInstall={() => installCommunity(c)}
+                            />
+                          ))}
+                        </div>
+                      </ScrollArea>
+                    )}
+                  </div>
+                </Section>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="tools" className="mt-6">
@@ -205,8 +411,166 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
             <Button onClick={persist}>Save</Button>
           </DialogFooter>
         )}
+
+        <ThemeEditor open={editorOpen} onOpenChange={setEditorOpen} editing={editing} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PresetCard({
+  mode,
+  selection,
+  onPick,
+  icon,
+  label,
+}: {
+  mode: ThemeMode;
+  selection: ThemeSelection;
+  onPick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  const selected = selection.kind === "preset" && selection.mode === mode;
+  return (
+    <button
+      type="button"
+      onClick={onPick}
+      className={cn(
+        "flex cursor-pointer flex-col items-center gap-2 rounded-md border p-3 transition-colors",
+        selected ? "border-primary bg-primary/10" : "border-border hover:bg-accent",
+      )}
+    >
+      <span className={cn(selected ? "text-primary" : "text-muted-foreground")}>{icon}</span>
+      <span className="text-xs font-medium">{label}</span>
+    </button>
+  );
+}
+
+function FilterPill({
+  active,
+  onClick,
+  icon,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex items-center gap-1 rounded-sm px-2 py-1 text-[11px] font-medium transition-colors",
+        active
+          ? "bg-primary text-primary-foreground"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function CommunityThemeRow({
+  community,
+  onInstall,
+}: {
+  community: CommunityTheme;
+  onInstall: () => void;
+}) {
+  const swatches: Array<keyof typeof community.theme.colors> = [
+    "primary",
+    "background",
+    "accent",
+    "border",
+  ];
+  return (
+    <div className="flex items-center gap-3 rounded-md border border-border p-2">
+      <div className="flex gap-1">
+        {swatches.map((token) => (
+          <span
+            key={token}
+            className="size-4 rounded-sm border"
+            style={{ backgroundColor: community.theme.colors[token] }}
+            aria-hidden="true"
+          />
+        ))}
+      </div>
+      <div className="flex flex-1 items-center gap-2">
+        <span className="text-sm font-medium">{community.theme.name}</span>
+        <span className="text-[11px] text-muted-foreground">{community.theme.base}</span>
+      </div>
+      <Button variant="ghost" size="sm" onClick={onInstall} className="h-7 px-2">
+        <Download className="size-3.5" />
+        Install
+      </Button>
+    </div>
+  );
+}
+
+function CustomThemeRow({
+  theme,
+  active,
+  onSelect,
+  onEdit,
+  onDelete,
+  onExport,
+}: {
+  theme: CustomTheme;
+  active: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  onExport: () => void;
+}) {
+  const swatches: Array<keyof typeof theme.colors> = ["primary", "background", "accent", "border"];
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 rounded-md border p-2 transition-colors",
+        active ? "border-primary bg-primary/10" : "border-border hover:bg-accent",
+      )}
+    >
+      <button type="button" onClick={onSelect} className="flex flex-1 items-center gap-3 text-left">
+        <div className="flex gap-1">
+          {swatches.map((token) => (
+            <span
+              key={token}
+              className="size-4 rounded-sm border"
+              style={{ backgroundColor: theme.colors[token] }}
+              aria-hidden="true"
+            />
+          ))}
+        </div>
+        <span className="text-sm font-medium">{theme.name}</span>
+        <span className="text-[11px] text-muted-foreground">{theme.base}</span>
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" className="h-7 px-1.5">
+            <MoreVertical className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={onEdit}>
+            <Plus className="size-3.5" />
+            Edit
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onExport}>
+            <Download className="size-3.5" />
+            Export
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onDelete} variant="destructive">
+            <Trash2 className="size-3.5" />
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   );
 }
 
@@ -286,33 +650,5 @@ function Section({
       </div>
       {children}
     </div>
-  );
-}
-
-function ThemeCard({
-  value,
-  current,
-  icon,
-  label,
-}: {
-  value: ThemeMode;
-  current: ThemeMode;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  const selected = current === value;
-  const id = `theme-${value}`;
-  return (
-    <label
-      htmlFor={id}
-      className={cn(
-        "flex cursor-pointer flex-col items-center gap-2 rounded-md border p-3 transition-colors",
-        selected ? "border-primary bg-primary/10" : "border-border hover:bg-accent",
-      )}
-    >
-      <RadioGroupItem id={id} value={value} className="sr-only" />
-      <span className={cn(selected ? "text-primary" : "text-muted-foreground")}>{icon}</span>
-      <span className="text-xs font-medium">{label}</span>
-    </label>
   );
 }

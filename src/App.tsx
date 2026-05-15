@@ -10,7 +10,7 @@ import { TopBar } from "./components/TopBar";
 import { UpdateChecker } from "./components/UpdateChecker";
 import { useConnections } from "./stores/connections";
 import { usePanelLayouts } from "./stores/panelLayouts";
-import { useApplyTheme, useResolvedTheme } from "./stores/theme";
+import { useApplyTheme, useResolvedTheme, useTheme } from "./stores/theme";
 import { useUi } from "./stores/ui";
 import { useRestoreAndPersistWindowState } from "./stores/windowState";
 
@@ -34,6 +34,10 @@ function App() {
   useApplyTheme();
   useRestoreAndPersistWindowState();
   const resolvedTheme = useResolvedTheme();
+  const hydrateTheme = useTheme((s) => s.hydrate);
+  useEffect(() => {
+    hydrateTheme();
+  }, [hydrateTheme]);
 
   const { load, loaded, activeId } = useConnections();
   const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);

@@ -46,6 +46,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   async function switchDatabase(db: string) {
     if (!activeConn || db === activeConn.database) return;
     try {
+      // Preserve tunnel flags — see SchemaTree.tsx for the same caveat.
       await save({
         id: activeConn.id,
         name: activeConn.name,
@@ -57,6 +58,8 @@ export function CommandPalette({ open, onOpenChange }: Props) {
         ssl: activeConn.ssl,
         folder_id: activeConn.folder_id,
         color: activeConn.color,
+        wg_enabled: !!activeConn.wg,
+        ssh_enabled: !!activeConn.ssh,
       });
       toast.success(`Switched to ${db}`);
     } catch (e) {

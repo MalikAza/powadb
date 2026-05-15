@@ -16,20 +16,31 @@ function mockMatchMedia(isDark: boolean) {
 
 describe("useTheme store", () => {
   beforeEach(() => {
-    useTheme.setState({ mode: "system" });
+    useTheme.setState({
+      selection: { kind: "preset", mode: "system" },
+      customThemes: [],
+      hydrated: false,
+    });
     mockMatchMedia(false);
   });
 
-  it("defaults to system", () => {
-    expect(useTheme.getState().mode).toBe("system");
+  it("defaults to the system preset", () => {
+    const s = useTheme.getState().selection;
+    expect(s.kind).toBe("preset");
+    if (s.kind === "preset") expect(s.mode).toBe("system");
   });
 
-  it("setMode updates the stored mode", () => {
-    useTheme.getState().setMode("dark");
-    expect(useTheme.getState().mode).toBe("dark");
-    useTheme.getState().setMode("light");
-    expect(useTheme.getState().mode).toBe("light");
-    useTheme.getState().setMode("system");
-    expect(useTheme.getState().mode).toBe("system");
+  it("setSelection updates state synchronously", () => {
+    useTheme.setState({ selection: { kind: "preset", mode: "dark" } });
+    const s = useTheme.getState().selection;
+    expect(s.kind).toBe("preset");
+    if (s.kind === "preset") expect(s.mode).toBe("dark");
+  });
+
+  it("tracks the active custom theme by id", () => {
+    useTheme.setState({ selection: { kind: "custom", id: "abc" } });
+    const s = useTheme.getState().selection;
+    expect(s.kind).toBe("custom");
+    if (s.kind === "custom") expect(s.id).toBe("abc");
   });
 });

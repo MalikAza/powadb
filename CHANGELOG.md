@@ -1,3 +1,17 @@
+## [0.7.0] - 2026-05-15
+
+### Added
+- DB diagram modeler — view, edit, alter (with live alter) and import an existing schema as an interactive diagram.
+- Custom themes — drop-in `.powadb-theme.json` files validated against a schema.
+- Community themes bundled with the app: Catppuccin Latte/Mocha, Dracula, Gruvbox Dark, Nord, Solarized Light/Dark, Tokyo Night.
+- SSH tunnel connections — connect to remote databases through an SSH jump host, managed transparently by the app.
+
+### Fixed
+- Tunnel flags are now preserved when switching databases from the command palette or the schema tree.
+- `information_schema` columns are cast to `CHAR` to avoid MySQL collation mismatches.
+- MySQL row decoding now handles the `TIMESTAMP` type correctly.
+- Tunneled DB pools are kept clean of stale connections after the tunnel is reset.
+
 ## [0.6.0] - 2026-05-13
 
 ### Added
