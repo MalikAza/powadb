@@ -143,6 +143,10 @@ export function SchemaTree() {
   async function switchDatabase(db: string) {
     if (!conn || db === conn.database) return;
     try {
+      // Carry the tunnel flags across — omitting them defaults the backend
+      // to `false`, which would silently disable WG/SSH and wipe their config.
+      // The full tunnel payloads (wg_config / ssh_config) are NOT sent: the
+      // backend preserves the stored ones when those fields are absent.
       await saveConnection({
         id: conn.id,
         name: conn.name,
@@ -154,6 +158,8 @@ export function SchemaTree() {
         ssl: conn.ssl,
         folder_id: conn.folder_id,
         color: conn.color,
+        wg_enabled: !!conn.wg,
+        ssh_enabled: !!conn.ssh,
       });
       toast.success(`Switched to ${db}`);
     } catch (e) {
