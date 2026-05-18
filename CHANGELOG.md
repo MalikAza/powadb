@@ -1,3 +1,20 @@
+## [0.8.0]
+
+### Added
+- BYTEA display modes — render binary columns as Hex, UTF-8, UUID, ULID or Base64, with per-column overrides remembered across sessions.
+- Foreign-key click-to-browse — clicking a foreign-key cell opens the referenced row in a new browse tab.
+- Cell preview dialog — inspect long text, JSON or other values in a dedicated full-value viewer from the results grid.
+- Geometry map feature popover — clicking a feature on the map surfaces its lat/long and the row's other column values.
+
+### Changed
+- Double-clicking an entry in the snippets or history panel now opens it in a new tab.
+- The custom themes list in Settings is wrapped in a scroll area so long lists stay usable.
+- SSH and WireGuard tunnels now receive the target host and port explicitly, avoiding a silent fallback to `localhost`.
+
+### Fixed
+- Custom query columns in the results grid are aligned consistently with the rest of the grid (#13).
+- Geometry feature popover behavior after clicking through to a feature (#13, follow-up to #12).
+
 ## [0.7.0] - 2026-05-15
 
 ### Added
