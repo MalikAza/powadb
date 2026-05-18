@@ -1,4 +1,7 @@
-export type DbKind = "postgres" | "mysql" | "sqlite";
+import type { z } from "zod";
+import type { dbKindSchema } from "./lib/schemas";
+
+export type DbKind = z.infer<typeof dbKindSchema>;
 
 /// Marker for a connection that has WireGuard enabled. The full `.conf` content
 /// is fetched separately (`ipc.getConnectionWgConfig`) so list responses don't

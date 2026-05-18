@@ -218,7 +218,19 @@ async fn run_engine(
         loop {
             let n = match udp_recv.recv(&mut datagram).await {
                 Ok(n) => n,
-                Err(_) => return,
+                Err(e) => {
+                    // The most common UDP recv error is ECONNREFUSED, surfaced by the
+                    // kernel after an ICMP "port unreachable" reply to one of our sends
+                    // (peer briefly unreachable, NAT rebinding, host sleep/wake, etc.).
+                    // Returning on the first such error permanently kills the inbound
+                    // pipeline — the tunnel then silently stops decapsulating, every new
+                    // pool acquire hangs until sqlx times out, and only a full reconnect
+                    // recovers. Log and continue instead so transient blips heal on their
+                    // own once the peer is reachable again.
+                    eprintln!("wg recv error (continuing): {e}");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
             };
             let input = datagram[..n].to_vec();
             drain_decapsulate(&tunn_recv, &input, &udp_to_dev_tx, &udp_for_handshake).await;

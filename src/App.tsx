@@ -39,7 +39,9 @@ function App() {
     hydrateTheme();
   }, [hydrateTheme]);
 
-  const { load, loaded, activeId } = useConnections();
+  const load = useConnections((s) => s.load);
+  const loaded = useConnections((s) => s.loaded);
+  const activeId = useConnections((s) => s.activeId);
   const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);
   const exportDialog = useUi((s) => s.exportDialog);
   const importDialog = useUi((s) => s.importDialog);

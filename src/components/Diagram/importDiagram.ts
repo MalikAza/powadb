@@ -35,9 +35,7 @@ export function parseJsonImport(text: string): ImportResult {
     const where = first?.path.join(".") || "(root)";
     throw new Error(`Diagram doc validation failed at ${where}: ${first?.message ?? "unknown"}`);
   }
-  // The Zod-parsed shape matches DiagramDoc plus its optional originalName fields.
-  // Cast through unknown so TS doesn't complain about the structural overlap.
-  const doc = result.data as unknown as DiagramDoc;
+  const doc: DiagramDoc = result.data;
   // Keep parsed positions; they were exported intentionally.
   return { doc, warnings };
 }

@@ -17,7 +17,7 @@ pub enum DbKind {
 }
 
 impl DbKind {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             DbKind::Postgres => "postgres",
             DbKind::Mysql => "mysql",
@@ -107,30 +107,26 @@ impl Storage {
         .execute(&pool)
         .await?;
 
-        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN password TEXT")
-            .execute(&pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN folder_id TEXT")
-            .execute(&pool)
-            .await;
-        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN color TEXT")
-            .execute(&pool)
-            .await;
-        let _ =
-            sqlx::query("ALTER TABLE connections ADD COLUMN wg_enabled INTEGER NOT NULL DEFAULT 0")
-                .execute(&pool)
-                .await;
-        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN wg_config TEXT")
-            .execute(&pool)
-            .await;
-        let _ = sqlx::query(
-            "ALTER TABLE connections ADD COLUMN ssh_enabled INTEGER NOT NULL DEFAULT 0",
+        // ALTER TABLE migrations: these may fail with "duplicate column name" on already-migrated
+        // databases, which is expected and ignored. Any other failure is logged so we don't
+        // silently corrupt the schema.
+        try_add_column(&pool, "connections", "password TEXT").await;
+        try_add_column(&pool, "connections", "folder_id TEXT").await;
+        try_add_column(&pool, "connections", "color TEXT").await;
+        try_add_column(
+            &pool,
+            "connections",
+            "wg_enabled INTEGER NOT NULL DEFAULT 0",
         )
-        .execute(&pool)
         .await;
-        let _ = sqlx::query("ALTER TABLE connections ADD COLUMN ssh_config TEXT")
-            .execute(&pool)
-            .await;
+        try_add_column(&pool, "connections", "wg_config TEXT").await;
+        try_add_column(
+            &pool,
+            "connections",
+            "ssh_enabled INTEGER NOT NULL DEFAULT 0",
+        )
+        .await;
+        try_add_column(&pool, "connections", "ssh_config TEXT").await;
 
         sqlx::query(
             r#"
@@ -781,6 +777,20 @@ pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Best-effort `ALTER TABLE ... ADD COLUMN`. Silently ignores the "duplicate
+/// column name" error that fires on already-migrated databases; logs every
+/// other failure to stderr so schema drift is observable instead of silent.
+async fn try_add_column(pool: &SqlitePool, table: &str, column_def: &str) {
+    let sql = format!("ALTER TABLE {table} ADD COLUMN {column_def}");
+    if let Err(e) = sqlx::query(&sql).execute(pool).await {
+        let msg = e.to_string();
+        // SQLite reports "duplicate column name: X" when the column already exists.
+        if !msg.contains("duplicate column name") {
+            eprintln!("storage migration failed ({sql}): {msg}");
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -824,11 +834,13 @@ impl SettingsStore {
     }
 
     pub fn get(&self) -> AppSettings {
-        self.inner.read().unwrap().clone()
+        // Recover from poisoning instead of crashing — settings are recoverable cached state.
+        self.inner.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn set(&self, s: AppSettings) {
-        *self.inner.write().unwrap() = s;
+        let mut guard = self.inner.write().unwrap_or_else(|e| e.into_inner());
+        *guard = s;
     }
 }
 

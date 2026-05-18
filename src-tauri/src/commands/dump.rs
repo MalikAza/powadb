@@ -588,11 +588,7 @@ async fn export_native(
     let mut file = tokio::fs::File::create(output_path).await?;
     let header = format!(
         "-- PowaDB native dump\n-- engine: {}\n-- include_schema: {}\n-- include_data: {}\n-- NOTE: native engine emits CREATE TABLE + INSERTs only.\n--       Foreign keys, indexes, sequences, views, and triggers are not included.\n--       Use the Tool engine (pg_dump / mysqldump) for full-fidelity dumps.\n\n",
-        match handle {
-            PoolHandle::Postgres(_) => "postgres",
-            PoolHandle::MySql(_) => "mysql",
-            PoolHandle::Sqlite(_) => "sqlite",
-        },
+        handle.kind().as_str(),
         opts.include_schema,
         opts.include_data,
     );
@@ -933,11 +929,7 @@ async fn dump_table_data(
         PoolHandle::Sqlite(pool) => sqlite_drv::execute(pool, &sql_lite).await?,
     };
 
-    let kind = match handle {
-        PoolHandle::Postgres(_) => DbKind::Postgres,
-        PoolHandle::MySql(_) => DbKind::Mysql,
-        PoolHandle::Sqlite(_) => DbKind::Sqlite,
-    };
+    let kind = handle.kind();
 
     if result.rows.is_empty() {
         return Ok(());

@@ -1,5 +1,5 @@
 import { RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { type HistoryEntry, ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
@@ -7,13 +7,13 @@ import { useTabs } from "../stores/tabs";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 export function HistoryPanel() {
-  const { activeId } = useConnections();
-  const { newQueryTab } = useTabs();
+  const activeId = useConnections((s) => s.activeId);
+  const newQueryTab = useTabs((s) => s.newQueryTab);
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     if (!activeId) return;
     setLoading(true);
     try {
@@ -21,11 +21,11 @@ export function HistoryPanel() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeId]);
 
   useEffect(() => {
     refresh();
-  }, [activeId]);
+  }, [refresh]);
 
   function openInNewTab(sql: string) {
     if (!activeId) return;

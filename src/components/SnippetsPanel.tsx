@@ -1,5 +1,5 @@
 import { RefreshCw, Save, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +9,10 @@ import { useTabs } from "../stores/tabs";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 export function SnippetsPanel() {
-  const { activeId } = useConnections();
-  const { tabs, activeTabId, newQueryTab } = useTabs();
+  const activeId = useConnections((s) => s.activeId);
+  const tabs = useTabs((s) => s.tabs);
+  const activeTabId = useTabs((s) => s.activeTabId);
+  const newQueryTab = useTabs((s) => s.newQueryTab);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [loading, setLoading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
@@ -21,18 +23,18 @@ export function SnippetsPanel() {
   const activeTabRaw = tabs.find((t) => t.id === activeTabId);
   const activeTab = activeTabRaw?.kind === "query" ? activeTabRaw : null;
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
       setSnippets(await ipc.listSnippets(activeId ?? undefined));
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeId]);
 
   useEffect(() => {
     refresh();
-  }, [activeId]);
+  }, [refresh]);
 
   async function saveCurrent() {
     if (!activeTab || !saveName.trim()) return;

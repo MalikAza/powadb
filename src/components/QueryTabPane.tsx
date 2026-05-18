@@ -108,18 +108,21 @@ export function QueryTabPane({ tab, conn }: Props) {
 
       {tab.result &&
         !tab.error &&
-        (isExplainResult(tab.result) ? (
-          <ExplainView result={tab.result} />
-        ) : (
-          <>
-            <CopyBar
-              onCopyTsv={() => navigator.clipboard.writeText(toTsv(tab.result!))}
-              onCopyCsv={() => navigator.clipboard.writeText(toCsv(tab.result!))}
-              onCopyJson={() => navigator.clipboard.writeText(toJson(tab.result!))}
-            />
-            <ResultsGrid result={tab.result} connectionId={conn.id} kind={conn.kind} />
-          </>
-        ))}
+        (() => {
+          const result = tab.result;
+          return isExplainResult(result) ? (
+            <ExplainView result={result} />
+          ) : (
+            <>
+              <CopyBar
+                onCopyTsv={() => navigator.clipboard.writeText(toTsv(result))}
+                onCopyCsv={() => navigator.clipboard.writeText(toCsv(result))}
+                onCopyJson={() => navigator.clipboard.writeText(toJson(result))}
+              />
+              <ResultsGrid result={result} connectionId={conn.id} kind={conn.kind} />
+            </>
+          );
+        })()}
     </div>
   );
 }

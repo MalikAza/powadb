@@ -57,26 +57,30 @@ export function SchemaTree() {
     if (!activeId) return;
     setLoading(true);
     setError(null);
-    try {
-      const result = await ipc.introspectSchema(activeId);
+    // The two probes are independent; running them in parallel halves perceived latency
+    // and ensures the database list is fetched even when schema introspection fails.
+    const [schemaResult, dbResult] = await Promise.allSettled([
+      ipc.introspectSchema(activeId),
+      ipc.listDatabases(activeId),
+    ]);
+    if (schemaResult.status === "fulfilled") {
+      const result = schemaResult.value;
       setSchemas(result);
       setSchemaInStore(activeId, result);
       if (conn?.kind === "postgres") setSchemaOpen("public", true);
       else if (conn?.kind === "sqlite") setSchemaOpen("main", true);
       else if (result[0]) setSchemaOpen(result[0].name, true);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
+    } else {
+      setError(String(schemaResult.reason));
     }
-    try {
-      const dbs = await ipc.listDatabases(activeId);
-      setDatabases(dbs);
-      setDatabasesInStore(activeId, dbs);
-    } catch {
+    if (dbResult.status === "fulfilled") {
+      setDatabases(dbResult.value);
+      setDatabasesInStore(activeId, dbResult.value);
+    } else {
       setDatabases([]);
       setDatabasesInStore(activeId, []);
     }
+    setLoading(false);
   }
 
   useEffect(() => {

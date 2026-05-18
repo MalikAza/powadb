@@ -25,6 +25,16 @@ pub enum PoolHandle {
     Sqlite(SqlitePool),
 }
 
+impl PoolHandle {
+    pub fn kind(&self) -> DbKind {
+        match self {
+            PoolHandle::Postgres(_) => DbKind::Postgres,
+            PoolHandle::MySql(_) => DbKind::Mysql,
+            PoolHandle::Sqlite(_) => DbKind::Sqlite,
+        }
+    }
+}
+
 enum Tunnel {
     Wg(WgTunnelHandle),
     Ssh(SshTunnelHandle),
