@@ -60,6 +60,9 @@ export const ipc = {
   ): Promise<DiagramIntrospection> =>
     invoke("introspect_diagram", { connectionId, schema: schema ?? null }),
 
+  listForeignKeys: (connectionId: string, schema: string, table: string): Promise<DiagFk[]> =>
+    invoke("list_foreign_keys", { connectionId, schema, table }),
+
   listDiagrams: (connectionId: string): Promise<SavedDiagram[]> =>
     invoke("list_diagrams", { connectionId }),
 

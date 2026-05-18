@@ -175,6 +175,7 @@ pub fn run() {
             commands::schema::introspect_schema,
             commands::schema::list_databases,
             commands::diagram::introspect_diagram,
+            commands::diagram::list_foreign_keys,
             commands::diagram::list_diagrams,
             commands::diagram::get_diagram,
             commands::diagram::save_diagram,

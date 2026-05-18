@@ -1,6 +1,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   Plus,
@@ -27,7 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { ipc } from "../ipc";
+import { type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
@@ -58,6 +59,7 @@ type Props = {
 
 export function BrowseTabPane({ tab, conn }: Props) {
   const patchTab = useTabs((s) => s.patchTab);
+  const [fks, setFks] = useState<DiagFk[]>([]);
 
   const refresh = useCallback(async () => {
     const queryId = newQueryId();
@@ -87,6 +89,21 @@ export function BrowseTabPane({ tab, conn }: Props) {
       .catch(() => patchTab(tab.id, { pkCols: [] }));
   }, [tab.id, tab.pkCols, conn.id, tab.schema, tab.table, patchTab]);
 
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .listForeignKeys(conn.id, tab.schema, tab.table)
+      .then((rows) => {
+        if (!cancelled) setFks(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conn.id, tab.schema, tab.table]);
+
   function setFilter(col: string, value: string) {
     patchTab(tab.id, {
       filters: { ...tab.filters, [col]: value },
@@ -114,11 +131,12 @@ export function BrowseTabPane({ tab, conn }: Props) {
         </pre>
       )}
 
-      {tab.result && !tab.error && (
+      {tab.result && (
         <BrowseGrid
           tab={tab}
           conn={conn}
           result={tab.result}
+          fks={fks}
           onSort={toggleSort}
           onFilter={setFilter}
           onRefresh={refresh}
@@ -211,6 +229,7 @@ function BrowseGrid({
   tab,
   conn,
   result,
+  fks,
   onSort,
   onFilter,
   onRefresh,
@@ -218,10 +237,12 @@ function BrowseGrid({
   tab: BrowseTab;
   conn: SavedConnection;
   result: QueryResult;
+  fks: DiagFk[];
   onSort: (col: string) => void;
   onFilter: (col: string, value: string) => void;
   onRefresh: () => void;
 }) {
+  const openBrowseTab = useTabs((s) => s.openBrowseTab);
   const [editing, setEditing] = useState<{ row: number; col: number; value: string } | null>(null);
   const [insertRow, setInsertRow] = useState<(string | null)[] | null>(null);
   const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null);
@@ -255,6 +276,31 @@ function BrowseGrid({
     }
     return idxs;
   }, [tab.pkCols, cols]);
+
+  const fkByColumn = useMemo(() => {
+    const map = new Map<string, DiagFk>();
+    for (const fk of fks) {
+      for (const col of fk.from_columns) {
+        if (!map.has(col)) map.set(col, fk);
+      }
+    }
+    return map;
+  }, [fks]);
+
+  function openFkTarget(fk: DiagFk, row: unknown[]) {
+    const filters: Record<string, string> = {};
+    fk.from_columns.forEach((fromCol, i) => {
+      const idx = cols.findIndex((c) => c.name === fromCol);
+      if (idx === -1) return;
+      const v = row[idx];
+      if (v === null || v === undefined) return;
+      const toCol = fk.to_columns[i];
+      if (!toCol) return;
+      filters[toCol] = `=${typeof v === "object" ? JSON.stringify(v) : String(v)}`;
+    });
+    if (Object.keys(filters).length === 0) return;
+    openBrowseTab(conn.id, fk.to_schema, fk.to_table, filters);
+  }
 
   function toggleRow(rowIdx: number) {
     setSelected((prev) => {
@@ -674,17 +720,21 @@ function BrowseGrid({
                     const col = cols[colIdx];
                     const isGeo = isGeoColumn(conn.kind, col);
                     const canOpenMap = isGeo && typeof v === "string" && v !== "";
+                    const fk = fkByColumn.get(col.name);
+                    const canFollowFk = fk !== undefined && v !== null && v !== undefined;
+                    const startEdit = () =>
+                      setEditing({
+                        row: rowIdx,
+                        col: colIdx,
+                        value: v === null || v === undefined ? "" : String(v),
+                      });
                     return (
                       <td
                         key={colIdx}
                         className="border-b border-r border-border p-0"
                         onDoubleClick={() => {
                           if (!canEdit) return;
-                          setEditing({
-                            row: rowIdx,
-                            col: colIdx,
-                            value: v === null || v === undefined ? "" : String(v),
-                          });
+                          startEdit();
                         }}
                       >
                         {isEditing ? (
@@ -704,6 +754,13 @@ function BrowseGrid({
                                 ewkbHex: v as string,
                               })
                             }
+                          />
+                        ) : canFollowFk ? (
+                          <FkCell
+                            value={v}
+                            target={`${fk.to_schema ? `${fk.to_schema}.` : ""}${fk.to_table}`}
+                            onOpen={() => openFkTarget(fk, row)}
+                            onEdit={canEdit ? startEdit : null}
                           />
                         ) : (
                           <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
@@ -774,6 +831,40 @@ function GeometryCell({ value, onOpen }: { value: string; onOpen: () => void }) 
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={onOpen}>Open in map</ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function FkCell({
+  value,
+  target,
+  onOpen,
+  onEdit,
+}: {
+  value: unknown;
+  target: string;
+  onOpen: () => void;
+  onEdit: (() => void) | null;
+}) {
+  const display = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={onOpen}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title={`Open referenced row in ${target}`}
+          className="flex w-full items-center gap-1 overflow-hidden px-3 py-1 text-left text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+        >
+          <span className="truncate">{display}</span>
+          <ArrowUpRight className="size-3 shrink-0 opacity-60" />
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onOpen}>Open referenced row in {target}</ContextMenuItem>
+        {onEdit && <ContextMenuItem onSelect={onEdit}>Edit cell</ContextMenuItem>}
       </ContextMenuContent>
     </ContextMenu>
   );

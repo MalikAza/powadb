@@ -31,7 +31,9 @@ export function parseFilter(input: string): Filter | null {
   const ops = [">=", "<=", "!=", ">", "<", "="] as const;
   for (const op of ops) {
     if (trimmed.startsWith(op)) {
-      return { kind: "compare", op, value: trimmed.slice(op.length).trim() };
+      const value = trimmed.slice(op.length).trim();
+      if (value === "") return null;
+      return { kind: "compare", op, value };
     }
   }
   return { kind: "like", value: trimmed };
