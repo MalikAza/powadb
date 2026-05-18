@@ -99,14 +99,11 @@ impl PoolRegistry {
                     )
                 })?;
                 let cfg = SshConfig::parse(&cfg_text)?;
-                // SSH supports hostnames as DB targets — resolution happens
-                // server-side over the direct-tcpip channel.
-                let db_target_ip: IpAddr = conn
-                    .host
-                    .parse()
-                    .unwrap_or_else(|_| IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)));
-                let target = SocketAddr::new(db_target_ip, conn.port);
-                let t = ssh::open_tunnel(&cfg, target).await?;
+                // Hostnames are resolved by the SSH server inside the direct-tcpip
+                // channel, so pass `conn.host` through verbatim instead of forcing it
+                // through a local `IpAddr::parse` (which used to silently degrade to
+                // 127.0.0.1 for hostname-style entries — wrong, and surprising).
+                let t = ssh::open_tunnel(&cfg, conn.host.clone(), conn.port).await?;
                 // TOFU writeback: persist the captured host fingerprint so future
                 // connects can verify it.
                 if cfg.known_host_fingerprint.is_none() {

@@ -19,6 +19,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use boringtun::noise::errors::WireGuardError;
 use boringtun::noise::{Tunn, TunnResult};
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
@@ -348,7 +349,18 @@ async fn decapsulate_once(tunn: &Arc<Mutex<Tunn>>, input: &[u8]) -> Action {
         TunnResult::WriteToNetwork(reply) => Action::ToNetwork(reply.to_vec()),
         TunnResult::WriteToTunnelV6(_, _) | TunnResult::Done => Action::Done,
         TunnResult::Err(e) => {
-            eprintln!("wg decapsulate error: {e:?}");
+            // DuplicateCounter (anti-replay catching a re-delivered packet) and
+            // InvalidAeadTag (stale packets from before a rekey / in-flight after
+            // disconnect) are routine on real networks — boringtun drops the packet
+            // and the tunnel keeps working. Surfacing them as errors is noise.
+            // Other variants (WrongKey, InvalidMac, …) may indicate misconfiguration
+            // and are still worth seeing.
+            if !matches!(
+                e,
+                WireGuardError::DuplicateCounter | WireGuardError::InvalidAeadTag
+            ) {
+                eprintln!("wg decapsulate error: {e:?}");
+            }
             Action::Done
         }
     }
