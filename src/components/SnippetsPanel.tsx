@@ -10,7 +10,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 
 export function SnippetsPanel() {
   const { activeId } = useConnections();
-  const { tabs, activeTabId, patchTab } = useTabs();
+  const { tabs, activeTabId, newQueryTab } = useTabs();
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [loading, setLoading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
@@ -46,9 +46,9 @@ export function SnippetsPanel() {
     await refresh();
   }
 
-  function loadIntoTab(sql: string) {
-    if (!activeTab) return;
-    patchTab(activeTab.id, { sql } as Partial<typeof activeTab>);
+  function openInNewTab(sql: string) {
+    if (!activeId) return;
+    newQueryTab(activeId, sql);
   }
 
   return (
@@ -142,8 +142,8 @@ export function SnippetsPanel() {
           return (
             <div
               key={s.id}
-              onDoubleClick={() => loadIntoTab(s.sql)}
-              title="Double-click to load into the active tab"
+              onDoubleClick={() => openInNewTab(s.sql)}
+              title="Double-click to open in a new query tab"
               className="cursor-pointer rounded border border-border/40 bg-card/50 p-2 hover:bg-sidebar-accent"
             >
               <div className="flex items-center justify-between gap-1">

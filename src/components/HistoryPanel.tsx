@@ -8,7 +8,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 
 export function HistoryPanel() {
   const { activeId } = useConnections();
-  const { tabs, activeTabId, patchTab } = useTabs();
+  const { newQueryTab } = useTabs();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
@@ -27,11 +27,9 @@ export function HistoryPanel() {
     refresh();
   }, [activeId]);
 
-  function loadIntoTab(sql: string) {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (tab && tab.kind === "query" && tab.connectionId === activeId) {
-      patchTab(tab.id, { sql } as Partial<typeof tab>);
-    }
+  function openInNewTab(sql: string) {
+    if (!activeId) return;
+    newQueryTab(activeId, sql);
   }
 
   return (
@@ -74,8 +72,8 @@ export function HistoryPanel() {
           return (
             <div
               key={e.id}
-              onDoubleClick={() => loadIntoTab(e.sql)}
-              title="Double-click to load into the active tab"
+              onDoubleClick={() => openInNewTab(e.sql)}
+              title="Double-click to open in a new query tab"
               className="cursor-pointer rounded border border-border/40 bg-card/50 p-2 hover:bg-sidebar-accent"
             >
               <div
