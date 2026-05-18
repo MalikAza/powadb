@@ -26,8 +26,41 @@ jobs:
     needs: verify-tag-on-main
     uses: ./.github/workflows/checks.yml
 
-  build:
+  create-release:
     needs: checks
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.release_id }}
+    steps:
+      - name: Create or reuse draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Reuse an existing release for this tag if one is already there
+          # (e.g. on a workflow re-run); otherwise create a fresh draft.
+          if release_id=$(gh api "repos/$REPO/releases/tags/$TAG" --jq '.id' 2>/dev/null); then
+            echo "Reusing existing release $release_id for $TAG"
+          else
+            release_id=$(gh api \
+              -X POST "repos/$REPO/releases" \
+              -f tag_name="$TAG" \
+              -f name="PowaDB $TAG" \
+              -f body="See the assets below to download and install." \
+              -F draft=true \
+              -F prerelease=false \
+              --jq '.id')
+            echo "Created draft release $release_id for $TAG"
+          fi
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -70,24 +103,36 @@ jobs:
       - name: Install JS deps
         run: npm ci
 
-      - name: Build & release
+      - name: Build & upload
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           VITE_UPDATER_GH_TOKEN: ${{ secrets.UPDATER_PAT }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "PowaDB ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install."
-          releaseDraft: false
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: true
           updaterJsonPreferNsis: false
           args: ${{ matrix.args }}
 
+  publish-release:
+    needs: [create-release, build]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Un-draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" \
+            -F draft=false \
+            -F prerelease=false
+
   publish-manifest:
-    needs: build
+    needs: publish-release
     runs-on: ubuntu-latest
     permissions:
       contents: write
