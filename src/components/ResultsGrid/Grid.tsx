@@ -16,9 +16,17 @@ import {
 } from "@/components/ui/context-menu";
 import { type ByteaDisplayMode, formatBytea } from "@/lib/bytea";
 import { cn } from "@/lib/utils";
+import type { DiagFk } from "../../ipc";
 import type { Column, DbKind, QueryResult } from "../../types";
 import { type CellPreview, CellPreviewDialog } from "../CellPreviewDialog";
+import { FkCell } from "../FkCell";
 import { GeometryMapDialog, type GeometryMapInput } from "../GeometryMap";
+
+export type FkColumnLink = {
+  fk: DiagFk;
+  /** Maps each `fk.from_columns[k]` to its zero-based index in the result. */
+  fromColIdxByName: Record<string, number>;
+};
 
 type RowShape = Record<string, unknown>;
 
@@ -26,6 +34,10 @@ type Props = {
   result: QueryResult;
   connectionId: string;
   kind: DbKind;
+  /** Foreign-key link per result column index. Cells in these columns
+   * render as clickable affordances that call `onOpenFkTarget`. */
+  fkByColIdx?: Map<number, FkColumnLink>;
+  onOpenFkTarget?: (link: FkColumnLink, row: unknown[]) => void;
 };
 
 const GEO_TYPES = new Set(["geometry", "geography"]);
@@ -91,7 +103,7 @@ function countNonNull(result: QueryResult, columnIdx: number): number {
   return n;
 }
 
-export function ResultsGrid({ result, connectionId, kind }: Props) {
+export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTarget }: Props) {
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
   const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
   // BYTEA presentation is per-result instance: free-form query results don't
@@ -562,24 +574,50 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                   {row.getVisibleCells().map((cell, colIdx) => {
                     const isSelected = isSelectedRow && colIdx === selected.col;
                     const column = result.columns[colIdx];
+                    const cellValue = result.rows[virtualRow.index]?.[colIdx];
+                    const fkLink = fkByColIdx?.get(colIdx);
+                    const renderAsFk =
+                      !!fkLink && cellValue !== null && cellValue !== undefined && !!onOpenFkTarget;
                     return (
                       <div
                         key={cell.id}
                         onClick={() => setSelected({ row: virtualRow.index, col: colIdx })}
                         onDoubleClick={() => {
-                          if (!column) return;
+                          if (!column || renderAsFk) return;
                           setCellPreview({
                             columnName: column.name,
-                            value: result.rows[virtualRow.index]?.[colIdx],
+                            value: cellValue,
                           });
                         }}
                         className={cn(
-                          "overflow-hidden text-ellipsis whitespace-nowrap border-r border-b border-border/50 px-3 py-1 font-mono text-xs",
+                          "overflow-hidden text-ellipsis whitespace-nowrap border-r border-b border-border/50 font-mono text-xs",
+                          renderAsFk ? "p-0" : "px-3 py-1",
                           isSelected &&
                             "bg-primary/30 outline outline-1 -outline-offset-1 outline-primary",
                         )}
                       >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        {renderAsFk && fkLink ? (
+                          <FkCell
+                            value={cellValue}
+                            target={`${fkLink.fk.to_schema ? `${fkLink.fk.to_schema}.` : ""}${fkLink.fk.to_table}`}
+                            onOpen={() => {
+                              const sourceRow = result.rows[virtualRow.index];
+                              if (sourceRow && onOpenFkTarget) {
+                                onOpenFkTarget(fkLink, sourceRow);
+                              }
+                            }}
+                            onEdit={null}
+                            onShowFull={() => {
+                              if (!column) return;
+                              setCellPreview({
+                                columnName: column.name,
+                                value: cellValue,
+                              });
+                            }}
+                          />
+                        ) : (
+                          flexRender(cell.column.columnDef.cell, cell.getContext())
+                        )}
                       </div>
                     );
                   })}

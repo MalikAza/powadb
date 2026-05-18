@@ -68,6 +68,13 @@ export type FolderInput = {
 export type Column = {
   name: string;
   type_name: string;
+  /** Origin of this result column when it can be traced back to a real
+   * table column. Populated by the Postgres driver (via sqlx's
+   * `relation_id` + `relation_attribute_no` resolved against
+   * `pg_catalog`); MySQL/SQLite leave these unset. */
+  source_schema?: string;
+  source_table?: string;
+  source_column?: string;
 };
 
 export type QueryResult = {

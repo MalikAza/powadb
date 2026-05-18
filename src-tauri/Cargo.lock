@@ -3298,7 +3298,7 @@ dependencies = [
 
 [[package]]
 name = "powadb"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

@@ -1,4 +1,12 @@
-## [0.8.0]
+## [0.8.1] - 2026-05-18
+
+### Added
+- Foreign-key click-to-browser: now works with custom queries.
+
+### Fixed
+- Keyboard shortcut to open settings dialog on non-mac OSs.
+
+## [0.8.0] - 2026-05-18
 
 ### Added
 - BYTEA display modes — render binary columns as Hex, UTF-8, UUID, ULID or Base64, with per-column overrides remembered across sessions.

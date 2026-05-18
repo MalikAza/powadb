@@ -29,6 +29,9 @@ pub async fn execute(pool: &SqlitePool, sql: &str) -> AppResult<QueryResult> {
             .map(|c| ColMeta {
                 name: c.name().to_string(),
                 type_name: c.type_info().name().to_string(),
+                source_schema: None,
+                source_table: None,
+                source_column: None,
             })
             .collect()
     } else {
@@ -39,6 +42,9 @@ pub async fn execute(pool: &SqlitePool, sql: &str) -> AppResult<QueryResult> {
                 .map(|c| ColMeta {
                     name: c.name().to_string(),
                     type_name: c.type_info().name().to_string(),
+                    source_schema: None,
+                    source_table: None,
+                    source_column: None,
                 })
                 .collect(),
             Err(_) => Vec::new(),
