@@ -73,6 +73,34 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
     [result],
   );
 
+  // Each header/row was its own grid using `minmax(120px, max-content)`, so columns
+  // sized themselves per-row based on that row's content — causing misalignment.
+  // Compute one width per column from the longest stringified value and apply the
+  // same `gridTemplateColumns` to the header and every row.
+  const gridTemplateColumns = useMemo(() => {
+    const CHAR_PX = 7;
+    const PADDING_PX = 28;
+    const MIN_PX = 120;
+    const MAX_PX = 600;
+    const widths = result.columns.map((c, colIdx) => {
+      let maxChars = Math.max(c.name.length, c.type_name.length);
+      const cap = Math.ceil((MAX_PX - PADDING_PX) / CHAR_PX);
+      for (const row of result.rows) {
+        const v = row[colIdx];
+        const s =
+          v === null || v === undefined
+            ? "NULL"
+            : typeof v === "object"
+              ? JSON.stringify(v)
+              : String(v);
+        if (s.length > maxChars) maxChars = s.length;
+        if (maxChars >= cap) break;
+      }
+      return clamp(maxChars * CHAR_PX + PADDING_PX, MIN_PX, MAX_PX);
+    });
+    return widths.map((w) => `${w}px`).join(" ");
+  }, [result]);
+
   const columns = useMemo(() => {
     const helper = createColumnHelper<RowShape>();
     return result.columns.map((c: Column, colIdx: number) => {
@@ -251,7 +279,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
         <div className="min-w-max">
           <div
             className="sticky top-0 z-10 grid border-b border-border bg-muted"
-            style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(120px, max-content))` }}
+            style={{ gridTemplateColumns }}
           >
             {table.getHeaderGroups()[0]?.headers.map((header, colIdx) => (
               <div
@@ -290,7 +318,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                   style={{
                     transform: `translateY(${virtualRow.start}px)`,
                     height: virtualRow.size,
-                    gridTemplateColumns: `repeat(${columns.length}, minmax(120px, max-content))`,
+                    gridTemplateColumns,
                   }}
                 >
                   {row.getVisibleCells().map((cell, colIdx) => {
