@@ -3,6 +3,7 @@ import {
   bytesToUlid,
   bytesToUuid,
   formatBytea,
+  hexByteLength,
   parseByteaInput,
   stripHexPrefix,
   ulidToHex,
@@ -21,6 +22,18 @@ describe("stripHexPrefix", () => {
   it("removes leading backslash-x", () => {
     expect(stripHexPrefix("\\xABCD")).toBe("ABCD");
     expect(stripHexPrefix("ABCD")).toBe("ABCD");
+  });
+});
+
+describe("hexByteLength", () => {
+  it("counts decoded bytes with or without prefix", () => {
+    expect(hexByteLength("\\xDEADBEEF")).toBe(4);
+    expect(hexByteLength("DEADBEEF")).toBe(4);
+    expect(hexByteLength("\\x")).toBe(0);
+  });
+
+  it("returns 16 for canonical UUID/ULID-sized hex", () => {
+    expect(hexByteLength("\\x550E8400E29B41D4A716446655440000")).toBe(16);
   });
 });
 
