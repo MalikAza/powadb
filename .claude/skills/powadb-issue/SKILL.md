@@ -60,17 +60,19 @@ Build the branch name as kebab-case derived from the issue title:
 
 Example: `feature/42-connection-pool-metrics`
 
-Then:
+**Always branch off the current branch** (usually `dev`) — do NOT switch to `main` first. Capture the current branch, pull the latest from origin, then create the new branch from there:
 
 ```bash
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 git fetch origin
-git checkout main && git pull origin main
+git pull origin "$CURRENT_BRANCH"
 git checkout -b {feature|bug}/$ARGUMENTS-<slug>
 ```
 
 Guardrails:
 - If a branch with that name already exists locally, ask the user whether to reuse, rename, or abort — never silently overwrite.
 - If `git status` shows uncommitted changes, **stop** and report. Do not stash or discard the user's work.
+- If the current branch has no upstream (so `git pull` would fail), skip the pull and just branch off the current local HEAD — mention this in the hand-off.
 
 ## Step 4 — Explore before editing
 
