@@ -1,3 +1,8 @@
+## [0.8.1] - 2026-05-18
+
+### Added
+- Foreign-key click-to-browser: now works with custom queries
+
 ## [0.8.0] - 2026-05-18
 
 ### Added

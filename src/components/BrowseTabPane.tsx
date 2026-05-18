@@ -1,12 +1,10 @@
 import {
   ArrowDown,
   ArrowUp,
-  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
   Eye,
   Map as MapIcon,
-  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -39,6 +37,7 @@ import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
 import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FkCell } from "./FkCell";
 import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap";
 
 // Cap any single cell at this width so geometry / long-text columns can't blow
@@ -1092,55 +1091,6 @@ function GeometryCell({
           <MapIcon className="size-3.5" />
           Open in map
         </ContextMenuItem>
-        <ContextMenuItem onSelect={onShowFull}>
-          <Eye className="size-3.5" />
-          Show full value
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
-function FkCell({
-  value,
-  target,
-  onOpen,
-  onEdit,
-  onShowFull,
-}: {
-  value: unknown;
-  target: string;
-  onOpen: () => void;
-  onEdit: (() => void) | null;
-  onShowFull: () => void;
-}) {
-  const display = typeof value === "object" ? JSON.stringify(value) : String(value);
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <button
-          type="button"
-          onClick={onOpen}
-          onDoubleClick={(e) => e.stopPropagation()}
-          title={`Open referenced row in ${target}`}
-          className="flex w-full items-center gap-1 overflow-hidden px-3 py-1 text-left text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-          style={{ maxWidth: CELL_MAX_WIDTH }}
-        >
-          <span className="truncate">{display}</span>
-          <ArrowUpRight className="size-3 shrink-0 opacity-60" />
-        </button>
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem onSelect={onOpen}>
-          <ArrowUpRight className="size-3.5" />
-          Open referenced row in {target}
-        </ContextMenuItem>
-        {onEdit && (
-          <ContextMenuItem onSelect={onEdit}>
-            <Pencil className="size-3.5" />
-            Edit cell
-          </ContextMenuItem>
-        )}
         <ContextMenuItem onSelect={onShowFull}>
           <Eye className="size-3.5" />
           Show full value
