@@ -30,8 +30,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { type ByteaDisplayMode, formatBytea, parseByteaInput, stripHexPrefix } from "@/lib/bytea";
 import { cn } from "@/lib/utils";
-import { type DiagFk, ipc } from "../ipc";
+import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
+import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
@@ -48,6 +50,18 @@ const GEO_TYPES = new Set(["geometry", "geography"]);
 
 function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
+}
+
+function isByteaColumn(kind: DbKind, c: Column): boolean {
+  // BYTEA is Postgres-only here — the MySQL `BLOB` family doesn't share the
+  // `\xHEX` wire shape and would need its own decoder.
+  return kind === "postgres" && c.type_name.toUpperCase() === "BYTEA";
+}
+
+type GeomDecoded = DecodedGeometry & { coordsJson: string };
+
+function geomKey(row: number, col: number): string {
+  return `${row}:${col}`;
 }
 
 function buildRowData(
@@ -273,6 +287,9 @@ function BrowseGrid({
   const [opError, setOpError] = useState<string | null>(null);
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
   const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
+  const [decodedGeoms, setDecodedGeoms] = useState<Map<string, GeomDecoded>>(() => new Map());
+  const byteaModes = useColumnDisplay((s) => s.byteaModes);
+  const setByteaMode = useColumnDisplay((s) => s.setByteaMode);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
@@ -281,6 +298,93 @@ function BrowseGrid({
 
   const canEdit = (tab.pkCols?.length ?? 0) > 0;
   const cols = result.columns;
+
+  // Batch-decode every geometry cell in the current result so we can render
+  // GeoJSON coordinates inline and remember each cell's SRID + geometry type
+  // for round-tripping edits back through ST_GeomFromGeoJSON.
+  useEffect(() => {
+    if (conn.kind !== "postgres") {
+      setDecodedGeoms(new Map());
+      return;
+    }
+    const targets: Array<{ row: number; col: number; hex: string }> = [];
+    cols.forEach((c, colIdx) => {
+      if (!isGeoColumn(conn.kind, c)) return;
+      result.rows.forEach((row, rowIdx) => {
+        const v = row[colIdx];
+        if (typeof v === "string" && v !== "") {
+          targets.push({ row: rowIdx, col: colIdx, hex: v });
+        }
+      });
+    });
+    if (targets.length === 0) {
+      setDecodedGeoms(new Map());
+      return;
+    }
+    let cancelled = false;
+    ipc
+      .decodeGeometries(
+        conn.id,
+        targets.map((t) => t.hex),
+      )
+      .then((decoded) => {
+        if (cancelled) return;
+        const next = new Map<string, GeomDecoded>();
+        decoded.forEach((entry, i) => {
+          if (!entry) return;
+          const { row, col } = targets[i];
+          let coordsJson = "";
+          try {
+            const obj = JSON.parse(entry.geojson) as { coordinates?: unknown };
+            coordsJson = JSON.stringify(obj.coordinates ?? null);
+          } catch {
+            coordsJson = entry.geojson;
+          }
+          next.set(geomKey(row, col), { ...entry, coordsJson });
+        });
+        setDecodedGeoms(next);
+      })
+      .catch(() => {
+        if (!cancelled) setDecodedGeoms(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [result, cols, conn.id, conn.kind]);
+
+  // Resolve the per-column BYTEA display mode (defaults to "hex"). Computed once
+  // per render against the persisted store so re-toggling refreshes the grid.
+  const byteaColMode = useMemo(() => {
+    const out = new Map<number, ByteaDisplayMode>();
+    cols.forEach((c, i) => {
+      if (!isByteaColumn(conn.kind, c)) return;
+      const k = columnDisplayKey(conn.id, tab.schema, tab.table, c.name);
+      out.set(i, byteaModes[k] ?? "hex");
+    });
+    return out;
+  }, [cols, conn.kind, conn.id, tab.schema, tab.table, byteaModes]);
+
+  function setColByteaMode(colIdx: number, mode: ByteaDisplayMode) {
+    const col = cols[colIdx];
+    if (!col) return;
+    const key = columnDisplayKey(conn.id, tab.schema, tab.table, col.name);
+    setByteaMode(key, mode);
+  }
+
+  // Pretty-print a cell value according to its column's display preset. Returns
+  // the string the cell should show; `null` for SQL NULL.
+  function displayString(rowIdx: number, colIdx: number, raw: unknown): string | null {
+    if (raw === null || raw === undefined) return null;
+    const decoded = decodedGeoms.get(geomKey(rowIdx, colIdx));
+    if (decoded) return decoded.coordsJson;
+    const mode = byteaColMode.get(colIdx);
+    if (mode && mode !== "hex" && typeof raw === "string") {
+      const formatted = formatBytea(raw, mode);
+      if (formatted !== null) return formatted;
+    }
+    if (typeof raw === "object") return JSON.stringify(raw);
+    return String(raw);
+  }
   const selectedCount = selected.size;
   const allSelected = selectedCount > 0 && selectedCount === result.rows.length;
   const headerCheckState: boolean | "indeterminate" = allSelected
@@ -346,42 +450,78 @@ function BrowseGrid({
       return;
     }
     const { row, col, value } = editing;
-    const colName = cols[col].name;
+    const colDef = cols[col];
+    const colName = colDef.name;
     const oldRow = result.rows[row];
     const original = oldRow[col];
 
-    const newVal = value === "" && original === null ? "" : value;
-    if (String(original ?? "") === newVal) {
-      setEditing(null);
-      return;
-    }
+    // Geometry edits are intentionally disabled (see the cell render — geo
+    // cells don't open the editor). The only "decoded display" we round-trip
+    // is BYTEA via UUID/ULID presets.
+    const byteaMode = byteaColMode.get(col);
 
     try {
-      const setPlaceholder = castPlaceholder(
-        conn.kind === "postgres" ? "$1" : "?",
-        cols[col].type_name,
-        conn.kind,
-      );
-      const setClause = `${quoteIdent(colName, conn.kind)} = ${setPlaceholder}`;
-      const wherePieces: string[] = [];
-      const params: (string | null)[] = [value];
-      let pIdx = 2;
-      for (const pkCol of tab.pkCols) {
-        const idx = cols.findIndex((c) => c.name === pkCol);
-        if (idx === -1) throw new Error(`PK column ${pkCol} not in result`);
-        const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
-        wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
-        params.push(stringifyValue(oldRow[idx]));
-        pIdx++;
+      let paramValue: string | null = value;
+      let setExpr: string;
+
+      const ph1 = conn.kind === "postgres" ? "$1" : "?";
+
+      if (byteaMode && byteaMode !== "hex" && conn.kind === "postgres") {
+        // BYTEA presented as UUID/ULID — parse back to hex, fall through to a
+        // `decode($1, 'hex')::bytea` UPDATE. If parsing fails, bail with a
+        // clear error rather than corrupting the row.
+        const parsed = parseByteaInput(value, byteaMode);
+        if (parsed === null) {
+          throw new Error(`Invalid ${byteaMode.toUpperCase()} value`);
+        }
+        const oldHex = typeof original === "string" ? stripHexPrefix(original).toUpperCase() : "";
+        if (parsed === oldHex) {
+          setEditing(null);
+          return;
+        }
+        paramValue = parsed;
+        setExpr = `${quoteIdent(colName, conn.kind)} = decode(${ph1}, 'hex')::bytea`;
+        await runUpdate(setExpr, paramValue);
+        setEditing(null);
+        setOpError(null);
+        onRefresh();
+        return;
       }
-      const sql = `UPDATE ${quoteTable(tab.schema, tab.table, conn.kind)} SET ${setClause} WHERE ${wherePieces.join(" AND ")}`;
-      await ipc.executeDml(conn.id, sql, params);
+
+      // Default path: bind as text, cast to the column's declared type on PG.
+      const newVal = value === "" && original === null ? "" : value;
+      if (String(original ?? "") === newVal) {
+        setEditing(null);
+        return;
+      }
+      const setPlaceholder = castPlaceholder(ph1, colDef.type_name, conn.kind);
+      setExpr = `${quoteIdent(colName, conn.kind)} = ${setPlaceholder}`;
+      await runUpdate(setExpr, paramValue);
       setEditing(null);
       setOpError(null);
       onRefresh();
     } catch (e) {
       setOpError(String(e));
     }
+  }
+
+  async function runUpdate(setClause: string, firstParam: string | null) {
+    if (!tab.pkCols) throw new Error("no primary key");
+    const { row } = editing!;
+    const oldRow = result.rows[row];
+    const wherePieces: string[] = [];
+    const params: (string | null)[] = [firstParam];
+    let pIdx = 2;
+    for (const pkCol of tab.pkCols) {
+      const idx = cols.findIndex((c) => c.name === pkCol);
+      if (idx === -1) throw new Error(`PK column ${pkCol} not in result`);
+      const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
+      wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
+      params.push(stringifyValue(oldRow[idx]));
+      pIdx++;
+    }
+    const sql = `UPDATE ${quoteTable(tab.schema, tab.table, conn.kind)} SET ${setClause} WHERE ${wherePieces.join(" AND ")}`;
+    await ipc.executeDml(conn.id, sql, params);
   }
 
   async function commitInsert() {
@@ -528,6 +668,9 @@ function BrowseGrid({
               <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left"></th>
               {cols.map((c, colIdx) => {
                 const isGeo = isGeoColumn(conn.kind, c);
+                const isBytea = isByteaColumn(conn.kind, c);
+                const byteaMode = byteaColMode.get(colIdx);
+                const modeBadge = isBytea && byteaMode && byteaMode !== "hex" ? byteaMode : null;
                 const headerInner = (
                   <div style={{ maxWidth: CELL_MAX_WIDTH }}>
                     <div className="flex items-center gap-1 overflow-hidden">
@@ -544,8 +687,13 @@ function BrowseGrid({
                           <ArrowDown className="size-3 shrink-0 text-primary" />
                         ))}
                     </div>
-                    <div className="truncate text-[10px] font-normal text-muted-foreground">
-                      {c.type_name}
+                    <div className="flex items-center gap-1 truncate text-[10px] font-normal text-muted-foreground">
+                      <span>{c.type_name}</span>
+                      {modeBadge && (
+                        <span className="rounded bg-primary/15 px-1 text-[9px] uppercase text-primary">
+                          {modeBadge}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -558,6 +706,29 @@ function BrowseGrid({
                     {headerInner}
                   </th>
                 );
+                if (isBytea) {
+                  return (
+                    <ContextMenu key={c.name}>
+                      <ContextMenuTrigger asChild>{th}</ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onSelect={() => setColByteaMode(colIdx, "ulid")}>
+                          Display as ULID
+                          {byteaMode === "ulid" && <span className="ml-auto text-primary">✓</span>}
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => setColByteaMode(colIdx, "uuid")}>
+                          Display as UUID
+                          {byteaMode === "uuid" && <span className="ml-auto text-primary">✓</span>}
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => setColByteaMode(colIdx, "hex")}>
+                          Display as Hex
+                          {(!byteaMode || byteaMode === "hex") && (
+                            <span className="ml-auto text-primary">✓</span>
+                          )}
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  );
+                }
                 if (!isGeo) return th;
                 const nonNull = result.rows.reduce(
                   (acc, row) =>
@@ -755,11 +926,12 @@ function BrowseGrid({
                     const canOpenMap = isGeo && typeof v === "string" && v !== "";
                     const fk = fkByColumn.get(col.name);
                     const canFollowFk = fk !== undefined && v !== null && v !== undefined;
+                    const shown = displayString(rowIdx, colIdx, v);
                     const startEdit = () =>
                       setEditing({
                         row: rowIdx,
                         col: colIdx,
-                        value: v === null || v === undefined ? "" : String(v),
+                        value: shown ?? "",
                       });
                     return (
                       <td
@@ -767,6 +939,10 @@ function BrowseGrid({
                         className="border-b border-r border-border p-0"
                         onDoubleClick={() => {
                           if (!canEdit) return;
+                          // Geometry edits are too risky to round-trip safely
+                          // (PostGIS re-encodes EWKB, which silently rewrites
+                          // rows on commit even when coords look identical).
+                          if (isGeo) return;
                           startEdit();
                         }}
                       >
@@ -779,7 +955,7 @@ function BrowseGrid({
                           />
                         ) : canOpenMap ? (
                           <GeometryCell
-                            value={v as string}
+                            value={shown ?? (v as string)}
                             onOpen={() =>
                               setMapDialog({
                                 kind: "single",
@@ -788,11 +964,26 @@ function BrowseGrid({
                                 rowData: buildRowData(cols, row, new Set([colIdx])),
                               })
                             }
-                            onShowFull={() => setCellPreview({ columnName: col.name, value: v })}
+                            onShowFull={() => {
+                              // Prefer the decoded GeoJSON (parsed so the
+                              // preview dialog pretty-prints it) over the raw
+                              // EWKB hex, which is what the user actually wants
+                              // to inspect.
+                              const decoded = decodedGeoms.get(geomKey(rowIdx, colIdx));
+                              let previewVal: unknown = v;
+                              if (decoded) {
+                                try {
+                                  previewVal = JSON.parse(decoded.geojson);
+                                } catch {
+                                  previewVal = decoded.geojson;
+                                }
+                              }
+                              setCellPreview({ columnName: col.name, value: previewVal });
+                            }}
                           />
                         ) : canFollowFk ? (
                           <FkCell
-                            value={v}
+                            value={shown ?? v}
                             target={`${fk.to_schema ? `${fk.to_schema}.` : ""}${fk.to_table}`}
                             onOpen={() => openFkTarget(fk, row)}
                             onEdit={canEdit ? startEdit : null}
@@ -805,12 +996,10 @@ function BrowseGrid({
                                 className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
                                 style={{ maxWidth: CELL_MAX_WIDTH }}
                               >
-                                {v === null || v === undefined ? (
+                                {shown === null ? (
                                   <span className="text-muted-foreground/60">NULL</span>
-                                ) : typeof v === "object" ? (
-                                  JSON.stringify(v)
                                 ) : (
-                                  String(v)
+                                  shown
                                 )}
                               </div>
                             </ContextMenuTrigger>

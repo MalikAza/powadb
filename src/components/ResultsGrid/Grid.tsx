@@ -14,6 +14,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { type ByteaDisplayMode, formatBytea } from "@/lib/bytea";
 import { cn } from "@/lib/utils";
 import type { Column, DbKind, QueryResult } from "../../types";
 import { type CellPreview, CellPreviewDialog } from "../CellPreviewDialog";
@@ -31,6 +32,10 @@ const GEO_TYPES = new Set(["geometry", "geography"]);
 
 function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
+}
+
+function isByteaColumn(kind: DbKind, c: Column): boolean {
+  return kind === "postgres" && c.type_name.toUpperCase() === "BYTEA";
 }
 
 function buildRowData(
@@ -89,6 +94,20 @@ function countNonNull(result: QueryResult, columnIdx: number): number {
 export function ResultsGrid({ result, connectionId, kind }: Props) {
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
   const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
+  // BYTEA presentation is per-result instance: free-form query results don't
+  // map to a stable (schema, table, column), so we can't persist preferences
+  // the way the browse pane does.
+  const [byteaModes, setByteaModes] = useState<Map<string, ByteaDisplayMode>>(() => new Map());
+  useEffect(() => {
+    setByteaModes(new Map());
+  }, [result]);
+  function setByteaMode(colName: string, mode: ByteaDisplayMode) {
+    setByteaModes((prev) => {
+      const next = new Map(prev);
+      next.set(colName, mode);
+      return next;
+    });
+  }
   const data = useMemo<RowShape[]>(
     () =>
       result.rows.map((r) => {
@@ -133,15 +152,50 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
     const helper = createColumnHelper<RowShape>();
     return result.columns.map((c: Column, colIdx: number) => {
       const isGeo = isGeoColumn(kind, c);
+      const isBytea = isByteaColumn(kind, c);
       return helper.accessor((row) => row[c.name], {
         id: c.name,
         header: () => {
+          const byteaMode = byteaModes.get(c.name);
+          const modeBadge = isBytea && byteaMode && byteaMode !== "hex" ? byteaMode : null;
           const headerContent = (
             <div>
               <div className="font-medium">{c.name}</div>
-              <div className="text-[10px] font-normal text-muted-foreground">{c.type_name}</div>
+              <div className="flex items-center gap-1 text-[10px] font-normal text-muted-foreground">
+                <span>{c.type_name}</span>
+                {modeBadge && (
+                  <span className="rounded bg-primary/15 px-1 text-[9px] uppercase text-primary">
+                    {modeBadge}
+                  </span>
+                )}
+              </div>
             </div>
           );
+          if (isBytea) {
+            return (
+              <ContextMenu>
+                <ContextMenuTrigger asChild>
+                  <div className="cursor-context-menu">{headerContent}</div>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onSelect={() => setByteaMode(c.name, "ulid")}>
+                    Display as ULID
+                    {byteaMode === "ulid" && <span className="ml-auto text-primary">✓</span>}
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => setByteaMode(c.name, "uuid")}>
+                    Display as UUID
+                    {byteaMode === "uuid" && <span className="ml-auto text-primary">✓</span>}
+                  </ContextMenuItem>
+                  <ContextMenuItem onSelect={() => setByteaMode(c.name, "hex")}>
+                    Display as Hex
+                    {(!byteaMode || byteaMode === "hex") && (
+                      <span className="ml-auto text-primary">✓</span>
+                    )}
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          }
           if (!isGeo) return headerContent;
           const nonNull = countNonNull(result, colIdx);
           return (
@@ -166,6 +220,15 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
         },
         cell: (info) => {
           const v = info.getValue();
+          if (isBytea) {
+            if (typeof v !== "string" || v === "") return formatValue(v);
+            const mode = byteaModes.get(c.name);
+            if (mode && mode !== "hex") {
+              const formatted = formatBytea(v, mode);
+              if (formatted !== null) return formatted;
+            }
+            return formatValue(v);
+          }
           if (!isGeo || typeof v !== "string" || v === "") {
             return formatValue(v);
           }
@@ -209,7 +272,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
         },
       });
     });
-  }, [result, kind]);
+  }, [result, kind, byteaModes]);
 
   const table = useReactTable({
     data,

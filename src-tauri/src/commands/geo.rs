@@ -1,9 +1,17 @@
+use serde::Serialize;
 use sqlx::Row;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::pool_registry::PoolHandle;
 use crate::AppState;
+
+#[derive(Debug, Serialize)]
+pub struct DecodedGeometry {
+    pub geojson: String,
+    pub srid: i32,
+    pub geom_type: String,
+}
 
 /// Convert a PostGIS EWKB hex string (as emitted by the postgres driver for
 /// `geometry`/`geography` columns, e.g. `\x0101000020E6100000...`) into a
@@ -86,6 +94,73 @@ pub async fn geometries_to_geojson(
     Ok(rows
         .into_iter()
         .map(|r| r.try_get::<Option<String>, _>("geojson").unwrap_or(None))
+        .collect())
+}
+
+/// Like `geometries_to_geojson` but also returns the SRID and geometry type for
+/// each entry. Used by the browse grid to render geometries as their GeoJSON
+/// coordinates while remembering what to round-trip back into PostGIS on edit.
+#[tauri::command]
+pub async fn decode_geometries(
+    state: State<'_, AppState>,
+    connection_id: String,
+    ewkb_hex_list: Vec<String>,
+) -> AppResult<Vec<Option<DecodedGeometry>>> {
+    let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    let pool = match handle {
+        PoolHandle::Postgres(p) => p,
+        _ => {
+            return Err(AppError::UnsupportedType(
+                "PostGIS geometry decoding is only supported on Postgres".into(),
+            ));
+        }
+    };
+
+    if ewkb_hex_list.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let stripped: Vec<String> = ewkb_hex_list
+        .iter()
+        .map(|h| {
+            let s = strip_hex_prefix(h);
+            decode_hex(s).map(|_| s.to_string())
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+          ST_AsGeoJSON(g.geom)::text AS geojson,
+          ST_SRID(g.geom)            AS srid,
+          GeometryType(g.geom)       AS gtype,
+          ord
+        FROM (
+          SELECT decode(h, 'hex')::geometry AS geom, ord
+          FROM unnest($1::text[]) WITH ORDINALITY AS t(h, ord)
+        ) g
+        ORDER BY ord
+        "#,
+    )
+    .bind(&stripped)
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let geojson: Option<String> = r.try_get("geojson").ok().flatten();
+            let srid: Option<i32> = r.try_get("srid").ok();
+            let gtype: Option<String> = r.try_get("gtype").ok().flatten();
+            match (geojson, srid, gtype) {
+                (Some(geojson), Some(srid), Some(geom_type)) => Some(DecodedGeometry {
+                    geojson,
+                    srid,
+                    geom_type,
+                }),
+                _ => None,
+            }
+        })
         .collect())
 }
 

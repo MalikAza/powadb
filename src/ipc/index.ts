@@ -91,6 +91,12 @@ export const ipc = {
   geometriesToGeoJSON: (connectionId: string, ewkbHexList: string[]): Promise<(string | null)[]> =>
     invoke("geometries_to_geojson", { connectionId, ewkbHexList }),
 
+  decodeGeometries: (
+    connectionId: string,
+    ewkbHexList: string[],
+  ): Promise<(DecodedGeometry | null)[]> =>
+    invoke("decode_geometries", { connectionId, ewkbHexList }),
+
   listDatabases: (connectionId: string): Promise<string[]> =>
     invoke("list_databases", { connectionId }),
 
@@ -170,6 +176,12 @@ export const ipc = {
   getSettings: (): Promise<AppSettings> => invoke("get_settings"),
   saveSettings: (settings: AppSettings): Promise<AppSettings> =>
     invoke("save_settings", { settings }),
+};
+
+export type DecodedGeometry = {
+  geojson: string;
+  srid: number;
+  geom_type: string;
 };
 
 export type DumpEngine = "tool" | "native";
