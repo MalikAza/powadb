@@ -83,7 +83,11 @@ impl Handler for ClientHandler {
     }
 }
 
-pub async fn open_tunnel(cfg: &SshConfig, target: SocketAddr) -> AppResult<SshTunnelHandle> {
+pub async fn open_tunnel(
+    cfg: &SshConfig,
+    target_host: String,
+    target_port: u16,
+) -> AppResult<SshTunnelHandle> {
     let captured: Arc<StdMutex<Option<String>>> = Arc::new(StdMutex::new(None));
     let mismatch: Arc<StdMutex<Option<(String, String)>>> = Arc::new(StdMutex::new(None));
     let handler = ClientHandler {
@@ -148,7 +152,13 @@ pub async fn open_tunnel(cfg: &SshConfig, target: SocketAddr) -> AppResult<SshTu
         .map_err(|e| AppError::SshTunnel(format!("local_addr failed: {e}")))?;
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let task = tokio::spawn(run_accept_loop(handle, listener, target, shutdown_rx));
+    let task = tokio::spawn(run_accept_loop(
+        handle,
+        listener,
+        target_host,
+        target_port,
+        shutdown_rx,
+    ));
 
     let captured_fp = captured.lock().ok().and_then(|s| s.clone());
 
@@ -163,10 +173,12 @@ pub async fn open_tunnel(cfg: &SshConfig, target: SocketAddr) -> AppResult<SshTu
 async fn run_accept_loop(
     handle: Handle<ClientHandler>,
     listener: TcpListener,
-    target: SocketAddr,
+    target_host: String,
+    target_port: u16,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) {
     let handle = Arc::new(handle);
+    let target_port = target_port as u32;
     loop {
         tokio::select! {
             _ = &mut shutdown_rx => break,
@@ -176,8 +188,7 @@ async fn run_accept_loop(
                     Err(_) => break,
                 };
                 let handle = handle.clone();
-                let target_host = target.ip().to_string();
-                let target_port = target.port() as u32;
+                let target_host = target_host.clone();
                 tokio::spawn(async move {
                     // `forward_one` returns Err on *any* end-of-stream, including
                     // perfectly normal closes (server-side connection drop, pool

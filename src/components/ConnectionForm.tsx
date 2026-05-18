@@ -32,13 +32,12 @@ import {
   type ConnectionFormInput,
   type ConnectionFormValues,
   connectionFormSchema,
-  type DbKindEnum,
   KIND_DEFAULTS,
   ROOT_FOLDER_SENTINEL,
 } from "@/lib/schemas";
 import { ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
-import type { ConnectionInput, SavedConnection, SshConfigPayload } from "../types";
+import type { ConnectionInput, DbKind, SavedConnection, SshConfigPayload } from "../types";
 import { folderPaths } from "../utils/folderTree";
 
 type Props = {
@@ -120,7 +119,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
   }, [editing?.id]);
 
   // When kind changes on a new connection, swap default port/db/user
-  const watchedKind = form.watch("kind") as DbKindEnum;
+  const watchedKind = form.watch("kind") as DbKind;
   useEffect(() => {
     if (isEditing) return;
     const d = KIND_DEFAULTS[watchedKind];

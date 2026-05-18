@@ -1,5 +1,5 @@
 import { RefreshCw, Save, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +9,10 @@ import { useTabs } from "../stores/tabs";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 export function SnippetsPanel() {
-  const { activeId } = useConnections();
-  const { tabs, activeTabId, patchTab } = useTabs();
+  const activeId = useConnections((s) => s.activeId);
+  const tabs = useTabs((s) => s.tabs);
+  const activeTabId = useTabs((s) => s.activeTabId);
+  const newQueryTab = useTabs((s) => s.newQueryTab);
   const [snippets, setSnippets] = useState<Snippet[]>([]);
   const [loading, setLoading] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
@@ -21,18 +23,18 @@ export function SnippetsPanel() {
   const activeTabRaw = tabs.find((t) => t.id === activeTabId);
   const activeTab = activeTabRaw?.kind === "query" ? activeTabRaw : null;
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true);
     try {
       setSnippets(await ipc.listSnippets(activeId ?? undefined));
     } finally {
       setLoading(false);
     }
-  }
+  }, [activeId]);
 
   useEffect(() => {
     refresh();
-  }, [activeId]);
+  }, [refresh]);
 
   async function saveCurrent() {
     if (!activeTab || !saveName.trim()) return;
@@ -46,9 +48,9 @@ export function SnippetsPanel() {
     await refresh();
   }
 
-  function loadIntoTab(sql: string) {
-    if (!activeTab) return;
-    patchTab(activeTab.id, { sql } as Partial<typeof activeTab>);
+  function openInNewTab(sql: string) {
+    if (!activeId) return;
+    newQueryTab(activeId, sql);
   }
 
   return (
@@ -142,8 +144,8 @@ export function SnippetsPanel() {
           return (
             <div
               key={s.id}
-              onDoubleClick={() => loadIntoTab(s.sql)}
-              title="Double-click to load into the active tab"
+              onDoubleClick={() => openInNewTab(s.sql)}
+              title="Double-click to open in a new query tab"
               className="cursor-pointer rounded border border-border/40 bg-card/50 p-2 hover:bg-sidebar-accent"
             >
               <div className="flex items-center justify-between gap-1">

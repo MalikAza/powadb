@@ -1,8 +1,12 @@
 import {
   ArrowDown,
   ArrowUp,
+  ArrowUpRight,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  Map as MapIcon,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -26,18 +30,51 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { type ByteaDisplayMode, formatBytea, parseByteaInput, stripHexPrefix } from "@/lib/bytea";
 import { cn } from "@/lib/utils";
-import { ipc } from "../ipc";
+import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
+import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
+import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap";
+
+// Cap any single cell at this width so geometry / long-text columns can't blow
+// out the table. The full value is still reachable via the "Show full value"
+// context-menu entry (and via cartography for geometry columns).
+const CELL_MAX_WIDTH = "280px";
 
 const GEO_TYPES = new Set(["geometry", "geography"]);
 
 function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
+}
+
+function isByteaColumn(kind: DbKind, c: Column): boolean {
+  // BYTEA is Postgres-only here — the MySQL `BLOB` family doesn't share the
+  // `\xHEX` wire shape and would need its own decoder.
+  return kind === "postgres" && c.type_name.toUpperCase() === "BYTEA";
+}
+
+type GeomDecoded = DecodedGeometry & { coordsJson: string };
+
+function geomKey(row: number, col: number): string {
+  return `${row}:${col}`;
+}
+
+function buildRowData(
+  columns: Column[],
+  row: readonly unknown[],
+  excluded: Set<number>,
+): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  columns.forEach((c, i) => {
+    if (excluded.has(i)) return;
+    out.push([c.name, row[i]]);
+  });
+  return out;
 }
 
 function formatPkValue(v: unknown): string {
@@ -58,6 +95,7 @@ type Props = {
 
 export function BrowseTabPane({ tab, conn }: Props) {
   const patchTab = useTabs((s) => s.patchTab);
+  const [fks, setFks] = useState<DiagFk[]>([]);
 
   const refresh = useCallback(async () => {
     const queryId = newQueryId();
@@ -87,6 +125,21 @@ export function BrowseTabPane({ tab, conn }: Props) {
       .catch(() => patchTab(tab.id, { pkCols: [] }));
   }, [tab.id, tab.pkCols, conn.id, tab.schema, tab.table, patchTab]);
 
+  useEffect(() => {
+    let cancelled = false;
+    ipc
+      .listForeignKeys(conn.id, tab.schema, tab.table)
+      .then((rows) => {
+        if (!cancelled) setFks(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setFks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [conn.id, tab.schema, tab.table]);
+
   function setFilter(col: string, value: string) {
     patchTab(tab.id, {
       filters: { ...tab.filters, [col]: value },
@@ -114,11 +167,12 @@ export function BrowseTabPane({ tab, conn }: Props) {
         </pre>
       )}
 
-      {tab.result && !tab.error && (
+      {tab.result && (
         <BrowseGrid
           tab={tab}
           conn={conn}
           result={tab.result}
+          fks={fks}
           onSort={toggleSort}
           onFilter={setFilter}
           onRefresh={refresh}
@@ -211,6 +265,7 @@ function BrowseGrid({
   tab,
   conn,
   result,
+  fks,
   onSort,
   onFilter,
   onRefresh,
@@ -218,10 +273,12 @@ function BrowseGrid({
   tab: BrowseTab;
   conn: SavedConnection;
   result: QueryResult;
+  fks: DiagFk[];
   onSort: (col: string) => void;
   onFilter: (col: string, value: string) => void;
   onRefresh: () => void;
 }) {
+  const openBrowseTab = useTabs((s) => s.openBrowseTab);
   const [editing, setEditing] = useState<{ row: number; col: number; value: string } | null>(null);
   const [insertRow, setInsertRow] = useState<(string | null)[] | null>(null);
   const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null);
@@ -229,6 +286,10 @@ function BrowseGrid({
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [opError, setOpError] = useState<string | null>(null);
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
+  const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
+  const [decodedGeoms, setDecodedGeoms] = useState<Map<string, GeomDecoded>>(() => new Map());
+  const byteaModes = useColumnDisplay((s) => s.byteaModes);
+  const setByteaMode = useColumnDisplay((s) => s.setByteaMode);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
@@ -237,6 +298,93 @@ function BrowseGrid({
 
   const canEdit = (tab.pkCols?.length ?? 0) > 0;
   const cols = result.columns;
+
+  // Batch-decode every geometry cell in the current result so we can render
+  // GeoJSON coordinates inline and remember each cell's SRID + geometry type
+  // for round-tripping edits back through ST_GeomFromGeoJSON.
+  useEffect(() => {
+    if (conn.kind !== "postgres") {
+      setDecodedGeoms(new Map());
+      return;
+    }
+    const targets: Array<{ row: number; col: number; hex: string }> = [];
+    cols.forEach((c, colIdx) => {
+      if (!isGeoColumn(conn.kind, c)) return;
+      result.rows.forEach((row, rowIdx) => {
+        const v = row[colIdx];
+        if (typeof v === "string" && v !== "") {
+          targets.push({ row: rowIdx, col: colIdx, hex: v });
+        }
+      });
+    });
+    if (targets.length === 0) {
+      setDecodedGeoms(new Map());
+      return;
+    }
+    let cancelled = false;
+    ipc
+      .decodeGeometries(
+        conn.id,
+        targets.map((t) => t.hex),
+      )
+      .then((decoded) => {
+        if (cancelled) return;
+        const next = new Map<string, GeomDecoded>();
+        decoded.forEach((entry, i) => {
+          if (!entry) return;
+          const { row, col } = targets[i];
+          let coordsJson = "";
+          try {
+            const obj = JSON.parse(entry.geojson) as { coordinates?: unknown };
+            coordsJson = JSON.stringify(obj.coordinates ?? null);
+          } catch {
+            coordsJson = entry.geojson;
+          }
+          next.set(geomKey(row, col), { ...entry, coordsJson });
+        });
+        setDecodedGeoms(next);
+      })
+      .catch(() => {
+        if (!cancelled) setDecodedGeoms(new Map());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [result, cols, conn.id, conn.kind]);
+
+  // Resolve the per-column BYTEA display mode (defaults to "hex"). Computed once
+  // per render against the persisted store so re-toggling refreshes the grid.
+  const byteaColMode = useMemo(() => {
+    const out = new Map<number, ByteaDisplayMode>();
+    cols.forEach((c, i) => {
+      if (!isByteaColumn(conn.kind, c)) return;
+      const k = columnDisplayKey(conn.id, tab.schema, tab.table, c.name);
+      out.set(i, byteaModes[k] ?? "hex");
+    });
+    return out;
+  }, [cols, conn.kind, conn.id, tab.schema, tab.table, byteaModes]);
+
+  function setColByteaMode(colIdx: number, mode: ByteaDisplayMode) {
+    const col = cols[colIdx];
+    if (!col) return;
+    const key = columnDisplayKey(conn.id, tab.schema, tab.table, col.name);
+    setByteaMode(key, mode);
+  }
+
+  // Pretty-print a cell value according to its column's display preset. Returns
+  // the string the cell should show; `null` for SQL NULL.
+  function displayString(rowIdx: number, colIdx: number, raw: unknown): string | null {
+    if (raw === null || raw === undefined) return null;
+    const decoded = decodedGeoms.get(geomKey(rowIdx, colIdx));
+    if (decoded) return decoded.coordsJson;
+    const mode = byteaColMode.get(colIdx);
+    if (mode && mode !== "hex" && typeof raw === "string") {
+      const formatted = formatBytea(raw, mode);
+      if (formatted !== null) return formatted;
+    }
+    if (typeof raw === "object") return JSON.stringify(raw);
+    return String(raw);
+  }
   const selectedCount = selected.size;
   const allSelected = selectedCount > 0 && selectedCount === result.rows.length;
   const headerCheckState: boolean | "indeterminate" = allSelected
@@ -255,6 +403,31 @@ function BrowseGrid({
     }
     return idxs;
   }, [tab.pkCols, cols]);
+
+  const fkByColumn = useMemo(() => {
+    const map = new Map<string, DiagFk>();
+    for (const fk of fks) {
+      for (const col of fk.from_columns) {
+        if (!map.has(col)) map.set(col, fk);
+      }
+    }
+    return map;
+  }, [fks]);
+
+  function openFkTarget(fk: DiagFk, row: unknown[]) {
+    const filters: Record<string, string> = {};
+    fk.from_columns.forEach((fromCol, i) => {
+      const idx = cols.findIndex((c) => c.name === fromCol);
+      if (idx === -1) return;
+      const v = row[idx];
+      if (v === null || v === undefined) return;
+      const toCol = fk.to_columns[i];
+      if (!toCol) return;
+      filters[toCol] = `=${typeof v === "object" ? JSON.stringify(v) : String(v)}`;
+    });
+    if (Object.keys(filters).length === 0) return;
+    openBrowseTab(conn.id, fk.to_schema, fk.to_table, filters);
+  }
 
   function toggleRow(rowIdx: number) {
     setSelected((prev) => {
@@ -277,42 +450,78 @@ function BrowseGrid({
       return;
     }
     const { row, col, value } = editing;
-    const colName = cols[col].name;
+    const colDef = cols[col];
+    const colName = colDef.name;
     const oldRow = result.rows[row];
     const original = oldRow[col];
 
-    const newVal = value === "" && original === null ? "" : value;
-    if (String(original ?? "") === newVal) {
-      setEditing(null);
-      return;
-    }
+    // Geometry edits are intentionally disabled (see the cell render — geo
+    // cells don't open the editor). The only "decoded display" we round-trip
+    // is BYTEA via UUID/ULID presets.
+    const byteaMode = byteaColMode.get(col);
 
     try {
-      const setPlaceholder = castPlaceholder(
-        conn.kind === "postgres" ? "$1" : "?",
-        cols[col].type_name,
-        conn.kind,
-      );
-      const setClause = `${quoteIdent(colName, conn.kind)} = ${setPlaceholder}`;
-      const wherePieces: string[] = [];
-      const params: (string | null)[] = [value];
-      let pIdx = 2;
-      for (const pkCol of tab.pkCols) {
-        const idx = cols.findIndex((c) => c.name === pkCol);
-        if (idx === -1) throw new Error(`PK column ${pkCol} not in result`);
-        const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
-        wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
-        params.push(stringifyValue(oldRow[idx]));
-        pIdx++;
+      let paramValue: string | null = value;
+      let setExpr: string;
+
+      const ph1 = conn.kind === "postgres" ? "$1" : "?";
+
+      if (byteaMode && byteaMode !== "hex" && conn.kind === "postgres") {
+        // BYTEA presented as UUID/ULID — parse back to hex, fall through to a
+        // `decode($1, 'hex')::bytea` UPDATE. If parsing fails, bail with a
+        // clear error rather than corrupting the row.
+        const parsed = parseByteaInput(value, byteaMode);
+        if (parsed === null) {
+          throw new Error(`Invalid ${byteaMode.toUpperCase()} value`);
+        }
+        const oldHex = typeof original === "string" ? stripHexPrefix(original).toUpperCase() : "";
+        if (parsed === oldHex) {
+          setEditing(null);
+          return;
+        }
+        paramValue = parsed;
+        setExpr = `${quoteIdent(colName, conn.kind)} = decode(${ph1}, 'hex')::bytea`;
+        await runUpdate(setExpr, paramValue);
+        setEditing(null);
+        setOpError(null);
+        onRefresh();
+        return;
       }
-      const sql = `UPDATE ${quoteTable(tab.schema, tab.table, conn.kind)} SET ${setClause} WHERE ${wherePieces.join(" AND ")}`;
-      await ipc.executeDml(conn.id, sql, params);
+
+      // Default path: bind as text, cast to the column's declared type on PG.
+      const newVal = value === "" && original === null ? "" : value;
+      if (String(original ?? "") === newVal) {
+        setEditing(null);
+        return;
+      }
+      const setPlaceholder = castPlaceholder(ph1, colDef.type_name, conn.kind);
+      setExpr = `${quoteIdent(colName, conn.kind)} = ${setPlaceholder}`;
+      await runUpdate(setExpr, paramValue);
       setEditing(null);
       setOpError(null);
       onRefresh();
     } catch (e) {
       setOpError(String(e));
     }
+  }
+
+  async function runUpdate(setClause: string, firstParam: string | null) {
+    if (!tab.pkCols) throw new Error("no primary key");
+    const { row } = editing!;
+    const oldRow = result.rows[row];
+    const wherePieces: string[] = [];
+    const params: (string | null)[] = [firstParam];
+    let pIdx = 2;
+    for (const pkCol of tab.pkCols) {
+      const idx = cols.findIndex((c) => c.name === pkCol);
+      if (idx === -1) throw new Error(`PK column ${pkCol} not in result`);
+      const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
+      wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
+      params.push(stringifyValue(oldRow[idx]));
+      pIdx++;
+    }
+    const sql = `UPDATE ${quoteTable(tab.schema, tab.table, conn.kind)} SET ${setClause} WHERE ${wherePieces.join(" AND ")}`;
+    await ipc.executeDml(conn.id, sql, params);
   }
 
   async function commitInsert() {
@@ -459,26 +668,34 @@ function BrowseGrid({
               <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left"></th>
               {cols.map((c, colIdx) => {
                 const isGeo = isGeoColumn(conn.kind, c);
+                const isBytea = isByteaColumn(conn.kind, c);
+                const byteaMode = byteaColMode.get(colIdx);
+                const modeBadge = isBytea && byteaMode && byteaMode !== "hex" ? byteaMode : null;
                 const headerInner = (
-                  <>
-                    <div className="flex items-center gap-1">
+                  <div style={{ maxWidth: CELL_MAX_WIDTH }}>
+                    <div className="flex items-center gap-1 overflow-hidden">
                       {tab.pkCols?.includes(c.name) && (
                         <span title="Primary key" className="text-primary">
                           🔑
                         </span>
                       )}
-                      <span className="font-medium">{c.name}</span>
+                      <span className="truncate font-medium">{c.name}</span>
                       {tab.sortCol === c.name &&
                         (tab.sortDir === "asc" ? (
-                          <ArrowUp className="size-3 text-primary" />
+                          <ArrowUp className="size-3 shrink-0 text-primary" />
                         ) : (
-                          <ArrowDown className="size-3 text-primary" />
+                          <ArrowDown className="size-3 shrink-0 text-primary" />
                         ))}
                     </div>
-                    <div className="text-[10px] font-normal text-muted-foreground">
-                      {c.type_name}
+                    <div className="flex items-center gap-1 truncate text-[10px] font-normal text-muted-foreground">
+                      <span>{c.type_name}</span>
+                      {modeBadge && (
+                        <span className="rounded bg-primary/15 px-1 text-[9px] uppercase text-primary">
+                          {modeBadge}
+                        </span>
+                      )}
                     </div>
-                  </>
+                  </div>
                 );
                 const th = (
                   <th
@@ -489,6 +706,29 @@ function BrowseGrid({
                     {headerInner}
                   </th>
                 );
+                if (isBytea) {
+                  return (
+                    <ContextMenu key={c.name}>
+                      <ContextMenuTrigger asChild>{th}</ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onSelect={() => setColByteaMode(colIdx, "ulid")}>
+                          Display as ULID
+                          {byteaMode === "ulid" && <span className="ml-auto text-primary">✓</span>}
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => setColByteaMode(colIdx, "uuid")}>
+                          Display as UUID
+                          {byteaMode === "uuid" && <span className="ml-auto text-primary">✓</span>}
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => setColByteaMode(colIdx, "hex")}>
+                          Display as Hex
+                          {(!byteaMode || byteaMode === "hex") && (
+                            <span className="ml-auto text-primary">✓</span>
+                          )}
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  );
+                }
                 if (!isGeo) return th;
                 const nonNull = result.rows.reduce(
                   (acc, row) =>
@@ -502,10 +742,12 @@ function BrowseGrid({
                       <ContextMenuItem
                         disabled={nonNull === 0}
                         onSelect={() => {
+                          const excluded = new Set([colIdx]);
                           const values: Array<{
                             rowIndex: number;
                             pkLabel: string | null;
                             ewkbHex: string;
+                            rowData: Array<[string, unknown]>;
                           }> = [];
                           result.rows.forEach((row, rowIndex) => {
                             const v = row[colIdx];
@@ -514,6 +756,7 @@ function BrowseGrid({
                                 rowIndex,
                                 pkLabel: pkLabelFor(pkColIndexes, cols, row),
                                 ewkbHex: v,
+                                rowData: buildRowData(cols, row, excluded),
                               });
                             }
                           });
@@ -526,6 +769,7 @@ function BrowseGrid({
                           }
                         }}
                       >
+                        <MapIcon className="size-3.5" />
                         Show all on map ({nonNull})
                       </ContextMenuItem>
                     </ContextMenuContent>
@@ -620,6 +864,9 @@ function BrowseGrid({
                             .filter(({ c }) => isGeoColumn(conn.kind, c));
                           if (geoCols.length === 0 || selected.size === 0) return;
                           const selRows = [...selected];
+                          // Exclude all geo columns from rowData — clicking a feature
+                          // shouldn't surface raw EWKB hex of any geometry column.
+                          const excluded = new Set(geoCols.map(({ i }) => i));
                           const columns = geoCols
                             .map(({ c, i: colIdx }) => ({
                               name: c.name,
@@ -632,6 +879,7 @@ function BrowseGrid({
                                     rowIndex: rIdx,
                                     pkLabel: pkLabelFor(pkColIndexes, cols, r),
                                     ewkbHex: v,
+                                    rowData: buildRowData(cols, r, excluded),
                                   };
                                 })
                                 .filter(
@@ -641,6 +889,7 @@ function BrowseGrid({
                                     rowIndex: number;
                                     pkLabel: string | null;
                                     ewkbHex: string;
+                                    rowData: Array<[string, unknown]>;
                                   } => v !== null,
                                 ),
                             }))
@@ -653,6 +902,7 @@ function BrowseGrid({
                           });
                         }}
                       >
+                        <MapIcon className="size-3.5" />
                         Show {selected.size} selected on map
                       </ContextMenuItem>
                     </ContextMenuContent>
@@ -674,17 +924,26 @@ function BrowseGrid({
                     const col = cols[colIdx];
                     const isGeo = isGeoColumn(conn.kind, col);
                     const canOpenMap = isGeo && typeof v === "string" && v !== "";
+                    const fk = fkByColumn.get(col.name);
+                    const canFollowFk = fk !== undefined && v !== null && v !== undefined;
+                    const shown = displayString(rowIdx, colIdx, v);
+                    const startEdit = () =>
+                      setEditing({
+                        row: rowIdx,
+                        col: colIdx,
+                        value: shown ?? "",
+                      });
                     return (
                       <td
                         key={colIdx}
                         className="border-b border-r border-border p-0"
                         onDoubleClick={() => {
                           if (!canEdit) return;
-                          setEditing({
-                            row: rowIdx,
-                            col: colIdx,
-                            value: v === null || v === undefined ? "" : String(v),
-                          });
+                          // Geometry edits are too risky to round-trip safely
+                          // (PostGIS re-encodes EWKB, which silently rewrites
+                          // rows on commit even when coords look identical).
+                          if (isGeo) return;
+                          startEdit();
                         }}
                       >
                         {isEditing ? (
@@ -696,25 +955,63 @@ function BrowseGrid({
                           />
                         ) : canOpenMap ? (
                           <GeometryCell
-                            value={v as string}
+                            value={shown ?? (v as string)}
                             onOpen={() =>
                               setMapDialog({
                                 kind: "single",
                                 columnName: col.name,
                                 ewkbHex: v as string,
+                                rowData: buildRowData(cols, row, new Set([colIdx])),
                               })
                             }
+                            onShowFull={() => {
+                              // Prefer the decoded GeoJSON (parsed so the
+                              // preview dialog pretty-prints it) over the raw
+                              // EWKB hex, which is what the user actually wants
+                              // to inspect.
+                              const decoded = decodedGeoms.get(geomKey(rowIdx, colIdx));
+                              let previewVal: unknown = v;
+                              if (decoded) {
+                                try {
+                                  previewVal = JSON.parse(decoded.geojson);
+                                } catch {
+                                  previewVal = decoded.geojson;
+                                }
+                              }
+                              setCellPreview({ columnName: col.name, value: previewVal });
+                            }}
+                          />
+                        ) : canFollowFk ? (
+                          <FkCell
+                            value={shown ?? v}
+                            target={`${fk.to_schema ? `${fk.to_schema}.` : ""}${fk.to_table}`}
+                            onOpen={() => openFkTarget(fk, row)}
+                            onEdit={canEdit ? startEdit : null}
+                            onShowFull={() => setCellPreview({ columnName: col.name, value: v })}
                           />
                         ) : (
-                          <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
-                            {v === null || v === undefined ? (
-                              <span className="text-muted-foreground/60">NULL</span>
-                            ) : typeof v === "object" ? (
-                              JSON.stringify(v)
-                            ) : (
-                              String(v)
-                            )}
-                          </div>
+                          <ContextMenu>
+                            <ContextMenuTrigger asChild>
+                              <div
+                                className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
+                                style={{ maxWidth: CELL_MAX_WIDTH }}
+                              >
+                                {shown === null ? (
+                                  <span className="text-muted-foreground/60">NULL</span>
+                                ) : (
+                                  shown
+                                )}
+                              </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem
+                                onSelect={() => setCellPreview({ columnName: col.name, value: v })}
+                              >
+                                <Eye className="size-3.5" />
+                                Show full value
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         )}
                       </td>
                     );
@@ -760,20 +1057,94 @@ function BrowseGrid({
           input={mapDialog}
         />
       )}
+
+      <CellPreviewDialog
+        preview={cellPreview}
+        onOpenChange={(o) => {
+          if (!o) setCellPreview(null);
+        }}
+      />
     </div>
   );
 }
 
-function GeometryCell({ value, onOpen }: { value: string; onOpen: () => void }) {
+function GeometryCell({
+  value,
+  onOpen,
+  onShowFull,
+}: {
+  value: string;
+  onOpen: () => void;
+  onShowFull: () => void;
+}) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
+        <div
+          className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
+          style={{ maxWidth: CELL_MAX_WIDTH }}
+        >
           {value}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onSelect={onOpen}>Open in map</ContextMenuItem>
+        <ContextMenuItem onSelect={onOpen}>
+          <MapIcon className="size-3.5" />
+          Open in map
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onShowFull}>
+          <Eye className="size-3.5" />
+          Show full value
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function FkCell({
+  value,
+  target,
+  onOpen,
+  onEdit,
+  onShowFull,
+}: {
+  value: unknown;
+  target: string;
+  onOpen: () => void;
+  onEdit: (() => void) | null;
+  onShowFull: () => void;
+}) {
+  const display = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={onOpen}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title={`Open referenced row in ${target}`}
+          className="flex w-full items-center gap-1 overflow-hidden px-3 py-1 text-left text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+          style={{ maxWidth: CELL_MAX_WIDTH }}
+        >
+          <span className="truncate">{display}</span>
+          <ArrowUpRight className="size-3 shrink-0 opacity-60" />
+        </button>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={onOpen}>
+          <ArrowUpRight className="size-3.5" />
+          Open referenced row in {target}
+        </ContextMenuItem>
+        {onEdit && (
+          <ContextMenuItem onSelect={onEdit}>
+            <Pencil className="size-3.5" />
+            Edit cell
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={onShowFull}>
+          <Eye className="size-3.5" />
+          Show full value
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );

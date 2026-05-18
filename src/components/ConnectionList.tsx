@@ -12,7 +12,7 @@ import {
   Unplug,
   Upload,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -40,16 +40,14 @@ type Props = {
 };
 
 export function ConnectionList({ onAdd, onEdit }: Props) {
-  const {
-    connections,
-    folders,
-    activeId,
-    connectedIds,
-    activate,
-    remove,
-    removeFolder,
-    disconnect,
-  } = useConnections();
+  const connections = useConnections((s) => s.connections);
+  const folders = useConnections((s) => s.folders);
+  const activeId = useConnections((s) => s.activeId);
+  const connectedIds = useConnections((s) => s.connectedIds);
+  const activate = useConnections((s) => s.activate);
+  const remove = useConnections((s) => s.remove);
+  const removeFolder = useConnections((s) => s.removeFolder);
+  const disconnect = useConnections((s) => s.disconnect);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const [folderForm, setFolderForm] = useState<{
@@ -57,7 +55,7 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
     initialParentId?: string | null;
   } | null>(null);
 
-  const tree = buildTree(folders, connections);
+  const tree = useMemo(() => buildTree(folders, connections), [folders, connections]);
 
   return (
     <aside className="flex h-full flex-col bg-sidebar">

@@ -19,6 +19,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use boringtun::noise::errors::WireGuardError;
 use boringtun::noise::{Tunn, TunnResult};
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
@@ -218,7 +219,19 @@ async fn run_engine(
         loop {
             let n = match udp_recv.recv(&mut datagram).await {
                 Ok(n) => n,
-                Err(_) => return,
+                Err(e) => {
+                    // The most common UDP recv error is ECONNREFUSED, surfaced by the
+                    // kernel after an ICMP "port unreachable" reply to one of our sends
+                    // (peer briefly unreachable, NAT rebinding, host sleep/wake, etc.).
+                    // Returning on the first such error permanently kills the inbound
+                    // pipeline — the tunnel then silently stops decapsulating, every new
+                    // pool acquire hangs until sqlx times out, and only a full reconnect
+                    // recovers. Log and continue instead so transient blips heal on their
+                    // own once the peer is reachable again.
+                    eprintln!("wg recv error (continuing): {e}");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
             };
             let input = datagram[..n].to_vec();
             drain_decapsulate(&tunn_recv, &input, &udp_to_dev_tx, &udp_for_handshake).await;
@@ -336,7 +349,18 @@ async fn decapsulate_once(tunn: &Arc<Mutex<Tunn>>, input: &[u8]) -> Action {
         TunnResult::WriteToNetwork(reply) => Action::ToNetwork(reply.to_vec()),
         TunnResult::WriteToTunnelV6(_, _) | TunnResult::Done => Action::Done,
         TunnResult::Err(e) => {
-            eprintln!("wg decapsulate error: {e:?}");
+            // DuplicateCounter (anti-replay catching a re-delivered packet) and
+            // InvalidAeadTag (stale packets from before a rekey / in-flight after
+            // disconnect) are routine on real networks — boringtun drops the packet
+            // and the tunnel keeps working. Surfacing them as errors is noise.
+            // Other variants (WrongKey, InvalidMac, …) may indicate misconfiguration
+            // and are still worth seeing.
+            if !matches!(
+                e,
+                WireGuardError::DuplicateCounter | WireGuardError::InvalidAeadTag
+            ) {
+                eprintln!("wg decapsulate error: {e:?}");
+            }
             Action::Done
         }
     }

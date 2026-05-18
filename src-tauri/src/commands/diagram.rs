@@ -397,6 +397,185 @@ pub(crate) async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<Diag
     })
 }
 
+#[tauri::command]
+pub async fn list_foreign_keys(
+    state: State<'_, AppState>,
+    connection_id: String,
+    schema: String,
+    table: String,
+) -> AppResult<Vec<DiagFk>> {
+    let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    match handle {
+        PoolHandle::Postgres(pool) => list_fks_postgres(&pool, &schema, &table).await,
+        PoolHandle::MySql(pool) => list_fks_mysql(&pool, &table).await,
+        PoolHandle::Sqlite(pool) => list_fks_sqlite(&pool, &table).await,
+    }
+}
+
+async fn list_fks_postgres(
+    pool: &sqlx::PgPool,
+    schema: &str,
+    table: &str,
+) -> AppResult<Vec<DiagFk>> {
+    let sql = r#"
+        SELECT
+            tc.constraint_schema::text  AS constraint_schema,
+            tc.constraint_name::text    AS constraint_name,
+            tc.table_schema::text       AS from_schema,
+            tc.table_name::text         AS from_table,
+            kcu.column_name::text       AS from_column,
+            kcu.ordinal_position::int   AS ordinal,
+            ccu.table_schema::text      AS to_schema,
+            ccu.table_name::text        AS to_table,
+            ccu.column_name::text       AS to_column,
+            rc.update_rule::text        AS on_update,
+            rc.delete_rule::text        AS on_delete
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON kcu.constraint_schema = tc.constraint_schema
+         AND kcu.constraint_name   = tc.constraint_name
+        JOIN information_schema.referential_constraints rc
+          ON rc.constraint_schema = tc.constraint_schema
+         AND rc.constraint_name   = tc.constraint_name
+        JOIN information_schema.constraint_column_usage ccu
+          ON ccu.constraint_schema = rc.unique_constraint_schema
+         AND ccu.constraint_name   = rc.unique_constraint_name
+        WHERE tc.constraint_type = 'FOREIGN KEY'
+          AND tc.table_schema = $1
+          AND tc.table_name   = $2
+        ORDER BY tc.constraint_schema, tc.constraint_name, kcu.ordinal_position
+    "#;
+    let rows = sqlx::query(sql)
+        .bind(schema)
+        .bind(table)
+        .fetch_all(pool)
+        .await?;
+    Ok(group_fk_rows(rows.iter().map(|r| FkRow {
+        constraint_schema: r.try_get("constraint_schema").unwrap_or_default(),
+        constraint_name: r.try_get("constraint_name").unwrap_or_default(),
+        from_schema: r.try_get("from_schema").unwrap_or_default(),
+        from_table: r.try_get("from_table").unwrap_or_default(),
+        from_column: r.try_get("from_column").unwrap_or_default(),
+        to_schema: r.try_get("to_schema").unwrap_or_default(),
+        to_table: r.try_get("to_table").unwrap_or_default(),
+        to_column: r.try_get("to_column").unwrap_or_default(),
+        on_update: r.try_get("on_update").ok(),
+        on_delete: r.try_get("on_delete").ok(),
+    })))
+}
+
+async fn list_fks_mysql(pool: &sqlx::MySqlPool, table: &str) -> AppResult<Vec<DiagFk>> {
+    let sql = r#"
+        SELECT
+            CAST(kcu.constraint_schema       AS CHAR) AS constraint_schema,
+            CAST(kcu.constraint_name         AS CHAR) AS constraint_name,
+            CAST(kcu.table_schema            AS CHAR) AS from_schema,
+            CAST(kcu.table_name              AS CHAR) AS from_table,
+            CAST(kcu.column_name             AS CHAR) AS from_column,
+            kcu.ordinal_position                      AS ordinal,
+            CAST(kcu.referenced_table_schema AS CHAR) AS to_schema,
+            CAST(kcu.referenced_table_name   AS CHAR) AS to_table,
+            CAST(kcu.referenced_column_name  AS CHAR) AS to_column,
+            CAST(rc.update_rule              AS CHAR) AS on_update,
+            CAST(rc.delete_rule              AS CHAR) AS on_delete
+        FROM information_schema.key_column_usage kcu
+        JOIN information_schema.referential_constraints rc
+          ON rc.constraint_schema = kcu.constraint_schema
+         AND rc.constraint_name   = kcu.constraint_name
+        WHERE kcu.referenced_table_name IS NOT NULL
+          AND kcu.table_schema = DATABASE()
+          AND kcu.table_name   = ?
+        ORDER BY kcu.constraint_schema, kcu.constraint_name, kcu.ordinal_position
+    "#;
+    let rows = sqlx::query(sql).bind(table).fetch_all(pool).await?;
+    Ok(group_fk_rows(rows.iter().map(|r| FkRow {
+        constraint_schema: r.try_get("constraint_schema").unwrap_or_default(),
+        constraint_name: r.try_get("constraint_name").unwrap_or_default(),
+        from_schema: r.try_get("from_schema").unwrap_or_default(),
+        from_table: r.try_get("from_table").unwrap_or_default(),
+        from_column: r.try_get("from_column").unwrap_or_default(),
+        to_schema: r.try_get("to_schema").unwrap_or_default(),
+        to_table: r.try_get("to_table").unwrap_or_default(),
+        to_column: r.try_get("to_column").unwrap_or_default(),
+        on_update: r.try_get("on_update").ok(),
+        on_delete: r.try_get("on_delete").ok(),
+    })))
+}
+
+async fn list_fks_sqlite(pool: &sqlx::SqlitePool, table: &str) -> AppResult<Vec<DiagFk>> {
+    let safe = table.replace('"', "\"\"");
+    let pragma = format!("PRAGMA foreign_key_list(\"{}\")", safe);
+    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    let mut foreign_keys: Vec<DiagFk> = Vec::new();
+    for f in rows {
+        let fid: i64 = f.try_get("id").unwrap_or(0);
+        let to_table: String = f.try_get("table").unwrap_or_default();
+        let from_col: String = f.try_get("from").unwrap_or_default();
+        let to_col: String = f.try_get("to").unwrap_or_default();
+        let on_update: Option<String> = f.try_get("on_update").ok();
+        let on_delete: Option<String> = f.try_get("on_delete").ok();
+        let id = format!("{table}__fk__{fid}");
+        match foreign_keys.iter_mut().find(|fk| fk.id == id) {
+            Some(fk) => {
+                fk.from_columns.push(from_col);
+                fk.to_columns.push(to_col);
+            }
+            None => foreign_keys.push(DiagFk {
+                id,
+                name: None,
+                from_schema: "main".into(),
+                from_table: table.to_string(),
+                from_columns: vec![from_col],
+                to_schema: "main".into(),
+                to_table,
+                to_columns: vec![to_col],
+                on_update,
+                on_delete,
+            }),
+        }
+    }
+    Ok(foreign_keys)
+}
+
+struct FkRow {
+    constraint_schema: String,
+    constraint_name: String,
+    from_schema: String,
+    from_table: String,
+    from_column: String,
+    to_schema: String,
+    to_table: String,
+    to_column: String,
+    on_update: Option<String>,
+    on_delete: Option<String>,
+}
+
+fn group_fk_rows(rows: impl Iterator<Item = FkRow>) -> Vec<DiagFk> {
+    let mut out: Vec<DiagFk> = Vec::new();
+    for r in rows {
+        let id = format!("{}.{}", r.constraint_schema, r.constraint_name);
+        match out.iter_mut().find(|f| f.id == id) {
+            Some(fk) => {
+                fk.from_columns.push(r.from_column);
+                fk.to_columns.push(r.to_column);
+            }
+            None => out.push(DiagFk {
+                id,
+                name: Some(r.constraint_name),
+                from_schema: r.from_schema,
+                from_table: r.from_table,
+                from_columns: vec![r.from_column],
+                to_schema: r.to_schema,
+                to_table: r.to_table,
+                to_columns: vec![r.to_column],
+                on_update: r.on_update,
+                on_delete: r.on_delete,
+            }),
+        }
+    }
+    out
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DiagramInput {
     #[serde(default)]

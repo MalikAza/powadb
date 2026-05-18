@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { ipc, type StoredTheme } from "@/ipc";
+import { themeColorsJsonSchema } from "@/lib/schemas";
 import {
   type CustomTheme,
   DEFAULT_RADIUS,
@@ -32,22 +33,33 @@ type Actions = {
 
 const DEFAULT_SELECTION: ThemeSelection = { kind: "preset", mode: "system" };
 
+function parseColorsJson(raw: string, themeId: string): Record<string, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn(`Theme ${themeId}: colors_json is invalid JSON, falling back to defaults`, e);
+    return {};
+  }
+  const result = themeColorsJsonSchema.safeParse(parsed);
+  if (!result.success) {
+    console.warn(
+      `Theme ${themeId}: colors_json has unexpected shape, falling back to defaults`,
+      result.error.issues,
+    );
+    return {};
+  }
+  return result.data;
+}
+
 function decodeStored(t: StoredTheme): CustomTheme {
   const base: ThemeBase = t.base === "dark" ? "dark" : "light";
-  let parsedColors: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(t.colors_json);
-    if (parsed && typeof parsed === "object") {
-      parsedColors = parsed as Record<string, unknown>;
-    }
-  } catch {
-    parsedColors = {};
-  }
+  const parsedColors = parseColorsJson(t.colors_json, t.id);
   const fallback = presetColors(base);
   const colors = {} as ThemeColors;
   for (const token of THEME_TOKENS) {
     const v = parsedColors[token];
-    colors[token] = typeof v === "string" && v.trim() ? v : fallback[token];
+    colors[token] = v?.trim() ? v : fallback[token];
   }
   return {
     id: t.id,

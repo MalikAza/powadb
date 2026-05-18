@@ -49,7 +49,12 @@ type State = {
 
 type Actions = {
   newQueryTab: (connectionId: string, sql?: string) => string;
-  openBrowseTab: (connectionId: string, schema: string, table: string) => string;
+  openBrowseTab: (
+    connectionId: string,
+    schema: string,
+    table: string,
+    initialFilters?: Record<string, string>,
+  ) => string;
   openDiagramTab: (connectionId: string) => string;
   closeTab: (id: string) => void;
   closeTabsForConnection: (connectionId: string) => void;
@@ -80,7 +85,7 @@ export const useTabs = create<State & Actions>((set, get) => ({
     return id;
   },
 
-  openBrowseTab(connectionId, schema, table): string {
+  openBrowseTab(connectionId, schema, table, initialFilters): string {
     const existing = get().tabs.find(
       (t): t is BrowseTab =>
         t.kind === "browse" &&
@@ -89,7 +94,16 @@ export const useTabs = create<State & Actions>((set, get) => ({
         t.table === table,
     );
     if (existing) {
-      set({ activeTabId: existing.id });
+      if (initialFilters && Object.keys(initialFilters).length > 0) {
+        set((s) => ({
+          tabs: s.tabs.map((t) =>
+            t.id === existing.id ? { ...t, filters: { ...initialFilters }, offset: 0 } : t,
+          ),
+          activeTabId: existing.id,
+        }));
+      } else {
+        set({ activeTabId: existing.id });
+      }
       return existing.id;
     }
     const id = newId("tab");
@@ -100,7 +114,7 @@ export const useTabs = create<State & Actions>((set, get) => ({
       title: table,
       schema,
       table,
-      filters: {},
+      filters: initialFilters ? { ...initialFilters } : {},
       sortCol: null,
       sortDir: "asc",
       limit: 100,

@@ -67,6 +67,14 @@ describe("parseFilter", () => {
   it("falls back to a like filter", () => {
     expect(parseFilter("alice")).toEqual({ kind: "like", value: "alice" });
   });
+
+  it("treats an operator with no value as no filter", () => {
+    expect(parseFilter("=")).toBeNull();
+    expect(parseFilter("= ")).toBeNull();
+    expect(parseFilter(">")).toBeNull();
+    expect(parseFilter(">=")).toBeNull();
+    expect(parseFilter("!=")).toBeNull();
+  });
 });
 
 describe("filterToSql", () => {

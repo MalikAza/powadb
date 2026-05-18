@@ -255,22 +255,24 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                       No custom themes yet.
                     </div>
                   ) : (
-                    <div className="grid gap-1">
-                      {customThemes.map((t) => (
-                        <CustomThemeRow
-                          key={t.id}
-                          theme={t}
-                          active={selection.kind === "custom" && selection.id === t.id}
-                          onSelect={() => setSelection({ kind: "custom", id: t.id })}
-                          onEdit={() => {
-                            setEditing(t);
-                            setEditorOpen(true);
-                          }}
-                          onDelete={() => deleteCustom(t.id)}
-                          onExport={() => exportTheme(t)}
-                        />
-                      ))}
-                    </div>
+                    <ScrollArea className="h-[208px] rounded-md border">
+                      <div className="grid gap-1 p-1 pr-3">
+                        {customThemes.map((t) => (
+                          <CustomThemeRow
+                            key={t.id}
+                            theme={t}
+                            active={selection.kind === "custom" && selection.id === t.id}
+                            onSelect={() => setSelection({ kind: "custom", id: t.id })}
+                            onEdit={() => {
+                              setEditing(t);
+                              setEditorOpen(true);
+                            }}
+                            onDelete={() => deleteCustom(t.id)}
+                            onExport={() => exportTheme(t)}
+                          />
+                        ))}
+                      </div>
+                    </ScrollArea>
                   )}
                 </div>
               </Section>

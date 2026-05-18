@@ -60,6 +60,9 @@ export const ipc = {
   ): Promise<DiagramIntrospection> =>
     invoke("introspect_diagram", { connectionId, schema: schema ?? null }),
 
+  listForeignKeys: (connectionId: string, schema: string, table: string): Promise<DiagFk[]> =>
+    invoke("list_foreign_keys", { connectionId, schema, table }),
+
   listDiagrams: (connectionId: string): Promise<SavedDiagram[]> =>
     invoke("list_diagrams", { connectionId }),
 
@@ -87,6 +90,12 @@ export const ipc = {
 
   geometriesToGeoJSON: (connectionId: string, ewkbHexList: string[]): Promise<(string | null)[]> =>
     invoke("geometries_to_geojson", { connectionId, ewkbHexList }),
+
+  decodeGeometries: (
+    connectionId: string,
+    ewkbHexList: string[],
+  ): Promise<(DecodedGeometry | null)[]> =>
+    invoke("decode_geometries", { connectionId, ewkbHexList }),
 
   listDatabases: (connectionId: string): Promise<string[]> =>
     invoke("list_databases", { connectionId }),
@@ -167,6 +176,12 @@ export const ipc = {
   getSettings: (): Promise<AppSettings> => invoke("get_settings"),
   saveSettings: (settings: AppSettings): Promise<AppSettings> =>
     invoke("save_settings", { settings }),
+};
+
+export type DecodedGeometry = {
+  geojson: string;
+  srid: number;
+  geom_type: string;
 };
 
 export type DumpEngine = "tool" | "native";

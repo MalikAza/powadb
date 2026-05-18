@@ -1,7 +1,7 @@
 import { z } from "zod";
+import type { DbKind } from "@/types";
 
 export const dbKindSchema = z.enum(["postgres", "mysql", "sqlite"]);
-export type DbKindEnum = z.infer<typeof dbKindSchema>;
 
 export const themeModeSchema = z.enum(["light", "dark", "system"]);
 export type ThemeModeEnum = z.infer<typeof themeModeSchema>;
@@ -170,9 +170,16 @@ export const snippetSaveSchema = z.object({
 
 export type SnippetSaveValues = z.infer<typeof snippetSaveSchema>;
 
+/** Parsed shape of `themes.colors_json`. Per-token coverage is enforced by the
+ * caller (which falls back to preset defaults for missing keys); the schema
+ * just guarantees the JSON is a string→string map. */
+export const themeColorsJsonSchema = z.record(z.string(), z.string());
+export type ThemeColorsJson = z.infer<typeof themeColorsJsonSchema>;
+
 export const diagramColumnSchema = z.object({
   id: z.string(),
   name: z.string().min(1, "Column name is required"),
+  originalName: z.string().optional(),
   dataType: z.string().min(1, "Type is required"),
   nullable: z.boolean(),
   isPk: z.boolean(),
@@ -184,6 +191,7 @@ export const diagramTableSchema = z.object({
   id: z.string(),
   schema: z.string(),
   name: z.string().min(1, "Table name is required"),
+  originalName: z.string().optional(),
   columns: z.array(diagramColumnSchema).min(1, "At least one column is required"),
   position: z.object({ x: z.number(), y: z.number() }),
 });
@@ -254,10 +262,7 @@ export const newTableFormSchema = z
 
 export type NewTableFormValues = z.infer<typeof newTableFormSchema>;
 
-export const KIND_DEFAULTS: Record<
-  DbKindEnum,
-  { port: number; database: string; username: string }
-> = {
+export const KIND_DEFAULTS: Record<DbKind, { port: number; database: string; username: string }> = {
   postgres: { port: 5432, database: "", username: "postgres" },
   mysql: { port: 3306, database: "", username: "root" },
   // SQLite is file-based: host/port/username are unused; `database` holds the file path.

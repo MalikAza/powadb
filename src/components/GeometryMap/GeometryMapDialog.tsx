@@ -1,4 +1,4 @@
-import type { Feature, GeoJsonObject, Geometry } from "geojson";
+import type { Feature, FeatureCollection, GeoJsonObject, Geometry } from "geojson";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,14 +8,27 @@ import { GeoJSONLayer } from "./GeoJSONLayer";
 import { LayerSidebar } from "./LayerSidebar";
 import { MapRoot } from "./MapRoot";
 
+/** Non-geometry columns from the source row, in query order. */
+export type RowDataEntries = Array<[columnName: string, value: unknown]>;
+
 export type GeometryMapInput =
-  | { kind: "single"; columnName: string; ewkbHex: string }
+  | {
+      kind: "single";
+      columnName: string;
+      ewkbHex: string;
+      rowData?: RowDataEntries;
+    }
   | {
       kind: "multi";
       title: string;
       columns: Array<{
         name: string;
-        values: Array<{ rowIndex: number; pkLabel: string | null; ewkbHex: string }>;
+        values: Array<{
+          rowIndex: number;
+          pkLabel: string | null;
+          ewkbHex: string;
+          rowData?: RowDataEntries;
+        }>;
       }>;
     };
 
@@ -26,12 +39,36 @@ type Props = {
   input: GeometryMapInput;
 };
 
-type LoadedSingle = { kind: "single"; columnName: string; geometry: GeoJsonObject };
+type LoadedSingle = {
+  kind: "single";
+  columnName: string;
+  features: Feature[];
+};
 type LoadedMulti = {
   kind: "multi";
   columns: Array<{ name: string; features: Feature[] }>;
 };
 type Loaded = LoadedSingle | LoadedMulti;
+
+/**
+ * Normalize whatever GeoJSON shape the backend returned into a Feature list,
+ * folding `properties` into each feature (existing per-feature properties take
+ * precedence so we don't clobber backend-attached metadata).
+ */
+function toFeatures(input: GeoJsonObject, properties: Record<string, unknown>): Feature[] {
+  if (input.type === "FeatureCollection") {
+    const fc = input as FeatureCollection;
+    return fc.features.map((f) => ({
+      ...f,
+      properties: { ...properties, ...(f.properties ?? {}) },
+    }));
+  }
+  if (input.type === "Feature") {
+    const f = input as Feature;
+    return [{ ...f, properties: { ...properties, ...(f.properties ?? {}) } }];
+  }
+  return [{ type: "Feature", properties, geometry: input as Geometry }];
+}
 
 export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: Props) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -61,10 +98,15 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
         .geometryToGeoJSON(connectionId, input.ewkbHex)
         .then((raw) => {
           if (cancelled) return;
+          const geometry = JSON.parse(raw) as GeoJsonObject;
+          const features = toFeatures(geometry, {
+            columnName: input.columnName,
+            rowData: input.rowData ?? null,
+          });
           setLoaded({
             kind: "single",
             columnName: input.columnName,
-            geometry: JSON.parse(raw) as GeoJsonObject,
+            features,
           });
         })
         .catch((e) => {
@@ -120,6 +162,7 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
               rowIndex: f.entry.rowIndex,
               pkLabel: f.entry.pkLabel,
               columnName: input.columns[f.columnIdx].name,
+              rowData: f.entry.rowData ?? null,
             },
             geometry,
           });
@@ -160,7 +203,7 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
           {loaded && (
             <MapRoot>
               {loaded.kind === "single" ? (
-                <GeoJSONLayer name={loaded.columnName} data={loaded.geometry} fitOnMount />
+                <GeoJSONLayer name={loaded.columnName} features={loaded.features} fitOnMount />
               ) : (
                 loaded.columns.map((col, i) =>
                   col.features.length === 0 ? null : (

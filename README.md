@@ -26,9 +26,12 @@ Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust
 - ✍️ **SQL editor** — CodeMirror 6 with syntax highlighting and schema-aware autocompletion.
 - 📊 **Virtualized results grid** — TanStack Table + Virtual, fluid on millions of rows; multi-row select and bulk delete.
 - 🛠️ **Inline DML editing** — primary-key-aware updates straight from the grid.
+- 🔗 **Foreign-key navigation** — click a foreign-key cell to open the referenced row in a new browse tab.
+- 🔍 **Cell preview** — open any cell in a full-value viewer for long text, JSON or other oversized payloads.
+- 🧮 **BYTEA display modes** — render binary columns as Hex, UTF-8, UUID, ULID or Base64, with per-column overrides remembered across sessions.
 - 🗂️ **Schema browser** — schemas, tables, columns and indexes at a glance, with full-text search.
 - 🧬 **Schema diagram** — visualize tables and relations on an interactive diagram and export it to image.
-- 🗺️ **Geometry / GIS visualization** — preview geometry columns on a real map (single cell, multi-row, or whole column) directly from the results grid.
+- 🗺️ **Geometry / GIS visualization** — preview geometry columns on a real map (single cell, multi-row, or whole column), with a feature popover showing lat/long and row data on click.
 - 🧭 **EXPLAIN view** — visualize query plans.
 - 📦 **Dump &amp; restore** — export and import databases through `pg_dump` / `mysqldump` / `sqlite3` (configurable binary paths), with progress reporting and cancellation.
 - 📁 **Connection manager** — organize connections in folders, color-tag each one, export / import the whole set, optionally remember passwords.
