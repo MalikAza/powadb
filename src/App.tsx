@@ -88,6 +88,9 @@ function App() {
       } else if (key === "k") {
         e.preventDefault();
         setPaletteOpen((v) => !v);
+      } else if (key === ",") {
+        e.preventDefault();
+        setSettingsOpen(true);
       }
     }
     window.addEventListener("keydown", onKey);
