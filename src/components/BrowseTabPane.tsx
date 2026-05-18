@@ -4,6 +4,9 @@ import {
   ArrowUpRight,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  Map as MapIcon,
+  Pencil,
   Plus,
   RefreshCw,
   Save,
@@ -595,6 +598,7 @@ function BrowseGrid({
                           }
                         }}
                       >
+                        <MapIcon className="size-3.5" />
                         Show all on map ({nonNull})
                       </ContextMenuItem>
                     </ContextMenuContent>
@@ -727,6 +731,7 @@ function BrowseGrid({
                           });
                         }}
                       >
+                        <MapIcon className="size-3.5" />
                         Show {selected.size} selected on map
                       </ContextMenuItem>
                     </ContextMenuContent>
@@ -813,6 +818,7 @@ function BrowseGrid({
                               <ContextMenuItem
                                 onSelect={() => setCellPreview({ columnName: col.name, value: v })}
                               >
+                                <Eye className="size-3.5" />
                                 Show full value
                               </ContextMenuItem>
                             </ContextMenuContent>
@@ -893,8 +899,14 @@ function GeometryCell({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onSelect={onOpen}>Open in map</ContextMenuItem>
-        <ContextMenuItem onSelect={onShowFull}>Show full value</ContextMenuItem>
+        <ContextMenuItem onSelect={onOpen}>
+          <MapIcon className="size-3.5" />
+          Open in map
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onShowFull}>
+          <Eye className="size-3.5" />
+          Show full value
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -930,9 +942,20 @@ function FkCell({
         </button>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onSelect={onOpen}>Open referenced row in {target}</ContextMenuItem>
-        {onEdit && <ContextMenuItem onSelect={onEdit}>Edit cell</ContextMenuItem>}
-        <ContextMenuItem onSelect={onShowFull}>Show full value</ContextMenuItem>
+        <ContextMenuItem onSelect={onOpen}>
+          <ArrowUpRight className="size-3.5" />
+          Open referenced row in {target}
+        </ContextMenuItem>
+        {onEdit && (
+          <ContextMenuItem onSelect={onEdit}>
+            <Pencil className="size-3.5" />
+            Edit cell
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={onShowFull}>
+          <Eye className="size-3.5" />
+          Show full value
+        </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );

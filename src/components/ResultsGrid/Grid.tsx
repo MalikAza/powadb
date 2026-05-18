@@ -5,6 +5,7 @@ import {
   useReactTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { Eye, Map as MapIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -156,6 +157,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                     if (input) setMapDialog(input);
                   }}
                 >
+                  <MapIcon className="size-3.5" />
                   Show all on map ({nonNull})
                 </ContextMenuItem>
               </ContextMenuContent>
@@ -187,7 +189,19 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                     });
                   }}
                 >
+                  <MapIcon className="size-3.5" />
                   Open in map
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onSelect={() =>
+                    setCellPreview({
+                      columnName: c.name,
+                      value: info.row.original[c.name],
+                    })
+                  }
+                >
+                  <Eye className="size-3.5" />
+                  Show full value
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
@@ -476,6 +490,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                           disabled={selectedRows.size === 0}
                           onSelect={() => showSelectedRowsOnMap()}
                         >
+                          <MapIcon className="size-3.5" />
                           Show {selectedRows.size} selected on map
                         </ContextMenuItem>
                       </ContextMenuContent>
