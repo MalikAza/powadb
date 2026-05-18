@@ -1,4 +1,4 @@
-## [0.8.0]
+## [0.8.0] - 2026-05-18
 
 ### Added
 - BYTEA display modes — render binary columns as Hex, UTF-8, UUID, ULID or Base64, with per-column overrides remembered across sessions.
