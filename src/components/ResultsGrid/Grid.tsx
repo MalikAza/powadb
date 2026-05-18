@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -30,16 +31,40 @@ function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
 }
 
+function buildRowData(
+  columns: Column[],
+  row: readonly unknown[],
+  excluded: Set<number>,
+): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  columns.forEach((c, i) => {
+    if (excluded.has(i)) return;
+    out.push([c.name, row[i]]);
+  });
+  return out;
+}
+
 function buildShowAllInput(
   result: QueryResult,
   column: Column,
   columnIdx: number,
 ): GeometryMapInput | null {
-  const values: Array<{ rowIndex: number; pkLabel: string | null; ewkbHex: string }> = [];
+  const excluded = new Set([columnIdx]);
+  const values: Array<{
+    rowIndex: number;
+    pkLabel: string | null;
+    ewkbHex: string;
+    rowData: Array<[string, unknown]>;
+  }> = [];
   result.rows.forEach((row, rowIndex) => {
     const v = row[columnIdx];
     if (typeof v === "string" && v !== "") {
-      values.push({ rowIndex, pkLabel: null, ewkbHex: v });
+      values.push({
+        rowIndex,
+        pkLabel: null,
+        ewkbHex: v,
+        rowData: buildRowData(result.columns, row, excluded),
+      });
     }
   });
   if (values.length === 0) return null;
@@ -147,7 +172,18 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
               </ContextMenuTrigger>
               <ContextMenuContent>
                 <ContextMenuItem
-                  onSelect={() => setMapDialog({ kind: "single", columnName: c.name, ewkbHex: v })}
+                  onSelect={() => {
+                    const rowIdx = info.row.index;
+                    const sourceRow = result.rows[rowIdx];
+                    setMapDialog({
+                      kind: "single",
+                      columnName: c.name,
+                      ewkbHex: v,
+                      rowData: sourceRow
+                        ? buildRowData(result.columns, sourceRow, new Set([colIdx]))
+                        : undefined,
+                    });
+                  }}
                 >
                   Open in map
                 </ContextMenuItem>
@@ -174,13 +210,90 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
   });
 
   const [selected, setSelected] = useState<{ row: number; col: number }>({ row: 0, col: 0 });
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(() => new Set());
 
   useEffect(() => {
     setSelected({ row: 0, col: 0 });
+    setSelectedRows(new Set());
   }, [result]);
 
   const totalRows = result.rows.length;
   const totalCols = result.columns.length;
+
+  const hasGeoCols = useMemo(
+    () => result.columns.some((c) => isGeoColumn(kind, c)),
+    [result.columns, kind],
+  );
+  const allRowsSelected = totalRows > 0 && selectedRows.size === totalRows;
+  const headerCheckState: boolean | "indeterminate" = allRowsSelected
+    ? true
+    : selectedRows.size > 0
+      ? "indeterminate"
+      : false;
+
+  function toggleRow(idx: number) {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  function toggleAllRows() {
+    setSelectedRows((prev) =>
+      prev.size === totalRows ? new Set() : new Set(result.rows.map((_, i) => i)),
+    );
+  }
+
+  function showSelectedRowsOnMap() {
+    const geoCols = result.columns
+      .map((c, i) => ({ c, i }))
+      .filter(({ c }) => isGeoColumn(kind, c));
+    if (geoCols.length === 0 || selectedRows.size === 0) return;
+    const selRows = [...selectedRows].sort((a, b) => a - b);
+    const excluded = new Set(geoCols.map(({ i }) => i));
+    const columns = geoCols
+      .map(({ c, i: colIdx }) => ({
+        name: c.name,
+        values: selRows
+          .map((rIdx) => {
+            const r = result.rows[rIdx];
+            if (!r) return null;
+            const v = r[colIdx];
+            if (typeof v !== "string" || v === "") return null;
+            const entry: {
+              rowIndex: number;
+              pkLabel: string | null;
+              ewkbHex: string;
+              rowData: Array<[string, unknown]>;
+            } = {
+              rowIndex: rIdx,
+              pkLabel: null,
+              ewkbHex: v,
+              rowData: buildRowData(result.columns, r, excluded),
+            };
+            return entry;
+          })
+          .filter(
+            (
+              x,
+            ): x is {
+              rowIndex: number;
+              pkLabel: string | null;
+              ewkbHex: string;
+              rowData: Array<[string, unknown]>;
+            } => x !== null,
+          ),
+      }))
+      .filter((c) => c.values.length > 0);
+    if (columns.length === 0) return;
+    setMapDialog({
+      kind: "multi",
+      title: `${selRows.length} row${selRows.length === 1 ? "" : "s"}`,
+      columns,
+    });
+  }
 
   function rawCellValue(row: number, col: number): unknown {
     return result.rows[row]?.[col];
@@ -279,8 +392,21 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
         <div className="min-w-max">
           <div
             className="sticky top-0 z-10 grid border-b border-border bg-muted"
-            style={{ gridTemplateColumns }}
+            style={{
+              gridTemplateColumns: `${hasGeoCols ? "32px " : ""}repeat(${columns.length}, minmax(120px, max-content))`,
+            }}
           >
+            {hasGeoCols && (
+              <div className="flex items-center justify-center border-r border-border px-2 py-1.5">
+                {totalRows > 0 && (
+                  <Checkbox
+                    checked={headerCheckState}
+                    onCheckedChange={() => toggleAllRows()}
+                    aria-label="Select all rows"
+                  />
+                )}
+              </div>
+            )}
             {table.getHeaderGroups()[0]?.headers.map((header, colIdx) => (
               <div
                 key={header.id}
@@ -303,24 +429,49 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
           >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = table.getRowModel().rows[virtualRow.index];
-              const isSelectedRow = virtualRow.index === selected.row;
+              const rowIdx = virtualRow.index;
+              const isSelectedRow = rowIdx === selected.row;
+              const isRowChecked = selectedRows.has(rowIdx);
               return (
                 <div
                   key={row.id}
                   className={cn(
                     "absolute left-0 top-0 grid w-full",
-                    isSelectedRow
-                      ? "bg-primary/10"
-                      : virtualRow.index % 2
-                        ? "bg-card"
-                        : "bg-transparent",
+                    isRowChecked
+                      ? "bg-primary/15"
+                      : isSelectedRow
+                        ? "bg-primary/10"
+                        : virtualRow.index % 2
+                          ? "bg-card"
+                          : "bg-transparent",
                   )}
                   style={{
                     transform: `translateY(${virtualRow.start}px)`,
                     height: virtualRow.size,
-                    gridTemplateColumns,
+                    gridTemplateColumns: `${hasGeoCols ? "32px " : ""}repeat(${columns.length}, minmax(120px, max-content))`,
                   }}
                 >
+                  {hasGeoCols && (
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <div className="flex items-center justify-center border-r border-b border-border/50 px-2">
+                          <Checkbox
+                            checked={isRowChecked}
+                            onCheckedChange={() => toggleRow(rowIdx)}
+                            aria-label={`Select row ${rowIdx + 1}`}
+                          />
+                        </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem
+                          disabled={selectedRows.size === 0}
+                          onSelect={() => showSelectedRowsOnMap()}
+                        >
+                          Show {selectedRows.size} selected on map
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                  )}
                   {row.getVisibleCells().map((cell, colIdx) => {
                     const isSelected = isSelectedRow && colIdx === selected.col;
                     return (

@@ -41,6 +41,19 @@ function isGeoColumn(kind: DbKind, c: Column): boolean {
   return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
 }
 
+function buildRowData(
+  columns: Column[],
+  row: readonly unknown[],
+  excluded: Set<number>,
+): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  columns.forEach((c, i) => {
+    if (excluded.has(i)) return;
+    out.push([c.name, row[i]]);
+  });
+  return out;
+}
+
 function formatPkValue(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "string") return `'${v.replace(/'/g, "''")}'`;
@@ -548,10 +561,12 @@ function BrowseGrid({
                       <ContextMenuItem
                         disabled={nonNull === 0}
                         onSelect={() => {
+                          const excluded = new Set([colIdx]);
                           const values: Array<{
                             rowIndex: number;
                             pkLabel: string | null;
                             ewkbHex: string;
+                            rowData: Array<[string, unknown]>;
                           }> = [];
                           result.rows.forEach((row, rowIndex) => {
                             const v = row[colIdx];
@@ -560,6 +575,7 @@ function BrowseGrid({
                                 rowIndex,
                                 pkLabel: pkLabelFor(pkColIndexes, cols, row),
                                 ewkbHex: v,
+                                rowData: buildRowData(cols, row, excluded),
                               });
                             }
                           });
@@ -666,6 +682,9 @@ function BrowseGrid({
                             .filter(({ c }) => isGeoColumn(conn.kind, c));
                           if (geoCols.length === 0 || selected.size === 0) return;
                           const selRows = [...selected];
+                          // Exclude all geo columns from rowData — clicking a feature
+                          // shouldn't surface raw EWKB hex of any geometry column.
+                          const excluded = new Set(geoCols.map(({ i }) => i));
                           const columns = geoCols
                             .map(({ c, i: colIdx }) => ({
                               name: c.name,
@@ -678,6 +697,7 @@ function BrowseGrid({
                                     rowIndex: rIdx,
                                     pkLabel: pkLabelFor(pkColIndexes, cols, r),
                                     ewkbHex: v,
+                                    rowData: buildRowData(cols, r, excluded),
                                   };
                                 })
                                 .filter(
@@ -687,6 +707,7 @@ function BrowseGrid({
                                     rowIndex: number;
                                     pkLabel: string | null;
                                     ewkbHex: string;
+                                    rowData: Array<[string, unknown]>;
                                   } => v !== null,
                                 ),
                             }))
@@ -752,6 +773,7 @@ function BrowseGrid({
                                 kind: "single",
                                 columnName: col.name,
                                 ewkbHex: v as string,
+                                rowData: buildRowData(cols, row, new Set([colIdx])),
                               })
                             }
                           />
