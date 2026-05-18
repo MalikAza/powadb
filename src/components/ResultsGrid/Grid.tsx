@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ContextMenu,
@@ -13,6 +14,13 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { Column, DbKind, QueryResult } from "../../types";
 import { GeometryMapDialog, type GeometryMapInput } from "../GeometryMap";
@@ -84,8 +92,11 @@ function countNonNull(result: QueryResult, columnIdx: number): number {
   return n;
 }
 
+type CellPreview = { columnName: string; value: unknown };
+
 export function ResultsGrid({ result, connectionId, kind }: Props) {
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
+  const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
   const data = useMemo<RowShape[]>(
     () =>
       result.rows.map((r) => {
@@ -106,7 +117,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
     const CHAR_PX = 7;
     const PADDING_PX = 28;
     const MIN_PX = 120;
-    const MAX_PX = 600;
+    const MAX_PX = 280;
     const widths = result.columns.map((c, colIdx) => {
       let maxChars = Math.max(c.name.length, c.type_name.length);
       const cap = Math.ceil((MAX_PX - PADDING_PX) / CHAR_PX);
@@ -382,6 +393,13 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
           input={mapDialog}
         />
       )}
+      <CellPreviewDialog
+        preview={cellPreview}
+        onOpenChange={(o) => {
+          if (!o) setCellPreview(null);
+        }}
+      />
+
       <div
         ref={parentRef}
         role="grid"
@@ -393,7 +411,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
           <div
             className="sticky top-0 z-10 grid border-b border-border bg-muted"
             style={{
-              gridTemplateColumns: `${hasGeoCols ? "32px " : ""}repeat(${columns.length}, minmax(120px, max-content))`,
+              gridTemplateColumns: `${hasGeoCols ? "32px " : ""}${gridTemplateColumns}`,
             }}
           >
             {hasGeoCols && (
@@ -448,7 +466,7 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                   style={{
                     transform: `translateY(${virtualRow.start}px)`,
                     height: virtualRow.size,
-                    gridTemplateColumns: `${hasGeoCols ? "32px " : ""}repeat(${columns.length}, minmax(120px, max-content))`,
+                    gridTemplateColumns: `${hasGeoCols ? "32px " : ""}${gridTemplateColumns}`,
                   }}
                 >
                   {hasGeoCols && (
@@ -474,10 +492,18 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
                   )}
                   {row.getVisibleCells().map((cell, colIdx) => {
                     const isSelected = isSelectedRow && colIdx === selected.col;
+                    const column = result.columns[colIdx];
                     return (
                       <div
                         key={cell.id}
                         onClick={() => setSelected({ row: virtualRow.index, col: colIdx })}
+                        onDoubleClick={() => {
+                          if (!column) return;
+                          setCellPreview({
+                            columnName: column.name,
+                            value: result.rows[virtualRow.index]?.[colIdx],
+                          });
+                        }}
                         className={cn(
                           "overflow-hidden text-ellipsis whitespace-nowrap border-r border-b border-border/50 px-3 py-1 font-mono text-xs",
                           isSelected &&
@@ -495,6 +521,46 @@ export function ResultsGrid({ result, connectionId, kind }: Props) {
         </div>
       </div>
     </>
+  );
+}
+
+function CellPreviewDialog({
+  preview,
+  onOpenChange,
+}: {
+  preview: CellPreview | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const text =
+    preview === null
+      ? ""
+      : preview.value === null || preview.value === undefined
+        ? "NULL"
+        : typeof preview.value === "object"
+          ? JSON.stringify(preview.value, null, 2)
+          : String(preview.value);
+  return (
+    <Dialog open={preview !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="font-mono">{preview?.columnName ?? ""}</DialogTitle>
+        </DialogHeader>
+        <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-muted/50 p-3 font-mono text-xs">
+          {text}
+        </pre>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              navigator.clipboard.writeText(text);
+            }}
+          >
+            Copy
+          </Button>
+          <Button onClick={() => onOpenChange(false)}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
