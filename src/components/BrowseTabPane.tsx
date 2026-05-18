@@ -32,8 +32,14 @@ import { type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
+import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap";
+
+// Cap any single cell at this width so geometry / long-text columns can't blow
+// out the table. The full value is still reachable via the "Show full value"
+// context-menu entry (and via cartography for geometry columns).
+const CELL_MAX_WIDTH = "280px";
 
 const GEO_TYPES = new Set(["geometry", "geography"]);
 
@@ -263,6 +269,7 @@ function BrowseGrid({
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
   const [opError, setOpError] = useState<string | null>(null);
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
+  const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
@@ -519,25 +526,25 @@ function BrowseGrid({
               {cols.map((c, colIdx) => {
                 const isGeo = isGeoColumn(conn.kind, c);
                 const headerInner = (
-                  <>
-                    <div className="flex items-center gap-1">
+                  <div style={{ maxWidth: CELL_MAX_WIDTH }}>
+                    <div className="flex items-center gap-1 overflow-hidden">
                       {tab.pkCols?.includes(c.name) && (
                         <span title="Primary key" className="text-primary">
                           🔑
                         </span>
                       )}
-                      <span className="font-medium">{c.name}</span>
+                      <span className="truncate font-medium">{c.name}</span>
                       {tab.sortCol === c.name &&
                         (tab.sortDir === "asc" ? (
-                          <ArrowUp className="size-3 text-primary" />
+                          <ArrowUp className="size-3 shrink-0 text-primary" />
                         ) : (
-                          <ArrowDown className="size-3 text-primary" />
+                          <ArrowDown className="size-3 shrink-0 text-primary" />
                         ))}
                     </div>
-                    <div className="text-[10px] font-normal text-muted-foreground">
+                    <div className="truncate text-[10px] font-normal text-muted-foreground">
                       {c.type_name}
                     </div>
-                  </>
+                  </div>
                 );
                 const th = (
                   <th
@@ -776,6 +783,7 @@ function BrowseGrid({
                                 rowData: buildRowData(cols, row, new Set([colIdx])),
                               })
                             }
+                            onShowFull={() => setCellPreview({ columnName: col.name, value: v })}
                           />
                         ) : canFollowFk ? (
                           <FkCell
@@ -783,17 +791,32 @@ function BrowseGrid({
                             target={`${fk.to_schema ? `${fk.to_schema}.` : ""}${fk.to_table}`}
                             onOpen={() => openFkTarget(fk, row)}
                             onEdit={canEdit ? startEdit : null}
+                            onShowFull={() => setCellPreview({ columnName: col.name, value: v })}
                           />
                         ) : (
-                          <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
-                            {v === null || v === undefined ? (
-                              <span className="text-muted-foreground/60">NULL</span>
-                            ) : typeof v === "object" ? (
-                              JSON.stringify(v)
-                            ) : (
-                              String(v)
-                            )}
-                          </div>
+                          <ContextMenu>
+                            <ContextMenuTrigger asChild>
+                              <div
+                                className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
+                                style={{ maxWidth: CELL_MAX_WIDTH }}
+                              >
+                                {v === null || v === undefined ? (
+                                  <span className="text-muted-foreground/60">NULL</span>
+                                ) : typeof v === "object" ? (
+                                  JSON.stringify(v)
+                                ) : (
+                                  String(v)
+                                )}
+                              </div>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent>
+                              <ContextMenuItem
+                                onSelect={() => setCellPreview({ columnName: col.name, value: v })}
+                              >
+                                Show full value
+                              </ContextMenuItem>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         )}
                       </td>
                     );
@@ -839,20 +862,39 @@ function BrowseGrid({
           input={mapDialog}
         />
       )}
+
+      <CellPreviewDialog
+        preview={cellPreview}
+        onOpenChange={(o) => {
+          if (!o) setCellPreview(null);
+        }}
+      />
     </div>
   );
 }
 
-function GeometryCell({ value, onOpen }: { value: string; onOpen: () => void }) {
+function GeometryCell({
+  value,
+  onOpen,
+  onShowFull,
+}: {
+  value: string;
+  onOpen: () => void;
+  onShowFull: () => void;
+}) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
+        <div
+          className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
+          style={{ maxWidth: CELL_MAX_WIDTH }}
+        >
           {value}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={onOpen}>Open in map</ContextMenuItem>
+        <ContextMenuItem onSelect={onShowFull}>Show full value</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
@@ -863,11 +905,13 @@ function FkCell({
   target,
   onOpen,
   onEdit,
+  onShowFull,
 }: {
   value: unknown;
   target: string;
   onOpen: () => void;
   onEdit: (() => void) | null;
+  onShowFull: () => void;
 }) {
   const display = typeof value === "object" ? JSON.stringify(value) : String(value);
   return (
@@ -879,6 +923,7 @@ function FkCell({
           onDoubleClick={(e) => e.stopPropagation()}
           title={`Open referenced row in ${target}`}
           className="flex w-full items-center gap-1 overflow-hidden px-3 py-1 text-left text-primary hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+          style={{ maxWidth: CELL_MAX_WIDTH }}
         >
           <span className="truncate">{display}</span>
           <ArrowUpRight className="size-3 shrink-0 opacity-60" />
@@ -887,6 +932,7 @@ function FkCell({
       <ContextMenuContent>
         <ContextMenuItem onSelect={onOpen}>Open referenced row in {target}</ContextMenuItem>
         {onEdit && <ContextMenuItem onSelect={onEdit}>Edit cell</ContextMenuItem>}
+        <ContextMenuItem onSelect={onShowFull}>Show full value</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   );
