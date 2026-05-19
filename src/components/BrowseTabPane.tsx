@@ -39,11 +39,9 @@ import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FkCell } from "./FkCell";
 import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap";
-
-// Cap any single cell at this width so geometry / long-text columns can't blow
-// out the table. The full value is still reachable via the "Show full value"
-// context-menu entry (and via cartography for geometry columns).
-const CELL_MAX_WIDTH = "280px";
+import { ColumnResizeHandle } from "./ResultsGrid/ColumnResizeHandle";
+import { measureColumnWidths } from "./ResultsGrid/measureColumnWidths";
+import { useColumnResize } from "./ResultsGrid/useColumnResize";
 
 const GEO_TYPES = new Set(["geometry", "geography"]);
 
@@ -289,6 +287,9 @@ function BrowseGrid({
   const [decodedGeoms, setDecodedGeoms] = useState<Map<string, GeomDecoded>>(() => new Map());
   const byteaModes = useColumnDisplay((s) => s.byteaModes);
   const setByteaMode = useColumnDisplay((s) => s.setByteaMode);
+  const columnWidthsStore = useColumnDisplay((s) => s.columnWidths);
+  const setColumnWidth = useColumnDisplay((s) => s.setColumnWidth);
+  const clearColumnWidth = useColumnDisplay((s) => s.clearColumnWidth);
 
   // Reset selection whenever the underlying result changes.
   useEffect(() => {
@@ -297,6 +298,61 @@ function BrowseGrid({
 
   const canEdit = (tab.pkCols?.length ?? 0) > 0;
   const cols = result.columns;
+
+  // Auto-measured pristine defaults — used as the reset target on double-click,
+  // independent of any user-persisted overrides.
+  const autoColumnWidths = useMemo(
+    () => measureColumnWidths(cols, result.rows),
+    [cols, result.rows],
+  );
+
+  // Column widths: seed from the auto defaults, then override per column with
+  // any user-persisted width keyed by (conn, schema, table, column).
+  const initialColumnWidths = useMemo(() => {
+    return cols.map((c, i) => {
+      const k = columnDisplayKey(conn.id, tab.schema, tab.table, c.name);
+      const stored = columnWidthsStore[k];
+      return typeof stored === "number" ? stored : autoColumnWidths[i];
+    });
+  }, [cols, conn.id, tab.schema, tab.table, columnWidthsStore, autoColumnWidths]);
+
+  // Refs to the per-column `<col>` elements. The resize hook mutates these
+  // directly during drag so we avoid re-rendering all rows on every pointer
+  // move — the browse grid isn't virtualized. The table's own width is
+  // `max-content` so it tracks the col-width sum without a manual update.
+  const colRefs = useRef<(HTMLTableColElement | null)[]>([]);
+  const liveWidthsRef = useRef<number[]>(initialColumnWidths);
+
+  const {
+    widths: columnWidths,
+    startResize,
+    resetWidth,
+  } = useColumnResize(initialColumnWidths, {
+    onCommit: (idx, width) => {
+      const c = cols[idx];
+      if (!c) return;
+      setColumnWidth(columnDisplayKey(conn.id, tab.schema, tab.table, c.name), width);
+    },
+    onLiveResize: (idx, width) => {
+      liveWidthsRef.current[idx] = width;
+      const col = colRefs.current[idx];
+      if (col) col.style.width = `${width}px`;
+    },
+    resetWidths: autoColumnWidths,
+    onReset: (idx) => {
+      const c = cols[idx];
+      if (!c) return;
+      // Clear the persisted override so future renders use the live
+      // auto-measured default (which may shift as data changes).
+      clearColumnWidth(columnDisplayKey(conn.id, tab.schema, tab.table, c.name));
+    },
+  });
+
+  // Keep the live-widths ref in sync with the committed React state so a drag
+  // starting after a commit reads from the right baseline.
+  useEffect(() => {
+    liveWidthsRef.current = columnWidths.slice();
+  }, [columnWidths]);
 
   // Batch-decode every geometry cell in the current result so we can render
   // GeoJSON coordinates inline and remember each cell's SRID + geometry type
@@ -652,10 +708,29 @@ function BrowseGrid({
       )}
 
       <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border bg-card">
-        <table className="w-full border-collapse font-mono text-xs">
+        <table
+          className="border-collapse font-mono text-xs"
+          // `width: max-content` makes the table size to the sum of `<col>`
+          // widths automatically. Without an explicit width the browser would
+          // stretch the table to fit the container and ignore col widths.
+          style={{ tableLayout: "fixed", width: "max-content" }}
+        >
+          <colgroup>
+            <col style={{ width: 32 }} />
+            <col style={{ width: 32 }} />
+            {cols.map((c, i) => (
+              <col
+                key={c.name}
+                ref={(el) => {
+                  colRefs.current[i] = el;
+                }}
+                style={{ width: columnWidths[i] }}
+              />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-10 bg-muted">
             <tr>
-              <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left">
+              <th className="border-b border-r border-border px-2 py-1.5 text-left">
                 {canEdit && result.rows.length > 0 && (
                   <Checkbox
                     checked={headerCheckState}
@@ -664,14 +739,14 @@ function BrowseGrid({
                   />
                 )}
               </th>
-              <th className="w-8 border-b border-r border-border px-2 py-1.5 text-left"></th>
+              <th className="border-b border-r border-border px-2 py-1.5 text-left"></th>
               {cols.map((c, colIdx) => {
                 const isGeo = isGeoColumn(conn.kind, c);
                 const isBytea = isByteaColumn(conn.kind, c);
                 const byteaMode = byteaColMode.get(colIdx);
                 const modeBadge = isBytea && byteaMode && byteaMode !== "hex" ? byteaMode : null;
                 const headerInner = (
-                  <div style={{ maxWidth: CELL_MAX_WIDTH }}>
+                  <div>
                     <div className="flex items-center gap-1 overflow-hidden">
                       {tab.pkCols?.includes(c.name) && (
                         <span title="Primary key" className="text-primary">
@@ -699,10 +774,16 @@ function BrowseGrid({
                 const th = (
                   <th
                     key={c.name}
-                    className="cursor-pointer whitespace-nowrap border-b border-r border-border px-3 py-1.5 text-left hover:bg-muted-foreground/10"
+                    className="cursor-pointer overflow-hidden whitespace-nowrap border-b border-r border-border p-0 text-left hover:bg-muted-foreground/10"
                     onClick={() => onSort(c.name)}
                   >
-                    {headerInner}
+                    <div style={{ position: "relative" }} className="px-3 py-1.5">
+                      {headerInner}
+                      <ColumnResizeHandle
+                        onPointerDown={(e) => startResize(colIdx, e)}
+                        onDoubleClick={() => resetWidth(colIdx)}
+                      />
+                    </div>
                   </th>
                 );
                 if (isBytea) {
@@ -991,10 +1072,7 @@ function BrowseGrid({
                         ) : (
                           <ContextMenu>
                             <ContextMenuTrigger asChild>
-                              <div
-                                className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
-                                style={{ maxWidth: CELL_MAX_WIDTH }}
-                              >
+                              <div className="overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
                                 {shown === null ? (
                                   <span className="text-muted-foreground/60">NULL</span>
                                 ) : (
@@ -1079,10 +1157,7 @@ function GeometryCell({
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
-          className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1"
-          style={{ maxWidth: CELL_MAX_WIDTH }}
-        >
+        <div className="cursor-context-menu overflow-hidden text-ellipsis whitespace-nowrap px-3 py-1">
           {value}
         </div>
       </ContextMenuTrigger>

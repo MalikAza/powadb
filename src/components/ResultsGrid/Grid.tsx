@@ -21,6 +21,9 @@ import type { Column, DbKind, QueryResult } from "../../types";
 import { type CellPreview, CellPreviewDialog } from "../CellPreviewDialog";
 import { FkCell } from "../FkCell";
 import { GeometryMapDialog, type GeometryMapInput } from "../GeometryMap";
+import { ColumnResizeHandle } from "./ColumnResizeHandle";
+import { measureColumnWidths } from "./measureColumnWidths";
+import { useColumnResize } from "./useColumnResize";
 
 export type FkColumnLink = {
   fk: DiagFk;
@@ -132,33 +135,19 @@ export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTa
     [result],
   );
 
-  // Each header/row was its own grid using `minmax(120px, max-content)`, so columns
-  // sized themselves per-row based on that row's content — causing misalignment.
-  // Compute one width per column from the longest stringified value and apply the
-  // same `gridTemplateColumns` to the header and every row.
-  const gridTemplateColumns = useMemo(() => {
-    const CHAR_PX = 7;
-    const PADDING_PX = 28;
-    const MIN_PX = 120;
-    const MAX_PX = 280;
-    const widths = result.columns.map((c, colIdx) => {
-      let maxChars = Math.max(c.name.length, c.type_name.length);
-      const cap = Math.ceil((MAX_PX - PADDING_PX) / CHAR_PX);
-      for (const row of result.rows) {
-        const v = row[colIdx];
-        const s =
-          v === null || v === undefined
-            ? "NULL"
-            : typeof v === "object"
-              ? JSON.stringify(v)
-              : String(v);
-        if (s.length > maxChars) maxChars = s.length;
-        if (maxChars >= cap) break;
-      }
-      return clamp(maxChars * CHAR_PX + PADDING_PX, MIN_PX, MAX_PX);
-    });
-    return widths.map((w) => `${w}px`).join(" ");
-  }, [result]);
+  // Compute one default width per column from the longest stringified value;
+  // `useColumnResize` keeps mutable state and lets the user drag to override.
+  // Both header and every body row consume the same template string so columns
+  // stay aligned regardless of any one row's content.
+  const initialColumnWidths = useMemo(
+    () => measureColumnWidths(result.columns, result.rows),
+    [result],
+  );
+  const { widths: columnWidths, startResize, resetWidth } = useColumnResize(initialColumnWidths);
+  const gridTemplateColumns = useMemo(
+    () => columnWidths.map((w) => `${w}px`).join(" "),
+    [columnWidths],
+  );
 
   const columns = useMemo(() => {
     const helper = createColumnHelper<RowShape>();
@@ -510,11 +499,15 @@ export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTa
                 key={header.id}
                 onClick={() => setSelected((s) => ({ ...s, col: colIdx }))}
                 className={cn(
-                  "cursor-pointer whitespace-nowrap border-r border-border px-3 py-1.5 font-mono text-xs",
+                  "relative cursor-pointer overflow-hidden whitespace-nowrap border-r border-border px-3 py-1.5 font-mono text-xs",
                   selected.col === colIdx && "bg-primary/20",
                 )}
               >
                 {flexRender(header.column.columnDef.header, header.getContext())}
+                <ColumnResizeHandle
+                  onPointerDown={(e) => startResize(colIdx, e)}
+                  onDoubleClick={() => resetWidth(colIdx)}
+                />
               </div>
             ))}
           </div>
