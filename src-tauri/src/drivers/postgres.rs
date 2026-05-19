@@ -168,6 +168,15 @@ fn decode_pg(row: &PgRow, idx: usize, type_name: &str) -> AppResult<Value> {
                 return Ok(Value::Null);
             }
         }
+        "INTERVAL" => {
+            let v: Result<Option<sqlx::postgres::types::PgInterval>, _> = row.try_get(idx);
+            if let Ok(Some(x)) = v {
+                return Ok(json!(format_pg_interval(&x)));
+            }
+            if let Ok(None) = v {
+                return Ok(Value::Null);
+            }
+        }
         "NUMERIC" => {
             let v: Result<Option<sqlx::types::BigDecimal>, _> = row.try_get(idx);
             if let Ok(Some(x)) = v {
@@ -280,4 +289,109 @@ async fn resolve_pg_origins(pool: &PgPool, raw_cols: Vec<RawCol>) -> Vec<ColMeta
             }
         })
         .collect()
+}
+
+// Format a PgInterval the way psql's default `IntervalStyle = postgres` does.
+// Year/month/day parts are pluralised on `n != 1`; the time component carries
+// its own sign so a negative-microseconds interval renders as `-HH:MM:SS`.
+fn format_pg_interval(iv: &sqlx::postgres::types::PgInterval) -> String {
+    let years = iv.months / 12;
+    let mons = iv.months % 12;
+    let days = iv.days;
+    let micros = iv.microseconds;
+
+    let mut parts: Vec<String> = Vec::new();
+    if years != 0 {
+        parts.push(format!(
+            "{} {}",
+            years,
+            if years == 1 { "year" } else { "years" }
+        ));
+    }
+    if mons != 0 {
+        parts.push(format!(
+            "{} {}",
+            mons,
+            if mons == 1 { "mon" } else { "mons" }
+        ));
+    }
+    if days != 0 {
+        parts.push(format!(
+            "{} {}",
+            days,
+            if days == 1 { "day" } else { "days" }
+        ));
+    }
+
+    if micros != 0 || parts.is_empty() {
+        let negative = micros < 0;
+        let abs_micros = micros.unsigned_abs();
+        let total_secs = abs_micros / 1_000_000;
+        let frac = abs_micros % 1_000_000;
+        let hours = total_secs / 3600;
+        let minutes = (total_secs % 3600) / 60;
+        let seconds = total_secs % 60;
+        let sign = if negative { "-" } else { "" };
+        let time_str = if frac == 0 {
+            format!("{}{:02}:{:02}:{:02}", sign, hours, minutes, seconds)
+        } else {
+            let mut frac_str = format!("{:06}", frac);
+            while frac_str.ends_with('0') {
+                frac_str.pop();
+            }
+            format!(
+                "{}{:02}:{:02}:{:02}.{}",
+                sign, hours, minutes, seconds, frac_str
+            )
+        };
+        parts.push(time_str);
+    }
+
+    parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::postgres::types::PgInterval;
+
+    fn iv(months: i32, days: i32, microseconds: i64) -> PgInterval {
+        PgInterval {
+            months,
+            days,
+            microseconds,
+        }
+    }
+
+    #[test]
+    fn zero_interval() {
+        assert_eq!(format_pg_interval(&iv(0, 0, 0)), "00:00:00");
+    }
+
+    #[test]
+    fn full_interval_with_fraction() {
+        // 1 year 2 months 3 days 4h 5m 6.789s
+        let micros = (4 * 3600 + 5 * 60 + 6) * 1_000_000 + 789_000;
+        assert_eq!(
+            format_pg_interval(&iv(14, 3, micros)),
+            "1 year 2 mons 3 days 04:05:06.789"
+        );
+    }
+
+    #[test]
+    fn negative_time_and_days() {
+        let micros = -2i64 * 3600 * 1_000_000;
+        assert_eq!(format_pg_interval(&iv(0, -1, micros)), "-1 days -02:00:00");
+    }
+
+    #[test]
+    fn minutes_only() {
+        let micros = 90i64 * 60 * 1_000_000;
+        assert_eq!(format_pg_interval(&iv(0, 0, micros)), "01:30:00");
+    }
+
+    #[test]
+    fn singular_units() {
+        assert_eq!(format_pg_interval(&iv(13, 1, 0)), "1 year 1 mon 1 day");
+    }
 }
