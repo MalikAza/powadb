@@ -272,7 +272,7 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   function loadDiagramFromSaved(saved: SavedDiagram) {
     try {
       const parsed = JSON.parse(saved.doc_json) as DiagramDoc;
-      setDoc(parsed);
+      setDoc(syncFkFlags(parsed));
       setDiagramId(saved.id);
       setDiagramName(saved.name);
       setDirty(false);

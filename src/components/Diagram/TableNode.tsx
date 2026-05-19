@@ -59,7 +59,9 @@ function TableNodeInner({ data, selected }: NodeProps) {
           <div
             key={c.id}
             className="relative flex items-center gap-1.5 px-2 py-1 font-mono"
-            title={`${c.name}: ${c.dataType}${c.nullable ? "" : " NOT NULL"}`}
+            title={`${c.name}: ${c.dataType}${c.nullable ? "" : " NOT NULL"}${
+              c.isPk ? " · PRIMARY KEY" : ""
+            }${c.isFk ? " · FOREIGN KEY" : ""}`}
           >
             <Handle
               type="target"
@@ -69,12 +71,16 @@ function TableNodeInner({ data, selected }: NodeProps) {
             />
             <span className="flex w-3 shrink-0 items-center justify-center">
               {c.isPk ? (
-                <Key className="size-3 text-amber-500" />
+                <Key className="size-3 text-primary" />
               ) : c.isFk ? (
-                <Link2 className="size-3 text-sky-500" />
+                <Link2 className="size-3 text-primary" />
               ) : null}
             </span>
-            <span className={`min-w-0 flex-1 truncate ${c.isPk ? "font-semibold" : ""}`}>
+            <span
+              className={`min-w-0 flex-1 truncate ${c.isPk ? "font-semibold" : ""} ${
+                c.isFk ? "italic text-primary" : ""
+              }`}
+            >
               {c.name}
             </span>
             <span className="shrink-0 text-[10px] text-muted-foreground">
