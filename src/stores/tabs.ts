@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { ByteaDisplayMode } from "@/lib/bytea";
 import type { DiagramIntrospection } from "../ipc";
 import type { QueryResult } from "../types";
+import type { Filter } from "../utils/sql";
 
 let counter = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${++counter}`;
@@ -27,7 +28,7 @@ export type BrowseTab = BaseTab & {
   kind: "browse";
   schema: string;
   table: string;
-  filters: Record<string, string>;
+  filters: Record<string, Filter>;
   sortCol: string | null;
   sortDir: "asc" | "desc";
   limit: number;
@@ -61,7 +62,7 @@ type Actions = {
     connectionId: string,
     schema: string,
     table: string,
-    initialFilters?: Record<string, string>,
+    initialFilters?: Record<string, Filter>,
   ) => string;
   openDiagramTab: (connectionId: string) => string;
   closeTab: (id: string) => void;

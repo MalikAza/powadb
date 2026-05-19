@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   ContextMenu,
@@ -20,6 +21,12 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -34,7 +41,14 @@ import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
 import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
-import { filterToSql, parseFilter, quoteIdent, quoteTable } from "../utils/sql";
+import {
+  type CompareOp,
+  type Filter,
+  filterToSql,
+  isFilterComplete,
+  quoteIdent,
+  quoteTable,
+} from "../utils/sql";
 import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FkCell } from "./FkCell";
@@ -137,11 +151,11 @@ export function BrowseTabPane({ tab, conn }: Props) {
     };
   }, [conn.id, tab.schema, tab.table]);
 
-  function setFilter(col: string, value: string) {
-    patchTab(tab.id, {
-      filters: { ...tab.filters, [col]: value },
-      offset: 0,
-    });
+  function setFilter(col: string, filter: Filter | null) {
+    const next = { ...tab.filters };
+    if (filter === null) delete next[col];
+    else next[col] = filter;
+    patchTab(tab.id, { filters: next, offset: 0 });
   }
 
   function toggleSort(col: string) {
@@ -181,9 +195,8 @@ export function BrowseTabPane({ tab, conn }: Props) {
 
 function buildWhereClause(tab: BrowseTab, kind: DbKind): string {
   const parts: string[] = [];
-  for (const [col, val] of Object.entries(tab.filters)) {
-    const f = parseFilter(val);
-    if (f) parts.push(filterToSql(col, f, kind));
+  for (const [col, filter] of Object.entries(tab.filters)) {
+    if (isFilterComplete(filter)) parts.push(filterToSql(col, filter, kind));
   }
   if (parts.length === 0) return "";
   return ` WHERE ${parts.join(" AND ")}`;
@@ -272,7 +285,7 @@ function BrowseGrid({
   result: QueryResult;
   fks: DiagFk[];
   onSort: (col: string) => void;
-  onFilter: (col: string, value: string) => void;
+  onFilter: (col: string, filter: Filter | null) => void;
   onRefresh: () => void;
 }) {
   const openBrowseTab = useTabs((s) => s.openBrowseTab);
@@ -470,7 +483,7 @@ function BrowseGrid({
   }, [fks]);
 
   function openFkTarget(fk: DiagFk, row: unknown[]) {
-    const filters: Record<string, string> = {};
+    const filters: Record<string, Filter> = {};
     fk.from_columns.forEach((fromCol, i) => {
       const idx = cols.findIndex((c) => c.name === fromCol);
       if (idx === -1) return;
@@ -478,7 +491,11 @@ function BrowseGrid({
       if (v === null || v === undefined) return;
       const toCol = fk.to_columns[i];
       if (!toCol) return;
-      filters[toCol] = `=${typeof v === "object" ? JSON.stringify(v) : String(v)}`;
+      filters[toCol] = {
+        kind: "compare",
+        op: "=",
+        value: typeof v === "object" ? JSON.stringify(v) : String(v),
+      };
     });
     if (Object.keys(filters).length === 0) return;
     openBrowseTab(conn.id, fk.to_schema, fk.to_table, filters);
@@ -861,10 +878,13 @@ function BrowseGrid({
               <th className="border-b border-r border-border px-1 py-1"></th>
               <th className="border-b border-r border-border px-1 py-1"></th>
               {cols.map((c) => (
-                <th key={c.name} className="border-b border-r border-border px-1 py-1">
-                  <FilterInput
-                    value={tab.filters[c.name] ?? ""}
-                    onCommit={(v) => onFilter(c.name, v)}
+                <th
+                  key={c.name}
+                  className="overflow-hidden border-b border-r border-border px-1 py-1"
+                >
+                  <FilterCell
+                    filter={tab.filters[c.name] ?? null}
+                    onCommit={(f) => onFilter(c.name, f)}
                   />
                 </th>
               ))}
@@ -1243,25 +1263,188 @@ function castPlaceholder(placeholder: string, typeName: string | undefined, kind
   return `${placeholder}::${typeName.toLowerCase()}`;
 }
 
-function FilterInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
-  const [local, setLocal] = useState(value);
+type FilterOp =
+  | "like"
+  | "="
+  | "!="
+  | ">"
+  | "<"
+  | ">="
+  | "<="
+  | "between"
+  | "in"
+  | "is_null"
+  | "is_not_null";
 
-  useEffect(() => {
-    setLocal(value);
-  }, [value]);
+const OP_OPTIONS: Array<{ value: FilterOp; symbol: string; label: string }> = [
+  { value: "like", symbol: "≈", label: "contains" },
+  { value: "=", symbol: "=", label: "equals" },
+  { value: "!=", symbol: "≠", label: "not equals" },
+  { value: ">", symbol: ">", label: "greater than" },
+  { value: "<", symbol: "<", label: "less than" },
+  { value: ">=", symbol: "≥", label: "greater or equal" },
+  { value: "<=", symbol: "≤", label: "less or equal" },
+  { value: "between", symbol: "↔", label: "between" },
+  { value: "in", symbol: "∈", label: "in (…)" },
+  { value: "is_null", symbol: "∅", label: "is null" },
+  { value: "is_not_null", symbol: "∄", label: "is not null" },
+];
 
+function filterToOp(filter: Filter | null): FilterOp {
+  if (!filter) return "like";
+  switch (filter.kind) {
+    case "like":
+      return "like";
+    case "compare":
+      return filter.op;
+    case "between":
+      return "between";
+    case "in":
+      return "in";
+    case "is_null":
+      return "is_null";
+    case "is_not_null":
+      return "is_not_null";
+  }
+}
+
+function filterToValues(filter: Filter | null): [string, string] {
+  if (!filter) return ["", ""];
+  switch (filter.kind) {
+    case "like":
+    case "compare":
+      return [filter.value, ""];
+    case "between":
+      return [filter.v1, filter.v2];
+    case "in":
+      return [filter.values.join(", "), ""];
+    case "is_null":
+    case "is_not_null":
+      return ["", ""];
+  }
+}
+
+function parseInList(raw: string): string[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+}
+
+function buildFilter(op: FilterOp, v1: string, v2: string): Filter | null {
+  if (op === "is_null") return { kind: "is_null" };
+  if (op === "is_not_null") return { kind: "is_not_null" };
+  if (op === "between") {
+    if (v1.trim() === "" || v2.trim() === "") return null;
+    return { kind: "between", v1, v2 };
+  }
+  if (op === "in") {
+    const values = parseInList(v1);
+    if (values.length === 0) return null;
+    return { kind: "in", values };
+  }
+  if (op === "like") {
+    if (v1.trim() === "") return null;
+    return { kind: "like", value: v1 };
+  }
+  if (v1.trim() === "") return null;
+  return { kind: "compare", op: op as CompareOp, value: v1 };
+}
+
+function FilterCell({
+  filter,
+  onCommit,
+}: {
+  filter: Filter | null;
+  onCommit: (filter: Filter | null) => void;
+}) {
+  const [op, setOp] = useState<FilterOp>(() => filterToOp(filter));
+  const [v1, setV1] = useState<string>(() => filterToValues(filter)[0]);
+  const [v2, setV2] = useState<string>(() => filterToValues(filter)[1]);
+
+  // Re-sync from incoming filter (e.g. FK navigation overwrites filters).
   useEffect(() => {
-    if (local === value) return;
-    const t = setTimeout(() => onCommit(local), 300);
+    setOp(filterToOp(filter));
+    const [a, b] = filterToValues(filter);
+    setV1(a);
+    setV2(b);
+  }, [filter]);
+
+  // Debounced commit on value edits; immediate commit on op change.
+  useEffect(() => {
+    const next = buildFilter(op, v1, v2);
+    const same =
+      (next === null && filter === null) ||
+      (next !== null && filter !== null && JSON.stringify(next) === JSON.stringify(filter));
+    if (same) return;
+    const t = setTimeout(() => onCommit(next), 300);
     return () => clearTimeout(t);
-  }, [local, value, onCommit]);
+  }, [op, v1, v2, filter, onCommit]);
+
+  function pickOp(next: FilterOp) {
+    setOp(next);
+    if (next === "is_null" || next === "is_not_null") {
+      setV1("");
+      setV2("");
+    } else if (next !== "between") {
+      setV2("");
+    }
+  }
+
+  const currentOp = OP_OPTIONS.find((o) => o.value === op) ?? OP_OPTIONS[0];
+  const needsValue = op !== "is_null" && op !== "is_not_null";
+  const isBetween = op === "between";
+
+  const placeholder = isBetween
+    ? "min"
+    : op === "in"
+      ? "v1, v2, v3"
+      : op === "like"
+        ? "filter…"
+        : "value";
+
+  const inputClass = "h-6 min-w-0 flex-1 px-1.5 text-[11px]";
 
   return (
-    <Input
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      placeholder="filter…"
-      className="h-6 px-1.5 text-[11px]"
-    />
+    <ButtonGroup className="w-full">
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label={currentOp.label}
+            title={currentOp.label}
+            className="text-muted-foreground"
+          >
+            {currentOp.symbol}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="min-w-[10rem]">
+          {OP_OPTIONS.map((opt) => (
+            <DropdownMenuItem key={opt.value} onSelect={() => pickOp(opt.value)}>
+              <span className="w-4 text-center">{opt.symbol}</span>
+              <span>{opt.label}</span>
+              {op === opt.value && <span className="ml-auto text-primary">✓</span>}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {needsValue && (
+        <Input
+          value={v1}
+          onChange={(e) => setV1(e.target.value)}
+          placeholder={placeholder}
+          className={inputClass}
+        />
+      )}
+      {isBetween && (
+        <Input
+          value={v2}
+          onChange={(e) => setV2(e.target.value)}
+          placeholder="max"
+          className={inputClass}
+        />
+      )}
+    </ButtonGroup>
   );
 }

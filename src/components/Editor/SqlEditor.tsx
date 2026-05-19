@@ -55,6 +55,8 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
       onChange={onChange}
       theme={resolvedTheme}
       height="100%"
+      autoFocus
+      selection={{ anchor: value.length }}
       extensions={extensions}
       basicSetup={{
         lineNumbers: true,

@@ -3,7 +3,7 @@ import {
   escapeStringLiteral,
   type Filter,
   filterToSql,
-  parseFilter,
+  isFilterComplete,
   quoteIdent,
   quoteTable,
 } from "./sql";
@@ -43,37 +43,28 @@ describe("escapeStringLiteral", () => {
   });
 });
 
-describe("parseFilter", () => {
-  it("returns null for empty input", () => {
-    expect(parseFilter("")).toBeNull();
-    expect(parseFilter("   ")).toBeNull();
+describe("isFilterComplete", () => {
+  it("is true for nullary ops", () => {
+    expect(isFilterComplete({ kind: "is_null" })).toBe(true);
+    expect(isFilterComplete({ kind: "is_not_null" })).toBe(true);
   });
 
-  it("recognizes null sentinels", () => {
-    expect(parseFilter("null")).toEqual({ kind: "is_null" });
-    expect(parseFilter("IS NULL")).toEqual({ kind: "is_null" });
-    expect(parseFilter("not null")).toEqual({ kind: "is_not_null" });
-    expect(parseFilter("IS NOT NULL")).toEqual({ kind: "is_not_null" });
+  it("requires a value for compare and like", () => {
+    expect(isFilterComplete({ kind: "compare", op: "=", value: "" })).toBe(false);
+    expect(isFilterComplete({ kind: "compare", op: "=", value: "5" })).toBe(true);
+    expect(isFilterComplete({ kind: "like", value: "  " })).toBe(false);
+    expect(isFilterComplete({ kind: "like", value: "ali" })).toBe(true);
   });
 
-  it("recognizes comparison operators, longest match first", () => {
-    expect(parseFilter(">=5")).toEqual({ kind: "compare", op: ">=", value: "5" });
-    expect(parseFilter("<= 5")).toEqual({ kind: "compare", op: "<=", value: "5" });
-    expect(parseFilter("!=foo")).toEqual({ kind: "compare", op: "!=", value: "foo" });
-    expect(parseFilter("> 5")).toEqual({ kind: "compare", op: ">", value: "5" });
-    expect(parseFilter("=42")).toEqual({ kind: "compare", op: "=", value: "42" });
+  it("requires both bounds for between", () => {
+    expect(isFilterComplete({ kind: "between", v1: "1", v2: "" })).toBe(false);
+    expect(isFilterComplete({ kind: "between", v1: "", v2: "10" })).toBe(false);
+    expect(isFilterComplete({ kind: "between", v1: "1", v2: "10" })).toBe(true);
   });
 
-  it("falls back to a like filter", () => {
-    expect(parseFilter("alice")).toEqual({ kind: "like", value: "alice" });
-  });
-
-  it("treats an operator with no value as no filter", () => {
-    expect(parseFilter("=")).toBeNull();
-    expect(parseFilter("= ")).toBeNull();
-    expect(parseFilter(">")).toBeNull();
-    expect(parseFilter(">=")).toBeNull();
-    expect(parseFilter("!=")).toBeNull();
+  it("requires at least one value for in", () => {
+    expect(isFilterComplete({ kind: "in", values: [] })).toBe(false);
+    expect(isFilterComplete({ kind: "in", values: ["1"] })).toBe(true);
   });
 });
 
@@ -106,6 +97,24 @@ describe("filterToSql", () => {
   it("treats negative numbers and decimals as numeric", () => {
     expect(filterToSql("x", { kind: "compare", op: "<", value: "-1.5" }, "postgres")).toBe(
       '"x" < -1.5',
+    );
+  });
+
+  it("renders BETWEEN with mixed numeric / string bounds", () => {
+    expect(filterToSql("age", { kind: "between", v1: "1", v2: "10" }, "postgres")).toBe(
+      '"age" BETWEEN 1 AND 10',
+    );
+    expect(filterToSql("name", { kind: "between", v1: "a", v2: "m" }, "mysql")).toBe(
+      "`name` BETWEEN 'a' AND 'm'",
+    );
+  });
+
+  it("renders IN with mixed numeric / string values", () => {
+    expect(filterToSql("id", { kind: "in", values: ["1", "2", "3"] }, "postgres")).toBe(
+      '"id" IN (1, 2, 3)',
+    );
+    expect(filterToSql("name", { kind: "in", values: ["a", "b'c"] }, "mysql")).toBe(
+      "`name` IN ('a', 'b''c')",
     );
   });
 });
