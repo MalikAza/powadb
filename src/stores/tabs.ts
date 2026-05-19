@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ByteaDisplayMode } from "@/lib/bytea";
 import type { DiagramIntrospection } from "../ipc";
 import type { QueryResult } from "../types";
 
@@ -18,6 +19,8 @@ export type QueryTab = BaseTab & {
   kind: "query";
   sql: string;
   runningQueryId: string | null;
+  byteaModes: Record<string, ByteaDisplayMode>;
+  snippetId: string | null;
 };
 
 export type BrowseTab = BaseTab & {
@@ -48,7 +51,12 @@ type State = {
 };
 
 type Actions = {
-  newQueryTab: (connectionId: string, sql?: string, title?: string) => string;
+  newQueryTab: (
+    connectionId: string,
+    sql?: string,
+    title?: string,
+    init?: { byteaModes?: Record<string, ByteaDisplayMode>; snippetId?: string | null },
+  ) => string;
   openBrowseTab: (
     connectionId: string,
     schema: string,
@@ -68,7 +76,7 @@ export const useTabs = create<State & Actions>((set, get) => ({
   tabs: [],
   activeTabId: null,
 
-  newQueryTab(connectionId, sql = defaultSql, title = "Query") {
+  newQueryTab(connectionId, sql = defaultSql, title = "Query", init) {
     const id = newId("tab");
     const tab: QueryTab = {
       id,
@@ -80,6 +88,8 @@ export const useTabs = create<State & Actions>((set, get) => ({
       error: null,
       loading: false,
       runningQueryId: null,
+      byteaModes: init?.byteaModes ?? {},
+      snippetId: init?.snippetId ?? null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
     return id;

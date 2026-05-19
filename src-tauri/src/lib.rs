@@ -191,6 +191,7 @@ pub fn run() {
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
+            commands::snippets::update_snippet_bytea_modes,
             commands::themes::list_themes,
             commands::themes::save_theme,
             commands::themes::delete_theme,

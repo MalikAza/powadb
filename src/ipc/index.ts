@@ -118,6 +118,9 @@ export const ipc = {
 
   deleteSnippet: (id: string): Promise<void> => invoke("delete_snippet", { id }),
 
+  updateSnippetByteaModes: (id: string, byteaModesJson: string | null): Promise<void> =>
+    invoke("update_snippet_bytea_modes", { id, byteaModesJson }),
+
   listThemes: (): Promise<StoredTheme[]> => invoke("list_themes"),
   saveTheme: (input: ThemeSaveInput): Promise<StoredTheme> => invoke("save_theme", { input }),
   deleteTheme: (id: string): Promise<void> => invoke("delete_theme", { id }),
@@ -269,6 +272,7 @@ export type Snippet = {
   name: string;
   sql: string;
   created_at: string;
+  bytea_modes_json: string | null;
 };
 
 export type SnippetInput = {
@@ -276,6 +280,7 @@ export type SnippetInput = {
   connection_id?: string | null;
   name: string;
   sql: string;
+  bytea_modes_json?: string | null;
 };
 
 export type DiagColumn = {

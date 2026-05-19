@@ -41,6 +41,12 @@ type Props = {
    * render as clickable affordances that call `onOpenFkTarget`. */
   fkByColIdx?: Map<number, FkColumnLink>;
   onOpenFkTarget?: (link: FkColumnLink, row: unknown[]) => void;
+  /** Controlled BYTEA display modes keyed by column name. When provided together
+   * with `onByteaModeChange`, the grid becomes a controlled component and the
+   * caller is responsible for persistence. Otherwise the modes live in local
+   * state and reset on every new result. */
+  byteaModes?: Record<string, ByteaDisplayMode>;
+  onByteaModeChange?: (colName: string, mode: ByteaDisplayMode) => void;
 };
 
 const GEO_TYPES = new Set(["geometry", "geography"]);
@@ -106,18 +112,36 @@ function countNonNull(result: QueryResult, columnIdx: number): number {
   return n;
 }
 
-export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTarget }: Props) {
+export function ResultsGrid({
+  result,
+  connectionId,
+  kind,
+  fkByColIdx,
+  onOpenFkTarget,
+  byteaModes: controlledByteaModes,
+  onByteaModeChange,
+}: Props) {
   const [mapDialog, setMapDialog] = useState<GeometryMapInput | null>(null);
   const [cellPreview, setCellPreview] = useState<CellPreview | null>(null);
-  // BYTEA presentation is per-result instance: free-form query results don't
-  // map to a stable (schema, table, column), so we can't persist preferences
-  // the way the browse pane does.
-  const [byteaModes, setByteaModes] = useState<Map<string, ByteaDisplayMode>>(() => new Map());
+  // BYTEA presentation: when the parent supplies `byteaModes` + `onByteaModeChange`,
+  // we run controlled (the parent owns persistence — see QueryTabPane). Otherwise
+  // fall back to per-result local state, reset on each new result.
+  const controlled = !!controlledByteaModes && !!onByteaModeChange;
+  const [localByteaModes, setLocalByteaModes] = useState<Map<string, ByteaDisplayMode>>(
+    () => new Map(),
+  );
   useEffect(() => {
-    setByteaModes(new Map());
-  }, [result]);
+    if (!controlled) setLocalByteaModes(new Map());
+  }, [result, controlled]);
+  function getByteaMode(colName: string): ByteaDisplayMode | undefined {
+    return controlled ? controlledByteaModes?.[colName] : localByteaModes.get(colName);
+  }
   function setByteaMode(colName: string, mode: ByteaDisplayMode) {
-    setByteaModes((prev) => {
+    if (controlled) {
+      onByteaModeChange?.(colName, mode);
+      return;
+    }
+    setLocalByteaModes((prev) => {
       const next = new Map(prev);
       next.set(colName, mode);
       return next;
@@ -157,7 +181,7 @@ export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTa
       return helper.accessor((row) => row[c.name], {
         id: c.name,
         header: () => {
-          const byteaMode = byteaModes.get(c.name);
+          const byteaMode = getByteaMode(c.name);
           const modeBadge = isBytea && byteaMode && byteaMode !== "hex" ? byteaMode : null;
           const headerContent = (
             <div>
@@ -223,7 +247,7 @@ export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTa
           const v = info.getValue();
           if (isBytea) {
             if (typeof v !== "string" || v === "") return formatValue(v);
-            const mode = byteaModes.get(c.name);
+            const mode = getByteaMode(c.name);
             if (mode && mode !== "hex") {
               const formatted = formatBytea(v, mode);
               if (formatted !== null) return formatted;
@@ -273,7 +297,7 @@ export function ResultsGrid({ result, connectionId, kind, fkByColIdx, onOpenFkTa
         },
       });
     });
-  }, [result, kind, byteaModes]);
+  }, [result, kind, controlled, controlledByteaModes, localByteaModes]);
 
   const table = useReactTable({
     data,

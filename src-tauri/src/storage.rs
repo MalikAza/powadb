@@ -177,6 +177,8 @@ impl Storage {
         .execute(&pool)
         .await?;
 
+        try_add_column(&pool, "snippets", "bytea_modes_json TEXT").await;
+
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS settings (
@@ -277,11 +279,11 @@ impl Storage {
 
     pub async fn list_snippets(&self, connection_id: Option<&str>) -> AppResult<Vec<Snippet>> {
         let q = if connection_id.is_some() {
-            "SELECT id, connection_id, name, sql, created_at FROM snippets
+            "SELECT id, connection_id, name, sql, created_at, bytea_modes_json FROM snippets
              WHERE connection_id IS NULL OR connection_id = ?1
              ORDER BY name"
         } else {
-            "SELECT id, connection_id, name, sql, created_at FROM snippets ORDER BY name"
+            "SELECT id, connection_id, name, sql, created_at, bytea_modes_json FROM snippets ORDER BY name"
         };
         let mut q = sqlx::query(q);
         if let Some(cid) = connection_id {
@@ -297,6 +299,10 @@ impl Storage {
                     name: r.try_get("name").ok()?,
                     sql: r.try_get("sql").ok()?,
                     created_at: r.try_get("created_at").ok()?,
+                    bytea_modes_json: r
+                        .try_get::<Option<String>, _>("bytea_modes_json")
+                        .ok()
+                        .flatten(),
                 })
             })
             .collect())
@@ -305,20 +311,35 @@ impl Storage {
     pub async fn upsert_snippet(&self, s: &Snippet) -> AppResult<()> {
         sqlx::query(
             r#"
-            INSERT INTO snippets (id, connection_id, name, sql)
-            VALUES (?1, ?2, ?3, ?4)
+            INSERT INTO snippets (id, connection_id, name, sql, bytea_modes_json)
+            VALUES (?1, ?2, ?3, ?4, ?5)
             ON CONFLICT(id) DO UPDATE SET
                 connection_id=excluded.connection_id,
                 name=excluded.name,
-                sql=excluded.sql
+                sql=excluded.sql,
+                bytea_modes_json=excluded.bytea_modes_json
             "#,
         )
         .bind(&s.id)
         .bind(&s.connection_id)
         .bind(&s.name)
         .bind(&s.sql)
+        .bind(&s.bytea_modes_json)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn update_snippet_bytea_modes(
+        &self,
+        id: &str,
+        bytea_modes_json: Option<&str>,
+    ) -> AppResult<()> {
+        sqlx::query("UPDATE snippets SET bytea_modes_json = ?1 WHERE id = ?2")
+            .bind(bytea_modes_json)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -748,6 +769,8 @@ pub struct Snippet {
     pub sql: String,
     #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
+    pub bytea_modes_json: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1142,6 +1165,7 @@ mod tests {
             name: "All users".into(),
             sql: "SELECT * FROM users".into(),
             created_at: String::new(),
+            bytea_modes_json: None,
         };
         s.upsert_snippet(&snip).await.unwrap();
 
@@ -1201,6 +1225,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snippet_bytea_modes_round_trip_and_partial_update() {
+        let (_d, s) = fresh_storage().await;
+        let snip = Snippet {
+            id: "s2".into(),
+            connection_id: Some("c1".into()),
+            name: "with modes".into(),
+            sql: "SELECT id FROM t".into(),
+            created_at: String::new(),
+            bytea_modes_json: Some(r#"{"id":"ulid"}"#.into()),
+        };
+        s.upsert_snippet(&snip).await.unwrap();
+        let loaded = s.list_snippets(Some("c1")).await.unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(
+            loaded[0].bytea_modes_json.as_deref(),
+            Some(r#"{"id":"ulid"}"#)
+        );
+
+        // update_snippet_bytea_modes must not touch name/sql.
+        s.update_snippet_bytea_modes("s2", Some(r#"{"id":"uuid"}"#))
+            .await
+            .unwrap();
+        let after = s.list_snippets(Some("c1")).await.unwrap();
+        assert_eq!(
+            after[0].bytea_modes_json.as_deref(),
+            Some(r#"{"id":"uuid"}"#)
+        );
+        assert_eq!(after[0].name, "with modes");
+        assert_eq!(after[0].sql, "SELECT id FROM t");
+
+        // Clearing modes via None is supported.
+        s.update_snippet_bytea_modes("s2", None).await.unwrap();
+        let cleared = s.list_snippets(Some("c1")).await.unwrap();
+        assert!(cleared[0].bytea_modes_json.is_none());
+    }
+
+    #[tokio::test]
     async fn global_snippets_are_visible_to_any_connection() {
         let (_d, s) = fresh_storage().await;
         let global = Snippet {
@@ -1209,6 +1270,7 @@ mod tests {
             name: "Global".into(),
             sql: "SELECT 1".into(),
             created_at: String::new(),
+            bytea_modes_json: None,
         };
         s.upsert_snippet(&global).await.unwrap();
         // Visible whether you ask scoped or unscoped — that's the contract.

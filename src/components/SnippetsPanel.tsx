@@ -3,10 +3,30 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { ByteaDisplayMode } from "@/lib/bytea";
 import { ipc, type Snippet } from "../ipc";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
 import { ConfirmDialog } from "./ConfirmDialog";
+
+const VALID_MODES: ReadonlySet<ByteaDisplayMode> = new Set(["hex", "ulid", "uuid"]);
+
+function parseByteaModesJson(raw: string | null): Record<string, ByteaDisplayMode> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, ByteaDisplayMode> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string" && VALID_MODES.has(v as ByteaDisplayMode)) {
+        out[k] = v as ByteaDisplayMode;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 export function SnippetsPanel() {
   const activeId = useConnections((s) => s.activeId);
@@ -38,19 +58,25 @@ export function SnippetsPanel() {
 
   async function saveCurrent() {
     if (!activeTab || !saveName.trim()) return;
+    const modes = activeTab.byteaModes;
+    const hasModes = Object.keys(modes).length > 0;
     await ipc.saveSnippet({
       name: saveName.trim(),
       sql: activeTab.sql,
       connection_id: saveScope === "connection" ? activeId : null,
+      bytea_modes_json: hasModes ? JSON.stringify(modes) : null,
     });
     setSaveName("");
     setSaveOpen(false);
     await refresh();
   }
 
-  function openInNewTab(sql: string, name: string) {
+  function openInNewTab(snippet: Snippet) {
     if (!activeId) return;
-    newQueryTab(activeId, sql, name);
+    newQueryTab(activeId, snippet.sql, snippet.name, {
+      byteaModes: parseByteaModesJson(snippet.bytea_modes_json),
+      snippetId: snippet.id,
+    });
   }
 
   return (
@@ -144,7 +170,7 @@ export function SnippetsPanel() {
           return (
             <div
               key={s.id}
-              onDoubleClick={() => openInNewTab(s.sql, s.name)}
+              onDoubleClick={() => openInNewTab(s)}
               title="Double-click to open in a new query tab"
               className="cursor-pointer rounded border border-border/40 bg-card/50 p-2 hover:bg-sidebar-accent"
             >
