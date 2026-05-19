@@ -38,7 +38,7 @@ export function ColumnResizeHandle({ onPointerDown, onDoubleClick, className }: 
         zIndex: 30,
       }}
       className={cn(
-        "border-r-2 border-border/40 transition-colors hover:border-primary active:border-primary",
+        "border-r border-border/40 transition-colors hover:border-primary active:border-primary",
         className,
       )}
     />

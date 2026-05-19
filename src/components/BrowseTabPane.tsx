@@ -791,7 +791,7 @@ function BrowseGrid({
                 const th = (
                   <th
                     key={c.name}
-                    className="cursor-pointer overflow-hidden whitespace-nowrap border-b border-r border-border p-0 text-left hover:bg-muted-foreground/10"
+                    className="cursor-pointer overflow-hidden whitespace-nowrap border-b border-border p-0 text-left hover:bg-muted-foreground/10"
                     onClick={() => onSort(c.name)}
                   >
                     <div style={{ position: "relative" }} className="px-3 py-1.5">
@@ -877,15 +877,18 @@ function BrowseGrid({
             <tr>
               <th className="border-b border-r border-border px-1 py-1"></th>
               <th className="border-b border-r border-border px-1 py-1"></th>
-              {cols.map((c) => (
-                <th
-                  key={c.name}
-                  className="overflow-hidden border-b border-r border-border px-1 py-1"
-                >
-                  <FilterCell
-                    filter={tab.filters[c.name] ?? null}
-                    onCommit={(f) => onFilter(c.name, f)}
-                  />
+              {cols.map((c, colIdx) => (
+                <th key={c.name} className="overflow-hidden border-b border-border p-0">
+                  <div style={{ position: "relative" }} className="px-1 py-1">
+                    <FilterCell
+                      filter={tab.filters[c.name] ?? null}
+                      onCommit={(f) => onFilter(c.name, f)}
+                    />
+                    <ColumnResizeHandle
+                      onPointerDown={(e) => startResize(colIdx, e)}
+                      onDoubleClick={() => resetWidth(colIdx)}
+                    />
+                  </div>
                 </th>
               ))}
             </tr>
