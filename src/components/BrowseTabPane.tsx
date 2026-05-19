@@ -862,11 +862,9 @@ function BrowseGrid({
               <th className="border-b border-r border-border px-1 py-1"></th>
               {cols.map((c) => (
                 <th key={c.name} className="border-b border-r border-border px-1 py-1">
-                  <Input
+                  <FilterInput
                     value={tab.filters[c.name] ?? ""}
-                    onChange={(e) => onFilter(c.name, e.target.value)}
-                    placeholder="filter…"
-                    className="h-6 px-1.5 text-[11px]"
+                    onCommit={(v) => onFilter(c.name, v)}
                   />
                 </th>
               ))}
@@ -1243,4 +1241,27 @@ function castPlaceholder(placeholder: string, typeName: string | undefined, kind
     return placeholder;
   }
   return `${placeholder}::${typeName.toLowerCase()}`;
+}
+
+function FilterInput({ value, onCommit }: { value: string; onCommit: (v: string) => void }) {
+  const [local, setLocal] = useState(value);
+
+  useEffect(() => {
+    setLocal(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (local === value) return;
+    const t = setTimeout(() => onCommit(local), 300);
+    return () => clearTimeout(t);
+  }, [local, value, onCommit]);
+
+  return (
+    <Input
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      placeholder="filter…"
+      className="h-6 px-1.5 text-[11px]"
+    />
+  );
 }
