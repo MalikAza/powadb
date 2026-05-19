@@ -294,6 +294,24 @@ export type DiagTable = {
   schema: string;
   name: string;
   columns: DiagColumn[];
+  indexes: DiagIndex[];
+};
+
+export type DiagIndex = {
+  name: string;
+  is_unique: boolean;
+  is_primary: boolean;
+  columns: string[];
+  method: string | null;
+};
+
+export type DiagSequence = {
+  schema: string;
+  name: string;
+  data_type: string;
+  owned_by_schema: string | null;
+  owned_by_table: string | null;
+  owned_by_column: string | null;
 };
 
 export type DiagFk = {
@@ -312,6 +330,7 @@ export type DiagFk = {
 export type DiagramIntrospection = {
   tables: DiagTable[];
   foreign_keys: DiagFk[];
+  sequences: DiagSequence[];
 };
 
 export type SavedDiagram = {

@@ -901,6 +901,7 @@ mod tests {
             schema: schema.into(),
             name: name.into(),
             columns: cols,
+            indexes: Vec::new(),
         }
     }
 
@@ -936,6 +937,7 @@ mod tests {
         let live = DiagramIntrospection {
             tables: vec![],
             foreign_keys: vec![],
+            sequences: vec![],
         };
         let ops = compute_diff(&doc, &live);
         assert_eq!(ops.len(), 1);
@@ -951,6 +953,7 @@ mod tests {
         let live = DiagramIntrospection {
             tables: vec![live_table("public", "users", vec![pk_col("id")])],
             foreign_keys: vec![],
+            sequences: vec![],
         };
         let ops = compute_diff(&doc, &live);
         assert_eq!(ops.len(), 1);
@@ -971,6 +974,7 @@ mod tests {
         let live = DiagramIntrospection {
             tables: vec![live_table("public", "users", vec![pk_col("id")])],
             foreign_keys: vec![],
+            sequences: vec![],
         };
         let ops = compute_diff(&doc, &live);
         assert_eq!(ops.len(), 1, "got {ops:?}");
@@ -1021,6 +1025,7 @@ mod tests {
                 ],
             )],
             foreign_keys: vec![],
+            sequences: vec![],
         };
         let ops = compute_diff(&doc, &live);
         let kinds: Vec<&'static str> = ops
@@ -1096,6 +1101,7 @@ mod tests {
                 on_update: None,
                 on_delete: None,
             }],
+            sequences: vec![],
         };
         let ops = compute_diff(&doc, &live);
         // The doc's FK has CASCADE on delete; the live FK has no on_delete.

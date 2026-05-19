@@ -25,6 +25,27 @@ pub struct DiagTable {
     pub schema: String,
     pub name: String,
     pub columns: Vec<DiagColumn>,
+    #[serde(default)]
+    pub indexes: Vec<DiagIndex>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DiagIndex {
+    pub name: String,
+    pub is_unique: bool,
+    pub is_primary: bool,
+    pub columns: Vec<String>,
+    pub method: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct DiagSequence {
+    pub schema: String,
+    pub name: String,
+    pub data_type: String,
+    pub owned_by_schema: Option<String>,
+    pub owned_by_table: Option<String>,
+    pub owned_by_column: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -45,6 +66,8 @@ pub struct DiagFk {
 pub struct DiagramIntrospection {
     pub tables: Vec<DiagTable>,
     pub foreign_keys: Vec<DiagFk>,
+    #[serde(default)]
+    pub sequences: Vec<DiagSequence>,
 }
 
 #[tauri::command]
@@ -197,9 +220,112 @@ pub(crate) async fn introspect_postgres(
         }
     }
 
+    // Indexes. `pg_index.indkey` is an int2vector of attnums in index column
+    // order; we expand it through `generate_subscripts` to preserve order.
+    let idx_sql = r#"
+        SELECT
+            n.nspname::text                                       AS schema_name,
+            t.relname::text                                       AS table_name,
+            i.relname::text                                       AS index_name,
+            ix.indisunique                                        AS is_unique,
+            ix.indisprimary                                       AS is_primary,
+            am.amname::text                                       AS method,
+            ARRAY(
+                SELECT a.attname
+                FROM generate_subscripts(ix.indkey, 1) AS s
+                JOIN pg_attribute a
+                  ON a.attrelid = t.oid AND a.attnum = ix.indkey[s]
+                ORDER BY s
+            )::text[]                                             AS columns
+        FROM pg_index ix
+        JOIN pg_class i        ON i.oid = ix.indexrelid
+        JOIN pg_class t        ON t.oid = ix.indrelid
+        JOIN pg_namespace n    ON n.oid = t.relnamespace
+        JOIN pg_am am          ON am.oid = i.relam
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+          AND t.relkind = 'r'
+          AND ($1::text IS NULL OR n.nspname = $1::text)
+        ORDER BY n.nspname, t.relname, i.relname
+    "#;
+    let idx_rows = sqlx::query(idx_sql)
+        .bind(schema_filter)
+        .fetch_all(pool)
+        .await?;
+    for r in idx_rows {
+        let schema: String = r.try_get("schema_name").unwrap_or_default();
+        let table: String = r.try_get("table_name").unwrap_or_default();
+        let columns: Vec<String> = r.try_get("columns").unwrap_or_default();
+        let idx = DiagIndex {
+            name: r.try_get("index_name").unwrap_or_default(),
+            is_unique: r.try_get("is_unique").unwrap_or(false),
+            is_primary: r.try_get("is_primary").unwrap_or(false),
+            columns,
+            method: r.try_get("method").ok(),
+        };
+        if let Some(t) = tables
+            .iter_mut()
+            .find(|t| t.schema == schema && t.name == table)
+        {
+            t.indexes.push(idx);
+        }
+    }
+
+    // Sequences. `pg_depend.deptype = 'a'` marks the auto-generated dependency
+    // a serial/identity column creates between a sequence and its owning
+    // column — that's how we attribute schema-level sequences to a table.
+    let seq_sql = r#"
+        SELECT
+            s.sequence_schema::text                AS schema_name,
+            s.sequence_name::text                  AS name,
+            s.data_type::text                      AS data_type,
+            dep.refobjschema                       AS owned_schema,
+            dep.refobjtable                        AS owned_table,
+            dep.refobjcolumn                       AS owned_column
+        FROM information_schema.sequences s
+        LEFT JOIN LATERAL (
+            SELECT
+                n2.nspname::text AS refobjschema,
+                c2.relname::text AS refobjtable,
+                a.attname::text  AS refobjcolumn
+            FROM pg_class c
+            JOIN pg_namespace n  ON n.oid = c.relnamespace
+            JOIN pg_depend d
+              ON d.objid = c.oid
+             AND d.classid = 'pg_class'::regclass
+             AND d.deptype = 'a'
+            JOIN pg_class c2     ON c2.oid = d.refobjid
+            JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
+            JOIN pg_attribute a
+              ON a.attrelid = c2.oid
+             AND a.attnum   = d.refobjsubid
+            WHERE n.nspname = s.sequence_schema
+              AND c.relname = s.sequence_name
+            LIMIT 1
+        ) dep ON true
+        WHERE s.sequence_schema NOT IN ('pg_catalog', 'information_schema')
+          AND ($1::text IS NULL OR s.sequence_schema = $1::text)
+        ORDER BY s.sequence_schema, s.sequence_name
+    "#;
+    let seq_rows = sqlx::query(seq_sql)
+        .bind(schema_filter)
+        .fetch_all(pool)
+        .await?;
+    let sequences: Vec<DiagSequence> = seq_rows
+        .iter()
+        .map(|r| DiagSequence {
+            schema: r.try_get("schema_name").unwrap_or_default(),
+            name: r.try_get("name").unwrap_or_default(),
+            data_type: r.try_get("data_type").unwrap_or_default(),
+            owned_by_schema: r.try_get("owned_schema").ok(),
+            owned_by_table: r.try_get("owned_table").ok(),
+            owned_by_column: r.try_get("owned_column").ok(),
+        })
+        .collect();
+
     Ok(DiagramIntrospection {
         tables,
         foreign_keys,
+        sequences,
     })
 }
 
@@ -306,9 +432,59 @@ pub(crate) async fn introspect_mysql(pool: &sqlx::MySqlPool) -> AppResult<Diagra
         }
     }
 
+    // Indexes via information_schema.statistics. Each index row appears once
+    // per column, ordered by seq_in_index — we group as we read.
+    let idx_sql = r#"
+        SELECT
+            CAST(table_schema AS CHAR) AS schema_name,
+            CAST(table_name   AS CHAR) AS table_name,
+            CAST(index_name   AS CHAR) AS index_name,
+            CAST(index_type   AS CHAR) AS method,
+            CAST(column_name  AS CHAR) AS column_name,
+            (non_unique = 0)            AS is_unique,
+            (index_name = 'PRIMARY')    AS is_primary,
+            seq_in_index                AS seq
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+        ORDER BY table_schema, table_name, index_name, seq_in_index
+    "#;
+    let idx_rows = sqlx::query(idx_sql).fetch_all(pool).await?;
+    for r in idx_rows {
+        let schema: String = r.try_get("schema_name").unwrap_or_default();
+        let table_name: String = r.try_get("table_name").unwrap_or_default();
+        let index_name: String = r.try_get("index_name").unwrap_or_default();
+        let column_name: String = r.try_get("column_name").unwrap_or_default();
+        let is_unique = r
+            .try_get::<i64, _>("is_unique")
+            .map(|x| x != 0)
+            .unwrap_or(false);
+        let is_primary = r
+            .try_get::<i64, _>("is_primary")
+            .map(|x| x != 0)
+            .unwrap_or(false);
+        let method: Option<String> = r.try_get("method").ok();
+
+        if let Some(t) = tables
+            .iter_mut()
+            .find(|t| t.schema == schema && t.name == table_name)
+        {
+            match t.indexes.iter_mut().find(|i| i.name == index_name) {
+                Some(idx) => idx.columns.push(column_name),
+                None => t.indexes.push(DiagIndex {
+                    name: index_name,
+                    is_unique,
+                    is_primary,
+                    columns: vec![column_name],
+                    method,
+                }),
+            }
+        }
+    }
+
     Ok(DiagramIntrospection {
         tables,
         foreign_keys,
+        sequences: Vec::new(),
     })
 }
 
@@ -337,6 +513,7 @@ pub(crate) async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<Diag
             schema: "main".into(),
             name: name.clone(),
             columns: Vec::new(),
+            indexes: Vec::new(),
         };
         for c in cols {
             let cid: i64 = c.try_get("cid").unwrap_or(0);
@@ -357,6 +534,31 @@ pub(crate) async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<Diag
                 numeric_scale: None,
             });
         }
+        // PRAGMA index_list: seq, name, unique, origin, partial
+        // origin = 'pk' for primary-key auto indexes, 'u' for UNIQUE constraint,
+        // 'c' for explicit CREATE INDEX. We surface all of them.
+        let ilist_sql = format!("PRAGMA index_list(\"{}\")", safe);
+        let ilist = sqlx::query(&ilist_sql).fetch_all(pool).await?;
+        for ir in ilist {
+            let iname: String = ir.try_get("name").unwrap_or_default();
+            let uniq: i64 = ir.try_get("unique").unwrap_or(0);
+            let origin: String = ir.try_get("origin").unwrap_or_default();
+            let safe_idx = iname.replace('"', "\"\"");
+            let info_sql = format!("PRAGMA index_info(\"{}\")", safe_idx);
+            let icols = sqlx::query(&info_sql).fetch_all(pool).await?;
+            let columns: Vec<String> = icols
+                .iter()
+                .map(|c| c.try_get::<String, _>("name").unwrap_or_default())
+                .collect();
+            table.indexes.push(DiagIndex {
+                name: iname,
+                is_unique: uniq != 0,
+                is_primary: origin == "pk",
+                columns,
+                method: None,
+            });
+        }
+
         tables.push(table);
 
         // PRAGMA foreign_key_list: id, seq, table, from, to, on_update, on_delete, match
@@ -394,6 +596,7 @@ pub(crate) async fn introspect_sqlite(pool: &sqlx::SqlitePool) -> AppResult<Diag
     Ok(DiagramIntrospection {
         tables,
         foreign_keys,
+        sequences: Vec::new(),
     })
 }
 
@@ -627,6 +830,7 @@ fn upsert_table<'a>(tables: &'a mut Vec<DiagTable>, schema: &str, name: &str) ->
         schema: schema.to_string(),
         name: name.to_string(),
         columns: Vec::new(),
+        indexes: Vec::new(),
     });
     tables.last_mut().unwrap()
 }

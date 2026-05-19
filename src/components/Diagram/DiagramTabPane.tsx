@@ -40,7 +40,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ipc, type SavedDiagram } from "@/ipc";
+import {
+  type DiagIndex,
+  type DiagramIntrospection,
+  type DiagSequence,
+  ipc,
+  type SavedDiagram,
+} from "@/ipc";
 import type { NewTableFormValues } from "@/lib/schemas";
 import type { SavedConnection } from "@/types";
 import type { DiagramTab } from "../../stores/tabs";
@@ -74,14 +80,35 @@ const nodeTypes: NodeTypes = { table: TableNode };
 
 function docToNodes(
   doc: DiagramDoc,
+  intro: DiagramIntrospection | null,
   onEditTable: (id: string) => void,
   onDeleteTable: (id: string) => void,
 ): Node[] {
+  const indexesByTable = new Map<string, DiagIndex[]>();
+  const sequencesByTable = new Map<string, DiagSequence[]>();
+  if (intro) {
+    for (const t of intro.tables) {
+      indexesByTable.set(`${t.schema}.${t.name}`, t.indexes ?? []);
+    }
+    for (const s of intro.sequences ?? []) {
+      if (!s.owned_by_schema || !s.owned_by_table) continue;
+      const key = `${s.owned_by_schema}.${s.owned_by_table}`;
+      const arr = sequencesByTable.get(key) ?? [];
+      arr.push(s);
+      sequencesByTable.set(key, arr);
+    }
+  }
   return doc.tables.map((t) => ({
     id: t.id,
     type: "table",
     position: t.position,
-    data: { table: t, onEdit: onEditTable, onDelete: onDeleteTable },
+    data: {
+      table: t,
+      indexes: indexesByTable.get(t.id) ?? [],
+      sequences: sequencesByTable.get(t.id) ?? [],
+      onEdit: onEditTable,
+      onDelete: onDeleteTable,
+    },
   }));
 }
 
@@ -168,9 +195,9 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
 
   useEffect(() => {
     if (!doc) return;
-    setNodes(docToNodes(doc, openEditTable, askDeleteTable));
+    setNodes(docToNodes(doc, tab.introspection, openEditTable, askDeleteTable));
     setEdges(docToEdges(doc));
-  }, [structuralKey, doc, openEditTable, askDeleteTable, setNodes, setEdges]);
+  }, [structuralKey, doc, tab.introspection, openEditTable, askDeleteTable, setNodes, setEdges]);
 
   const onNodeDragStop: NodeMouseHandler = useCallback((_e, node) => {
     setDoc((cur) => (cur ? updateTablePosition(cur, node.id, node.position) : cur));
