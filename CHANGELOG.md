@@ -1,3 +1,8 @@
+## [0.8.2] - 2026-05-19
+
+### Fixed
+- Fix `INTERVAL` type handling on PostregSQL
+
 ## [0.8.1] - 2026-05-18
 
 ### Added
