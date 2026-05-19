@@ -48,7 +48,7 @@ type State = {
 };
 
 type Actions = {
-  newQueryTab: (connectionId: string, sql?: string) => string;
+  newQueryTab: (connectionId: string, sql?: string, title?: string) => string;
   openBrowseTab: (
     connectionId: string,
     schema: string,
@@ -68,13 +68,13 @@ export const useTabs = create<State & Actions>((set, get) => ({
   tabs: [],
   activeTabId: null,
 
-  newQueryTab(connectionId, sql = defaultSql) {
+  newQueryTab(connectionId, sql = defaultSql, title = "Query") {
     const id = newId("tab");
     const tab: QueryTab = {
       id,
       kind: "query",
       connectionId,
-      title: "Query",
+      title,
       sql,
       result: null,
       error: null,

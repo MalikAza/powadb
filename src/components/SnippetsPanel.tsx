@@ -48,9 +48,9 @@ export function SnippetsPanel() {
     await refresh();
   }
 
-  function openInNewTab(sql: string) {
+  function openInNewTab(sql: string, name: string) {
     if (!activeId) return;
-    newQueryTab(activeId, sql);
+    newQueryTab(activeId, sql, name);
   }
 
   return (
@@ -144,7 +144,7 @@ export function SnippetsPanel() {
           return (
             <div
               key={s.id}
-              onDoubleClick={() => openInNewTab(s.sql)}
+              onDoubleClick={() => openInNewTab(s.sql, s.name)}
               title="Double-click to open in a new query tab"
               className="cursor-pointer rounded border border-border/40 bg-card/50 p-2 hover:bg-sidebar-accent"
             >
