@@ -1,9 +1,22 @@
 import Point from "ol/geom/Point";
+import type OlMap from "ol/Map";
 import type MapBrowserEvent from "ol/MapBrowserEvent";
 import { toLonLat } from "ol/proj";
 import { useEffect, useRef, useState } from "react";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { useMapContext } from "./map-context";
+
+// Subscribes to OL's `singleclick` and returns the matching unsubscribe. The
+// cast hides OL's overloaded per-event listener typings from TS's literal-
+// string overload selection; the runtime contract is symmetric.
+function subscribeSingleClick(
+  map: OlMap,
+  handler: (e: MapBrowserEvent<PointerEvent>) => void,
+): () => void {
+  const listener = handler as unknown as Parameters<typeof map.on>[1];
+  map.on("singleclick", listener);
+  return () => map.un("singleclick", listener);
+}
 
 type RowDataEntry = [columnName: string, value: unknown];
 
@@ -52,7 +65,7 @@ export function FeatureClickPopup() {
   const anchorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const onClick = (e: MapBrowserEvent<PointerEvent>) => {
+    return subscribeSingleClick(map, (e) => {
       let found: Hit | null = null;
       map.forEachFeatureAtPixel(
         e.pixel,
@@ -85,14 +98,7 @@ export function FeatureClickPopup() {
         { hitTolerance: 4 },
       );
       setHit(found);
-    };
-    // Cast required: OL's per-event listener typings are stricter than the
-    // generic Map.on() overload TypeScript picks up for a string literal.
-    const handler = onClick as unknown as Parameters<typeof map.on>[1];
-    map.on("singleclick", handler);
-    return () => {
-      map.un("singleclick", handler);
-    };
+    });
   }, [map]);
 
   const hasHeader = hit !== null && (hit.columnName !== null || hit.rowIndex !== null);

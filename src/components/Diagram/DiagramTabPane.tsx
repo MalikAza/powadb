@@ -246,10 +246,9 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   const setApplyOpen = (v: boolean) => setModals((prev) => ({ ...prev, apply: v }));
   const setImportOpen = (v: boolean) => setModals((prev) => ({ ...prev, import: v }));
 
-  const [mode, setMode] = useState<"modeler" | "live">(tab.mode);
-  // Captured by useCallback handlers (which we memoise with empty deps so they
-  // don't churn React Flow's listeners). Reading via ref keeps the handlers
-  // tracking the latest mode without re-binding.
+  // Mode lives on the tab record (single source of truth); callbacks read it
+  // via a ref so React Flow listeners don't churn on each mode change.
+  const mode = tab.mode;
   const modeRef = useRef(mode);
   useEffect(() => {
     modeRef.current = mode;
@@ -411,7 +410,6 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
     patchTab(tab.id, { diagramId: null, title: "Imported" });
   };
   const onSwitchMode = (next: "modeler" | "live") => {
-    setMode(next);
     patchTab(tab.id, { mode: next });
   };
   const onAddTable = () => setTableDialog({ open: true, editing: null });

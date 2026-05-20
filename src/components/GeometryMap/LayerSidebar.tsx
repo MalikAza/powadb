@@ -1,7 +1,7 @@
 import { ChevronDown, Eye, EyeOff } from "lucide-react";
 import type BaseLayer from "ol/layer/Base";
 import VectorLayer from "ol/layer/Vector";
-import { useEffect, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils";
 import { useMapContext } from "./map-context";
 
@@ -40,7 +40,9 @@ function LayerGroup({
   defaultOpen: boolean;
   emptyLabel?: string;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  // Initial value only — the user toggles `open` after mount, so we cannot
+  // derive from `defaultOpen` during render.
+  const [open, setOpen] = useState(() => defaultOpen);
 
   return (
     <div>
@@ -68,33 +70,32 @@ function LayerGroup({
 }
 
 function LayerControl({ layer }: { layer: BaseLayer }) {
-  const [visible, setVisible] = useState(() => layer.getVisible());
-  const [opacity, setOpacity] = useState(() => Math.round(layer.getOpacity() * 100));
+  const subscribeVisible = useCallback(
+    (cb: () => void) => {
+      layer.on("change:visible", cb);
+      return () => layer.un("change:visible", cb);
+    },
+    [layer],
+  );
+  const subscribeOpacity = useCallback(
+    (cb: () => void) => {
+      layer.on("change:opacity", cb);
+      return () => layer.un("change:opacity", cb);
+    },
+    [layer],
+  );
+  const visible = useSyncExternalStore(subscribeVisible, () => layer.getVisible());
+  const opacityRaw = useSyncExternalStore(subscribeOpacity, () => layer.getOpacity());
+  const opacity = Math.round(opacityRaw * 100);
   const [expanded, setExpanded] = useState(false);
-
-  // Keep local state in sync if the layer mutates externally.
-  useEffect(() => {
-    const onVis = () => setVisible(layer.getVisible());
-    const onOpa = () => setOpacity(Math.round(layer.getOpacity() * 100));
-    layer.on("change:visible", onVis);
-    layer.on("change:opacity", onOpa);
-    return () => {
-      layer.un("change:visible", onVis);
-      layer.un("change:opacity", onOpa);
-    };
-  }, [layer]);
 
   const toggleVisible = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const next = !visible;
-    layer.setVisible(next);
-    setVisible(next);
+    layer.setVisible(!visible);
   };
 
   const onOpacityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const pct = Number(e.target.value);
-    layer.setOpacity(pct / 100);
-    setOpacity(pct);
+    layer.setOpacity(Number(e.target.value) / 100);
   };
 
   return (

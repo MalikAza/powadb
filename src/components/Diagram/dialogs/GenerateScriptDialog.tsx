@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { Check, Copy, FileText, Loader2 } from "lucide-react";
 import { useEffect, useReducer, useState } from "react";
 import { toast } from "sonner";
-import { cmAppTheme, cmHighlightStyle } from "@/components/Editor/editorTheme";
+import { type EditorThemeBundle, loadEditorTheme } from "@/components/Editor/editorTheme";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -51,6 +51,11 @@ export function GenerateScriptDialog({
   const { script, error } = fetchState;
   const loading = fetchState.status === "loading";
   const [copied, setCopied] = useState(false);
+  const [theme, setTheme] = useState<EditorThemeBundle | null>(null);
+
+  useEffect(() => {
+    loadEditorTheme().then(setTheme);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -90,7 +95,7 @@ export function GenerateScriptDialog({
               <CodeMirror
                 value={script}
                 height="100%"
-                extensions={[sql(), cmAppTheme, cmHighlightStyle]}
+                extensions={theme ? [sql(), theme.cmAppTheme, theme.cmHighlightStyle] : [sql()]}
                 editable={false}
                 basicSetup={{
                   lineNumbers: true,

@@ -196,10 +196,11 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
   const parser = new Parser();
   const stmts = statementsFromText(text);
   const tables: DiagramTable[] = [];
+  const tablesByName = new Map<string, DiagramTable>();
   const edges: DiagramEdge[] = [];
 
   function tableByName(name: string): DiagramTable | undefined {
-    return tables.find((t) => t.name === name);
+    return tablesByName.get(name);
   }
 
   // Buffers populated during table parsing; resolved against the table list at
@@ -288,12 +289,12 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       // Top-level constraint (PRIMARY KEY (cols), FOREIGN KEY (cols) REFERENCES …, etc.)
       if (def.resource === "constraint") {
         const ct = (def.constraint_type ?? "").toLowerCase();
-        if (ct.includes("primary")) {
+        if (ct === "primary key") {
           for (const c of (def.definition as SqlColRef[]) ?? []) {
             const n = colName(c);
             if (n) pkCols.push(n);
           }
-        } else if (ct.includes("foreign")) {
+        } else if (ct === "foreign key") {
           const ref = def.reference_definition;
           const srcCols = collectNonEmpty(def.definition as SqlColRef[] | undefined, colName);
           const tgtTable = ref?.table?.[0]?.table ?? "";
@@ -386,14 +387,16 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       if (c) c.isPk = true;
     }
 
-    tables.push({
+    const table: DiagramTable = {
       id,
       schema,
       name: tableName,
       originalName: tableName,
       columns: cols,
       position: { x: 0, y: 0 },
-    });
+    };
+    tables.push(table);
+    tablesByName.set(tableName, table);
   }
 
   function handleAlter(s: SqlAlterStmt) {
@@ -410,7 +413,7 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       const def = op.create_definitions;
       if (!def) continue;
       const ct = (def.constraint_type ?? "").toLowerCase();
-      if (!ct.includes("foreign")) {
+      if (ct !== "foreign key") {
         warnings.push(`Unsupported constraint type on ${tableName}: ${def.constraint_type}`);
         continue;
       }
@@ -471,8 +474,8 @@ function fkRulesFrom(on_action: SqlRefDef["on_action"]): {
     const t = (a.type ?? "").toLowerCase();
     const v = a.value?.value ?? null;
     if (!v) continue;
-    if (t.includes("update")) onUpdate = v.toUpperCase();
-    else if (t.includes("delete")) onDelete = v.toUpperCase();
+    if (t === "on update") onUpdate = v.toUpperCase();
+    else if (t === "on delete") onDelete = v.toUpperCase();
   }
   return { onUpdate, onDelete };
 }

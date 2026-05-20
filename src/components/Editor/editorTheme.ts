@@ -1,7 +1,9 @@
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-import type { Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
+
+// The @codemirror/view package is shipped as a separate chunk via the
+// dynamic `import()` below, so consumers awaiting `loadEditorTheme()` only
+// pull CodeMirror's view layer on first use.
 
 const selectionBg = "color-mix(in oklch, var(--primary) 30%, transparent)";
 const searchMatchBg = "color-mix(in oklch, var(--primary) 25%, transparent)";
@@ -9,7 +11,7 @@ const searchMatchSelectedBg = "color-mix(in oklch, var(--primary) 50%, transpare
 const selectionMatchBg = "color-mix(in oklch, var(--ring) 20%, transparent)";
 const stringColor = "color-mix(in oklch, var(--primary) 45%, var(--foreground))";
 
-export const cmAppTheme: Extension = EditorView.theme({
+const themeSpec = {
   "&": {
     backgroundColor: "var(--background)",
     color: "var(--foreground)",
@@ -138,7 +140,7 @@ export const cmAppTheme: Extension = EditorView.theme({
     minWidth: "2.5em",
     padding: "0 6px 0 4px",
   },
-});
+};
 
 const highlightStyle = HighlightStyle.define([
   {
@@ -160,4 +162,22 @@ const highlightStyle = HighlightStyle.define([
   { tag: t.invalid, color: "var(--destructive)" },
 ]);
 
-export const cmHighlightStyle: Extension = syntaxHighlighting(highlightStyle);
+const cmHighlightStyle = syntaxHighlighting(highlightStyle);
+
+export type EditorThemeBundle = {
+  cmAppTheme: import("@codemirror/state").Extension;
+  cmHighlightStyle: import("@codemirror/state").Extension;
+};
+
+let cached: EditorThemeBundle | null = null;
+
+export function loadEditorTheme(): Promise<EditorThemeBundle> {
+  if (cached) return Promise.resolve(cached);
+  return import("@codemirror/view").then((m) => {
+    cached = {
+      cmAppTheme: m.EditorView.theme(themeSpec),
+      cmHighlightStyle,
+    };
+    return cached;
+  });
+}
