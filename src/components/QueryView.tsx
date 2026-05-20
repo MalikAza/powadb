@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { onActivateKey } from "@/lib/a11y";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
@@ -20,11 +21,6 @@ const BrowseTabPane = lazy(() =>
 const DiagramTabPane = lazy(() =>
   import("./Diagram/DiagramTabPane").then((m) => ({ default: m.DiagramTabPane })),
 );
-
-const STARTER_SQL: Record<string, string> = {
-  postgres: "SELECT 1 AS one, 'hello' AS greeting, now() AS ts;",
-  mysql: "SELECT 1 AS one, 'hello' AS greeting, NOW() AS ts;",
-};
 
 export function QueryView() {
   const { connections, activeId } = useConnections();
@@ -59,8 +55,8 @@ export function QueryView() {
 
   useEffect(() => {
     const unlistenQuery = listen("new-tab", () => {
-      if (!activeId || !conn) return;
-      newQueryTab(activeId, STARTER_SQL[conn.kind]);
+      if (!activeId) return;
+      newQueryTab(activeId);
     });
     const unlistenDiagram = listen("new-diagram-tab", () => {
       if (!activeId) return;
@@ -70,7 +66,7 @@ export function QueryView() {
       unlistenQuery.then((fn) => fn());
       unlistenDiagram.then((fn) => fn());
     };
-  }, [activeId, conn, newQueryTab, openDiagramTab]);
+  }, [activeId, newQueryTab, openDiagramTab]);
 
   if (!activeId || !conn) {
     return (
@@ -85,7 +81,7 @@ export function QueryView() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
         <p>No tab open.</p>
-        <Button onClick={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}>
+        <Button onClick={() => newQueryTab(activeId)}>
           <Plus className="size-4" /> New query tab
         </Button>
       </div>
@@ -99,7 +95,7 @@ export function QueryView() {
         activeId={activeTab.id}
         onSelect={(id) => setActiveTab(id)}
         onClose={(id) => closeTab(id)}
-        onNewQuery={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}
+        onNewQuery={() => newQueryTab(activeId)}
         onNewDiagram={() => openDiagramTab(activeId)}
       />
       {activeTab.kind === "browse" ? (
@@ -144,7 +140,11 @@ function TabBar({
         {tabs.map((t) => (
           <div
             key={t.id}
+            role="tab"
+            tabIndex={0}
+            aria-selected={t.id === activeId}
             onClick={() => onSelect(t.id)}
+            onKeyDown={onActivateKey(() => onSelect(t.id))}
             className={cn(
               "group flex h-7 max-w-50 shrink-0 cursor-pointer items-center gap-1 rounded-md px-3 text-xs",
               t.id === activeId

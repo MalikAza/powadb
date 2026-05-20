@@ -13,6 +13,8 @@ pub struct SnippetInput {
     pub connection_id: Option<String>,
     pub name: String,
     pub sql: String,
+    #[serde(default)]
+    pub bytea_modes_json: Option<String>,
 }
 
 #[tauri::command]
@@ -31,6 +33,7 @@ pub async fn save_snippet(state: State<'_, AppState>, input: SnippetInput) -> Ap
         name: input.name,
         sql: input.sql,
         created_at: String::new(),
+        bytea_modes_json: input.bytea_modes_json,
     };
     state.storage.upsert_snippet(&s).await?;
     Ok(s)
@@ -39,4 +42,16 @@ pub async fn save_snippet(state: State<'_, AppState>, input: SnippetInput) -> Ap
 #[tauri::command]
 pub async fn delete_snippet(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.storage.delete_snippet(&id).await
+}
+
+#[tauri::command]
+pub async fn update_snippet_bytea_modes(
+    state: State<'_, AppState>,
+    id: String,
+    bytea_modes_json: Option<String>,
+) -> AppResult<()> {
+    state
+        .storage
+        .update_snippet_bytea_modes(&id, bytea_modes_json.as_deref())
+        .await
 }

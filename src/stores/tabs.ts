@@ -1,6 +1,8 @@
 import { create } from "zustand";
-import type { DiagramIntrospection } from "../ipc";
+import type { ByteaDisplayMode } from "@/lib/bytea";
+import type { DiagramIntrospection, ScriptResult } from "../ipc";
 import type { QueryResult } from "../types";
+import type { Filter } from "../utils/sql";
 
 let counter = 0;
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${++counter}`;
@@ -18,13 +20,22 @@ export type QueryTab = BaseTab & {
   kind: "query";
   sql: string;
   runningQueryId: string | null;
+  byteaModes: Record<string, ByteaDisplayMode>;
+  snippetId: string | null;
+  /** When true, the editor runs as a multi-statement script: SQL is split
+   *  client-side and each statement runs on a shared connection. The results
+   *  panel switches from a single grid to a per-statement summary list. */
+  runAsScript: boolean;
+  /** Result of the most recent script run. Mutually exclusive with `result`
+   *  in practice — `result` is populated for single-statement runs. */
+  scriptResult: ScriptResult | null;
 };
 
 export type BrowseTab = BaseTab & {
   kind: "browse";
   schema: string;
   table: string;
-  filters: Record<string, string>;
+  filters: Record<string, Filter>;
   sortCol: string | null;
   sortDir: "asc" | "desc";
   limit: number;
@@ -48,12 +59,17 @@ type State = {
 };
 
 type Actions = {
-  newQueryTab: (connectionId: string, sql?: string) => string;
+  newQueryTab: (
+    connectionId: string,
+    sql?: string,
+    title?: string,
+    init?: { byteaModes?: Record<string, ByteaDisplayMode>; snippetId?: string | null },
+  ) => string;
   openBrowseTab: (
     connectionId: string,
     schema: string,
     table: string,
-    initialFilters?: Record<string, string>,
+    initialFilters?: Record<string, Filter>,
   ) => string;
   openDiagramTab: (connectionId: string) => string;
   closeTab: (id: string) => void;
@@ -62,24 +78,28 @@ type Actions = {
   patchTab: (id: string, patch: Partial<Tab>) => void;
 };
 
-const defaultSql = "SELECT 1;";
+const defaultSql = "";
 
 export const useTabs = create<State & Actions>((set, get) => ({
   tabs: [],
   activeTabId: null,
 
-  newQueryTab(connectionId, sql = defaultSql) {
+  newQueryTab(connectionId, sql = defaultSql, title = "Query", init) {
     const id = newId("tab");
     const tab: QueryTab = {
       id,
       kind: "query",
       connectionId,
-      title: "Query",
+      title,
       sql,
       result: null,
       error: null,
       loading: false,
       runningQueryId: null,
+      byteaModes: init?.byteaModes ?? {},
+      snippetId: init?.snippetId ?? null,
+      runAsScript: false,
+      scriptResult: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
     return id;

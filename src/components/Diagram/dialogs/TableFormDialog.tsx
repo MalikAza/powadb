@@ -93,7 +93,7 @@ function TableFormBody({
     <form onSubmit={submit} className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="table-name">Table name</Label>
-        <Input id="table-name" autoFocus {...form.register("name")} placeholder="users" />
+        <Input id="table-name" {...form.register("name")} placeholder="users" />
         {form.formState.errors.name && (
           <p className="mt-1 text-xs text-destructive">{form.formState.errors.name.message}</p>
         )}
@@ -177,7 +177,10 @@ function TableFormBody({
         {Array.isArray(form.formState.errors.columns) &&
           form.formState.errors.columns.map((err, i) =>
             err?.name ? (
-              <p key={`${i}-${err.name.message}`} className="mt-1 text-xs text-destructive">
+              <p
+                key={`col-${i + 1}::${err.name.message}`}
+                className="mt-1 text-xs text-destructive"
+              >
                 Column #{i + 1}: {err.name.message}
               </p>
             ) : null,

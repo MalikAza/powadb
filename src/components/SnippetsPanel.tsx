@@ -1,34 +1,73 @@
 import { RefreshCw, Save, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { ByteaDisplayMode } from "@/lib/bytea";
 import { ipc, type Snippet } from "../ipc";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
 import { ConfirmDialog } from "./ConfirmDialog";
+
+const VALID_MODES: ReadonlySet<ByteaDisplayMode> = new Set(["hex", "ulid", "uuid"]);
+
+function parseByteaModesJson(raw: string | null): Record<string, ByteaDisplayMode> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Record<string, ByteaDisplayMode> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === "string" && VALID_MODES.has(v as ByteaDisplayMode)) {
+        out[k] = v as ByteaDisplayMode;
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 export function SnippetsPanel() {
   const activeId = useConnections((s) => s.activeId);
   const tabs = useTabs((s) => s.tabs);
   const activeTabId = useTabs((s) => s.activeTabId);
   const newQueryTab = useTabs((s) => s.newQueryTab);
-  const [snippets, setSnippets] = useState<Snippet[]>([]);
-  const [loading, setLoading] = useState(false);
+  type FetchState = {
+    status: "idle" | "loading" | "ready";
+    snippets: Snippet[];
+  };
+  type FetchAction = { type: "start" } | { type: "success"; snippets: Snippet[] } | { type: "end" };
+  const [fetchState, dispatchFetch] = useReducer(
+    (s: FetchState, a: FetchAction): FetchState => {
+      switch (a.type) {
+        case "start":
+          return { status: "loading", snippets: s.snippets };
+        case "success":
+          return { status: "ready", snippets: a.snippets };
+        case "end":
+          return { status: "ready", snippets: s.snippets };
+      }
+    },
+    { status: "idle", snippets: [] },
+  );
+  const snippets = fetchState.snippets;
+  const loading = fetchState.status === "loading";
+  type SaveForm = { open: boolean; name: string; scope: "connection" | "global" };
+  const INITIAL_SAVE: SaveForm = { open: false, name: "", scope: "connection" };
+  const [save, setSave] = useState<SaveForm>(INITIAL_SAVE);
   const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
-  const [saveOpen, setSaveOpen] = useState(false);
-  const [saveName, setSaveName] = useState("");
-  const [saveScope, setSaveScope] = useState<"connection" | "global">("connection");
+  const saveNameInputRef = useRef<HTMLInputElement>(null);
 
   const activeTabRaw = tabs.find((t) => t.id === activeTabId);
   const activeTab = activeTabRaw?.kind === "query" ? activeTabRaw : null;
 
   const refresh = useCallback(async () => {
-    setLoading(true);
+    dispatchFetch({ type: "start" });
     try {
-      setSnippets(await ipc.listSnippets(activeId ?? undefined));
-    } finally {
-      setLoading(false);
+      dispatchFetch({ type: "success", snippets: await ipc.listSnippets(activeId ?? undefined) });
+    } catch {
+      dispatchFetch({ type: "end" });
     }
   }, [activeId]);
 
@@ -36,21 +75,30 @@ export function SnippetsPanel() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (save.open) saveNameInputRef.current?.focus();
+  }, [save.open]);
+
   async function saveCurrent() {
-    if (!activeTab || !saveName.trim()) return;
+    if (!activeTab || !save.name.trim()) return;
+    const modes = activeTab.byteaModes;
+    const hasModes = Object.keys(modes).length > 0;
     await ipc.saveSnippet({
-      name: saveName.trim(),
+      name: save.name.trim(),
       sql: activeTab.sql,
-      connection_id: saveScope === "connection" ? activeId : null,
+      connection_id: save.scope === "connection" ? activeId : null,
+      bytea_modes_json: hasModes ? JSON.stringify(modes) : null,
     });
-    setSaveName("");
-    setSaveOpen(false);
+    setSave(INITIAL_SAVE);
     await refresh();
   }
 
-  function openInNewTab(sql: string) {
+  function openInNewTab(snippet: Snippet) {
     if (!activeId) return;
-    newQueryTab(activeId, sql);
+    newQueryTab(activeId, snippet.sql, snippet.name, {
+      byteaModes: parseByteaModesJson(snippet.bytea_modes_json),
+      snippetId: snippet.id,
+    });
   }
 
   return (
@@ -64,7 +112,7 @@ export function SnippetsPanel() {
             size="icon"
             variant="ghost"
             className="size-6"
-            onClick={() => setSaveOpen((v) => !v)}
+            onClick={() => setSave((s) => ({ ...s, open: !s.open }))}
             disabled={!activeTab}
             title="Save current tab as snippet"
           >
@@ -82,16 +130,19 @@ export function SnippetsPanel() {
         </div>
       </div>
 
-      {saveOpen && activeTab && (
+      {save.open && activeTab && (
         <div className="mb-2 grid gap-2 rounded border border-border bg-card p-2">
           <Input
-            autoFocus
+            ref={saveNameInputRef}
             placeholder="Snippet name"
-            value={saveName}
-            onChange={(e) => setSaveName(e.target.value)}
+            value={save.name}
+            onChange={(e) => {
+              const value = e.target.value;
+              setSave((s) => ({ ...s, name: value }));
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") saveCurrent();
-              if (e.key === "Escape") setSaveOpen(false);
+              if (e.key === "Escape") setSave((s) => ({ ...s, open: false }));
             }}
             className="h-7 text-xs"
           />
@@ -99,8 +150,8 @@ export function SnippetsPanel() {
             <Label className="flex cursor-pointer items-center gap-1 font-normal">
               <input
                 type="radio"
-                checked={saveScope === "connection"}
-                onChange={() => setSaveScope("connection")}
+                checked={save.scope === "connection"}
+                onChange={() => setSave((s) => ({ ...s, scope: "connection" }))}
                 disabled={!activeId}
               />
               this connection
@@ -108,8 +159,8 @@ export function SnippetsPanel() {
             <Label className="flex cursor-pointer items-center gap-1 font-normal">
               <input
                 type="radio"
-                checked={saveScope === "global"}
-                onChange={() => setSaveScope("global")}
+                checked={save.scope === "global"}
+                onChange={() => setSave((s) => ({ ...s, scope: "global" }))}
               />
               global
             </Label>
@@ -119,7 +170,7 @@ export function SnippetsPanel() {
               size="sm"
               variant="ghost"
               className="h-6 text-xs"
-              onClick={() => setSaveOpen(false)}
+              onClick={() => setSave((s) => ({ ...s, open: false }))}
             >
               Cancel
             </Button>
@@ -127,7 +178,7 @@ export function SnippetsPanel() {
               size="sm"
               className="h-6 text-xs"
               onClick={saveCurrent}
-              disabled={!saveName.trim()}
+              disabled={!save.name.trim()}
             >
               Save
             </Button>
@@ -144,7 +195,7 @@ export function SnippetsPanel() {
           return (
             <div
               key={s.id}
-              onDoubleClick={() => openInNewTab(s.sql)}
+              onDoubleClick={() => openInNewTab(s)}
               title="Double-click to open in a new query tab"
               className="cursor-pointer rounded border border-border/40 bg-card/50 p-2 hover:bg-sidebar-accent"
             >

@@ -21,6 +21,9 @@ export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
 
+  runScript: (connectionId: string, queryId: string, sql: string): Promise<ScriptResult> =>
+    invoke("run_script", { connectionId, queryId, sql }),
+
   cancelQuery: (queryId: string): Promise<boolean> => invoke("cancel_query", { queryId }),
 
   listConnections: (): Promise<SavedConnection[]> => invoke("list_connections"),
@@ -118,6 +121,9 @@ export const ipc = {
 
   deleteSnippet: (id: string): Promise<void> => invoke("delete_snippet", { id }),
 
+  updateSnippetByteaModes: (id: string, byteaModesJson: string | null): Promise<void> =>
+    invoke("update_snippet_bytea_modes", { id, byteaModesJson }),
+
   listThemes: (): Promise<StoredTheme[]> => invoke("list_themes"),
   saveTheme: (input: ThemeSaveInput): Promise<StoredTheme> => invoke("save_theme", { input }),
   deleteTheme: (id: string): Promise<void> => invoke("delete_theme", { id }),
@@ -176,6 +182,21 @@ export const ipc = {
   getSettings: (): Promise<AppSettings> => invoke("get_settings"),
   saveSettings: (settings: AppSettings): Promise<AppSettings> =>
     invoke("save_settings", { settings }),
+
+  openExternal: (url: string): Promise<void> => invoke("open_external", { url }),
+};
+
+export type StatementResult = {
+  index: number;
+  sql_excerpt: string;
+  elapsed_ms: number;
+  rows_affected?: number;
+  result?: QueryResult;
+  error?: string;
+};
+
+export type ScriptResult = {
+  statements: StatementResult[];
 };
 
 export type DecodedGeometry = {
@@ -269,6 +290,7 @@ export type Snippet = {
   name: string;
   sql: string;
   created_at: string;
+  bytea_modes_json: string | null;
 };
 
 export type SnippetInput = {
@@ -276,6 +298,7 @@ export type SnippetInput = {
   connection_id?: string | null;
   name: string;
   sql: string;
+  bytea_modes_json?: string | null;
 };
 
 export type DiagColumn = {
@@ -294,6 +317,24 @@ export type DiagTable = {
   schema: string;
   name: string;
   columns: DiagColumn[];
+  indexes: DiagIndex[];
+};
+
+export type DiagIndex = {
+  name: string;
+  is_unique: boolean;
+  is_primary: boolean;
+  columns: string[];
+  method: string | null;
+};
+
+export type DiagSequence = {
+  schema: string;
+  name: string;
+  data_type: string;
+  owned_by_schema: string | null;
+  owned_by_table: string | null;
+  owned_by_column: string | null;
 };
 
 export type DiagFk = {
@@ -312,6 +353,7 @@ export type DiagFk = {
 export type DiagramIntrospection = {
   tables: DiagTable[];
   foreign_keys: DiagFk[];
+  sequences: DiagSequence[];
 };
 
 export type SavedDiagram = {

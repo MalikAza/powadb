@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff, FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
+import { type UseFormReturn, useForm } from "react-hook-form";
 import { ColorPicker } from "@/components/ColorPicker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -263,474 +263,33 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
           <DialogTitle>{isEditing ? "Edit connection" : "New connection"}</DialogTitle>
           {isMultiStep && (
             <p className="text-xs font-normal text-muted-foreground">
-              Step {step} of 2 — {step === 1 ? "connection" : "WireGuard tunnel"}
+              Step {step} of 2: {step === 1 ? "connection" : "WireGuard tunnel"}
             </p>
           )}
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="grid gap-3">
             {step === 1 && (
-              <>
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        Name
-                      </FormLabel>
-                      <FormControl>
-                        <Input {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="kind"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        Type
-                      </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="postgres">PostgreSQL</SelectItem>
-                          <SelectItem value="mysql">MySQL / MariaDB</SelectItem>
-                          <SelectItem value="sqlite">SQLite</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {!isSqlite && (
-                  <div className="grid grid-cols-[2fr_1fr] gap-3">
-                    <FormField
-                      control={form.control}
-                      name="host"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs font-normal text-muted-foreground">
-                            Host
-                          </FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="port"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs font-normal text-muted-foreground">
-                            Port
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="number" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                )}
-
-                <FormField
-                  control={form.control}
-                  name="database"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        {isSqlite ? "Database file" : "Database (optional)"}
-                      </FormLabel>
-                      <FormControl>
-                        {isSqlite ? (
-                          <div className="flex gap-2">
-                            <Input {...field} placeholder="/path/to/database.db" />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={pickSqlitePath}
-                            >
-                              <FolderOpen className="size-3.5" />
-                              Browse…
-                            </Button>
-                          </div>
-                        ) : (
-                          <Input {...field} placeholder="leave empty to pick later" />
-                        )}
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {!isSqlite && (
-                  <>
-                    <FormField
-                      control={form.control}
-                      name="username"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs font-normal text-muted-foreground">
-                            Username
-                          </FormLabel>
-                          <FormControl>
-                            <Input {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="password"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs font-normal text-muted-foreground">
-                            Password
-                          </FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <Input
-                                type={showPassword ? "text" : "password"}
-                                autoComplete="new-password"
-                                className="pr-9"
-                                {...field}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowPassword((v) => !v)}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                                tabIndex={-1}
-                                aria-label={showPassword ? "Hide password" : "Show password"}
-                              >
-                                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                              </button>
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="ssl"
-                      render={({ field }) => (
-                        <FormItem className="flex items-center gap-2 space-y-0">
-                          <FormControl>
-                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                          </FormControl>
-                          <FormLabel className="cursor-pointer text-xs font-normal">
-                            Require TLS
-                          </FormLabel>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="wg_enabled"
-                      render={({ field }) => (
-                        <FormItem className="flex items-center gap-2 space-y-0">
-                          <FormControl>
-                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                          </FormControl>
-                          <FormLabel className="cursor-pointer text-xs font-normal">
-                            Connect through WireGuard tunnel
-                          </FormLabel>
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="ssh_enabled"
-                      render={({ field }) => (
-                        <FormItem className="flex items-center gap-2 space-y-0">
-                          <FormControl>
-                            <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                          </FormControl>
-                          <FormLabel className="cursor-pointer text-xs font-normal">
-                            Connect through SSH tunnel
-                          </FormLabel>
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
-
-                <FormField
-                  control={form.control}
-                  name="color"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        Color tag
-                      </FormLabel>
-                      <FormControl>
-                        <ColorPicker value={field.value ?? null} onChange={field.onChange} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="folder_id"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        Folder
-                      </FormLabel>
-                      <Select
-                        value={field.value ?? ROOT_FOLDER_SENTINEL}
-                        onValueChange={field.onChange}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={ROOT_FOLDER_SENTINEL}>(top level)</SelectItem>
-                          {paths.map((p) => (
-                            <SelectItem key={p.folder.id} value={p.folder.id}>
-                              {p.path}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </>
+              <Step1Connection
+                form={form}
+                isSqlite={isSqlite}
+                showPassword={showPassword}
+                onToggleShowPassword={() => setShowPassword((v) => !v)}
+                onPickSqlitePath={pickSqlitePath}
+                folderOptions={paths.map((p) => ({ id: p.folder.id, path: p.path }))}
+              />
             )}
 
             {step === 2 && wgEnabled && (
-              <div className="grid gap-3">
-                <p className="text-xs text-muted-foreground">
-                  Paste the contents of your <code>wireguard.conf</code> below, or load it from a
-                  file. The DB <em>Host</em> and <em>Port</em> you set on step 1 must be a private
-                  IP that the WireGuard peer's <code>AllowedIPs</code> covers.
-                </p>
-                <FormField
-                  control={form.control}
-                  name="wg_config"
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className="flex items-center justify-between">
-                        <FormLabel className="text-xs font-normal text-muted-foreground">
-                          wireguard.conf
-                        </FormLabel>
-                        <Button type="button" variant="outline" size="sm" onClick={pickWgConfPath}>
-                          <FolderOpen className="size-3.5" />
-                          Load file…
-                        </Button>
-                      </div>
-                      <FormControl>
-                        <textarea
-                          {...field}
-                          rows={12}
-                          spellCheck={false}
-                          autoCorrect="off"
-                          autoCapitalize="off"
-                          placeholder={
-                            "[Interface]\nPrivateKey = …\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = …\nEndpoint = vpn.example.com:51820\nAllowedIPs = 10.0.0.0/16\n"
-                          }
-                          className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              <Step2WireGuard form={form} onPickWgConfPath={pickWgConfPath} />
             )}
 
             {step === 2 && sshEnabled && (
-              <div className="grid gap-3">
-                <p className="text-xs text-muted-foreground">
-                  PowaDB will open an SSH session to the host below and tunnel the DB connection
-                  through it. The <em>Host</em> on step 1 is the DB address as seen{" "}
-                  <em>from the SSH server</em> — usually <code>127.0.0.1</code>.
-                </p>
-
-                <div className="grid grid-cols-[2fr_1fr] gap-3">
-                  <FormField
-                    control={form.control}
-                    name="ssh_host"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs font-normal text-muted-foreground">
-                          SSH host
-                        </FormLabel>
-                        <FormControl>
-                          <Input placeholder="vps.example.com" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name="ssh_port"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs font-normal text-muted-foreground">
-                          Port
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="number" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <FormField
-                  control={form.control}
-                  name="ssh_username"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        SSH username
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="deploy" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                <FormField
-                  control={form.control}
-                  name="ssh_auth_method"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        Authentication
-                      </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="key">Private key</SelectItem>
-                          <SelectItem value="password">Password</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-
-                {sshAuthMethod === "key" ? (
-                  <>
-                    <FormField
-                      control={form.control}
-                      name="ssh_key_path"
-                      render={({ field }) => (
-                        <FormItem>
-                          <div className="flex items-center justify-between">
-                            <FormLabel className="text-xs font-normal text-muted-foreground">
-                              Private key file
-                            </FormLabel>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={pickSshKeyPath}
-                            >
-                              <FolderOpen className="size-3.5" />
-                              Browse…
-                            </Button>
-                          </div>
-                          <FormControl>
-                            <Input placeholder="~/.ssh/id_ed25519" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="ssh_passphrase"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-xs font-normal text-muted-foreground">
-                            Key passphrase (optional)
-                          </FormLabel>
-                          <FormControl>
-                            <Input type="password" autoComplete="new-password" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                ) : (
-                  <FormField
-                    control={form.control}
-                    name="ssh_password"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel className="text-xs font-normal text-muted-foreground">
-                          SSH password
-                        </FormLabel>
-                        <FormControl>
-                          <Input type="password" autoComplete="new-password" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-
-                <FormField
-                  control={form.control}
-                  name="ssh_known_host_fingerprint"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel className="text-xs font-normal text-muted-foreground">
-                        Pinned host key (auto-filled on first connect)
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          placeholder="SHA256:… (leave empty for trust-on-first-use)"
-                          value={field.value ?? ""}
-                          onChange={(e) => field.onChange(e.target.value || null)}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              <Step2Ssh
+                form={form}
+                sshAuthMethod={sshAuthMethod}
+                onPickSshKeyPath={pickSshKeyPath}
+              />
             )}
 
             {submitError && <p className="text-xs text-destructive">{submitError}</p>}
@@ -766,5 +325,473 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
         </Form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+type ConnectionFormHandle = UseFormReturn<ConnectionFormInput, unknown, ConnectionFormValues>;
+
+type Step1Props = {
+  form: ConnectionFormHandle;
+  isSqlite: boolean;
+  showPassword: boolean;
+  onToggleShowPassword: () => void;
+  onPickSqlitePath: () => void;
+  folderOptions: { id: string; path: string }[];
+};
+
+function Step1Connection({
+  form,
+  isSqlite,
+  showPassword,
+  onToggleShowPassword,
+  onPickSqlitePath,
+  folderOptions,
+}: Step1Props) {
+  return (
+    <>
+      <FormField
+        control={form.control}
+        name="name"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">Name</FormLabel>
+            <FormControl>
+              <Input {...field} />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="kind"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">Type</FormLabel>
+            <Select value={field.value} onValueChange={field.onChange}>
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value="postgres">PostgreSQL</SelectItem>
+                <SelectItem value="mysql">MySQL / MariaDB</SelectItem>
+                <SelectItem value="sqlite">SQLite</SelectItem>
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      {!isSqlite && (
+        <div className="grid grid-cols-[2fr_1fr] gap-3">
+          <FormField
+            control={form.control}
+            name="host"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-normal text-muted-foreground">Host</FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="port"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-normal text-muted-foreground">Port</FormLabel>
+                <FormControl>
+                  <Input type="number" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+      )}
+
+      <FormField
+        control={form.control}
+        name="database"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">
+              {isSqlite ? "Database file" : "Database (optional)"}
+            </FormLabel>
+            <FormControl>
+              {isSqlite ? (
+                <div className="flex gap-2">
+                  <Input {...field} placeholder="/path/to/database.db" />
+                  <Button type="button" variant="outline" size="sm" onClick={onPickSqlitePath}>
+                    <FolderOpen className="size-3.5" />
+                    Browse…
+                  </Button>
+                </div>
+              ) : (
+                <Input {...field} placeholder="leave empty to pick later" />
+              )}
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      {!isSqlite && (
+        <>
+          <FormField
+            control={form.control}
+            name="username"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-normal text-muted-foreground">
+                  Username
+                </FormLabel>
+                <FormControl>
+                  <Input {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="password"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-normal text-muted-foreground">
+                  Password
+                </FormLabel>
+                <FormControl>
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="new-password"
+                      className="pr-9"
+                      {...field}
+                    />
+                    <button
+                      type="button"
+                      onClick={onToggleShowPassword}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      tabIndex={-1}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="ssl"
+            render={({ field }) => (
+              <FormItem className="flex items-center gap-x-2 gap-y-0">
+                <FormControl>
+                  <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+                <FormLabel className="cursor-pointer text-xs font-normal">Require TLS</FormLabel>
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="wg_enabled"
+            render={({ field }) => (
+              <FormItem className="flex items-center gap-x-2 gap-y-0">
+                <FormControl>
+                  <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+                <FormLabel className="cursor-pointer text-xs font-normal">
+                  Connect through WireGuard tunnel
+                </FormLabel>
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name="ssh_enabled"
+            render={({ field }) => (
+              <FormItem className="flex items-center gap-x-2 gap-y-0">
+                <FormControl>
+                  <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+                <FormLabel className="cursor-pointer text-xs font-normal">
+                  Connect through SSH tunnel
+                </FormLabel>
+              </FormItem>
+            )}
+          />
+        </>
+      )}
+
+      <FormField
+        control={form.control}
+        name="color"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">Color tag</FormLabel>
+            <FormControl>
+              <ColorPicker value={field.value ?? null} onChange={field.onChange} />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="folder_id"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">Folder</FormLabel>
+            <Select value={field.value ?? ROOT_FOLDER_SENTINEL} onValueChange={field.onChange}>
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value={ROOT_FOLDER_SENTINEL}>(top level)</SelectItem>
+                {folderOptions.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.path}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </>
+  );
+}
+
+type Step2WireGuardProps = {
+  form: ConnectionFormHandle;
+  onPickWgConfPath: () => void;
+};
+
+function Step2WireGuard({ form, onPickWgConfPath }: Step2WireGuardProps) {
+  return (
+    <div className="grid gap-3">
+      <p className="text-xs text-muted-foreground">
+        Paste the contents of your <code>wireguard.conf</code> below, or load it from a file. The DB{" "}
+        <em>Host</em> and <em>Port</em> you set on step 1 must be a private IP that the WireGuard
+        peer's <code>AllowedIPs</code> covers.
+      </p>
+      <FormField
+        control={form.control}
+        name="wg_config"
+        render={({ field }) => (
+          <FormItem>
+            <div className="flex items-center justify-between">
+              <FormLabel className="text-xs font-normal text-muted-foreground">
+                wireguard.conf
+              </FormLabel>
+              <Button type="button" variant="outline" size="sm" onClick={onPickWgConfPath}>
+                <FolderOpen className="size-3.5" />
+                Load file…
+              </Button>
+            </div>
+            <FormControl>
+              <textarea
+                {...field}
+                rows={12}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                placeholder={
+                  "[Interface]\nPrivateKey = …\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = …\nEndpoint = vpn.example.com:51820\nAllowedIPs = 10.0.0.0/16\n"
+                }
+                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
+  );
+}
+
+type Step2SshProps = {
+  form: ConnectionFormHandle;
+  sshAuthMethod: ConnectionFormInput["ssh_auth_method"];
+  onPickSshKeyPath: () => void;
+};
+
+function Step2Ssh({ form, sshAuthMethod, onPickSshKeyPath }: Step2SshProps) {
+  return (
+    <div className="grid gap-3">
+      <p className="text-xs text-muted-foreground">
+        PowaDB will open an SSH session to the host below and tunnel the DB connection through it.
+        The <em>Host</em> on step 1 is the DB address as seen <em>from the SSH server</em>, usually{" "}
+        <code>127.0.0.1</code>.
+      </p>
+
+      <div className="grid grid-cols-[2fr_1fr] gap-3">
+        <FormField
+          control={form.control}
+          name="ssh_host"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-xs font-normal text-muted-foreground">SSH host</FormLabel>
+              <FormControl>
+                <Input placeholder="vps.example.com" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <FormField
+          control={form.control}
+          name="ssh_port"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-xs font-normal text-muted-foreground">Port</FormLabel>
+              <FormControl>
+                <Input type="number" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </div>
+
+      <FormField
+        control={form.control}
+        name="ssh_username"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">
+              SSH username
+            </FormLabel>
+            <FormControl>
+              <Input placeholder="deploy" {...field} />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        control={form.control}
+        name="ssh_auth_method"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">
+              Authentication
+            </FormLabel>
+            <Select value={field.value} onValueChange={field.onChange}>
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent>
+                <SelectItem value="key">Private key</SelectItem>
+                <SelectItem value="password">Password</SelectItem>
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      {sshAuthMethod === "key" ? (
+        <>
+          <FormField
+            control={form.control}
+            name="ssh_key_path"
+            render={({ field }) => (
+              <FormItem>
+                <div className="flex items-center justify-between">
+                  <FormLabel className="text-xs font-normal text-muted-foreground">
+                    Private key file
+                  </FormLabel>
+                  <Button type="button" variant="outline" size="sm" onClick={onPickSshKeyPath}>
+                    <FolderOpen className="size-3.5" />
+                    Browse…
+                  </Button>
+                </div>
+                <FormControl>
+                  <Input placeholder="~/.ssh/id_ed25519" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name="ssh_passphrase"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="text-xs font-normal text-muted-foreground">
+                  Key passphrase (optional)
+                </FormLabel>
+                <FormControl>
+                  <Input type="password" autoComplete="new-password" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </>
+      ) : (
+        <FormField
+          control={form.control}
+          name="ssh_password"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="text-xs font-normal text-muted-foreground">
+                SSH password
+              </FormLabel>
+              <FormControl>
+                <Input type="password" autoComplete="new-password" {...field} />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      <FormField
+        control={form.control}
+        name="ssh_known_host_fingerprint"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="text-xs font-normal text-muted-foreground">
+              Pinned host key (auto-filled on first connect)
+            </FormLabel>
+            <FormControl>
+              <Input
+                placeholder="SHA256:… (leave empty for trust-on-first-use)"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value || null)}
+                onBlur={field.onBlur}
+                name={field.name}
+                ref={field.ref}
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+    </div>
   );
 }

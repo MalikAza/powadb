@@ -95,7 +95,7 @@ export function FolderForm({ editing, initialParentId, open, onOpenChange }: Pro
                 <FormItem>
                   <FormLabel className="text-xs font-normal text-muted-foreground">Name</FormLabel>
                   <FormControl>
-                    <Input autoFocus {...field} />
+                    <Input {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

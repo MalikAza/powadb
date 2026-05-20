@@ -90,14 +90,19 @@ export const useConnections = create<State & Actions>((set, get) => ({
     // Capture that parent before mutating so the optimistic patch matches server behavior.
     const promotedParent = get().folders.find((f) => f.id === id)?.parent_id ?? null;
     await ipc.deleteFolder(id);
-    set((state) => ({
-      folders: state.folders
-        .filter((f) => f.id !== id)
-        .map((f) => (f.parent_id === id ? { ...f, parent_id: promotedParent } : f)),
-      connections: state.connections.map((c) =>
-        c.folder_id === id ? { ...c, folder_id: promotedParent } : c,
-      ),
-    }));
+    set((state) => {
+      const folders: typeof state.folders = [];
+      for (const f of state.folders) {
+        if (f.id === id) continue;
+        folders.push(f.parent_id === id ? { ...f, parent_id: promotedParent } : f);
+      }
+      return {
+        folders,
+        connections: state.connections.map((c) =>
+          c.folder_id === id ? { ...c, folder_id: promotedParent } : c,
+        ),
+      };
+    });
   },
 
   activate(id) {

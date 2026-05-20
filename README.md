@@ -164,7 +164,7 @@ git tag v0.3.1 && git push origin v0.3.1
 
 - `TAURI_SIGNING_PRIVATE_KEY` — full contents of `~/.tauri/powadb.key`. Do **not** set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for a passwordless key (GitHub secrets cannot hold empty values, and any non-empty value — including a space — fails to decrypt).
 
-The repo's default workflow permissions must be **Read and write** (Settings → Actions → General → Workflow permissions) so the release job can create releases and force-push the manifest branch.
+The repo's default workflow permissions must be **Read and write** (Settings → Actions → General → Workflow permissions) so the release job can create releases.
 
 ### How auto-update works
 
@@ -172,8 +172,7 @@ The release workflow:
 
 1. Builds and signs bundles for macOS / Linux / Windows.
 2. Creates a GitHub Release with the binaries + a `latest.json` manifest.
-3. (Legacy) Force-pushes a rewritten copy of `latest.json` to the orphan `release-manifest` branch so v0.3.0-and-older installs — which embed a PAT and poll that stable URL — can still find updates.
 
-From v0.3.1 onward the installed app polls `https://github.com/MalikAza/powadb/releases/latest/download/latest.json` anonymously (the repo is public, so no PAT is needed). It checks on launch, every 30 minutes, and on demand from Settings. On match, it downloads the signed bundle, verifies the minisign signature and offers to restart. The `release-manifest` branch + `UPDATER_PAT` will be removed once active installs have all moved past v0.3.0.
+The installed app polls `https://github.com/MalikAza/powadb/releases/latest/download/latest.json` anonymously (the repo is public, so no PAT is needed). It checks on launch, every 30 minutes, and on demand from Settings. On match, it downloads the signed bundle, verifies the minisign signature and offers to restart.
 
 </details>

@@ -19,6 +19,19 @@ const PARSER_DIALECT: Record<DbKind, string> = {
 let counter = 0;
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${++counter}`;
 
+function collectNonEmpty<T>(
+  arr: readonly T[] | null | undefined,
+  fn: (t: T) => string | null | undefined,
+): string[] {
+  if (!arr) return [];
+  const out: string[] = [];
+  for (const t of arr) {
+    const v = fn(t);
+    if (v) out.push(v);
+  }
+  return out;
+}
+
 // ─── JSON import ─────────────────────────────────────────────────────────────
 
 export function parseJsonImport(text: string): ImportResult {
@@ -183,10 +196,11 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
   const parser = new Parser();
   const stmts = statementsFromText(text);
   const tables: DiagramTable[] = [];
+  const tablesByName = new Map<string, DiagramTable>();
   const edges: DiagramEdge[] = [];
 
   function tableByName(name: string): DiagramTable | undefined {
-    return tables.find((t) => t.name === name);
+    return tablesByName.get(name);
   }
 
   // Buffers populated during table parsing; resolved against the table list at
@@ -275,18 +289,16 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       // Top-level constraint (PRIMARY KEY (cols), FOREIGN KEY (cols) REFERENCES …, etc.)
       if (def.resource === "constraint") {
         const ct = (def.constraint_type ?? "").toLowerCase();
-        if (ct.includes("primary")) {
+        if (ct === "primary key") {
           for (const c of (def.definition as SqlColRef[]) ?? []) {
             const n = colName(c);
             if (n) pkCols.push(n);
           }
-        } else if (ct.includes("foreign")) {
+        } else if (ct === "foreign key") {
           const ref = def.reference_definition;
-          const srcCols = ((def.definition as SqlColRef[]) ?? [])
-            .map(colName)
-            .filter((x): x is string => !!x);
+          const srcCols = collectNonEmpty(def.definition as SqlColRef[] | undefined, colName);
           const tgtTable = ref?.table?.[0]?.table ?? "";
-          const tgtCols = (ref?.definition ?? []).map(colName).filter((x): x is string => !!x);
+          const tgtCols = collectNonEmpty(ref?.definition, colName);
           if (srcCols.length && tgtTable && tgtCols.length) {
             const { onUpdate, onDelete } = fkRulesFrom(ref?.on_action);
             inlineFks.push({
@@ -344,7 +356,7 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       if (def.reference_definition) {
         const ref = def.reference_definition;
         const tgtTable = ref.table?.[0]?.table ?? "";
-        const tgtCols = (ref.definition ?? []).map(colName).filter((x): x is string => !!x);
+        const tgtCols = collectNonEmpty(ref.definition, colName);
         if (tgtTable && tgtCols.length) {
           const { onUpdate, onDelete } = fkRulesFrom(ref.on_action);
           inlineFks.push({
@@ -369,19 +381,22 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
 
     // Mark composite PKs (when they came from a separate constraint, the cols
     // were defined above without isPk set).
+    const colByName = new Map(cols.map((c) => [c.name, c]));
     for (const pk of pkCols) {
-      const c = cols.find((x) => x.name === pk);
+      const c = colByName.get(pk);
       if (c) c.isPk = true;
     }
 
-    tables.push({
+    const table: DiagramTable = {
       id,
       schema,
       name: tableName,
       originalName: tableName,
       columns: cols,
       position: { x: 0, y: 0 },
-    });
+    };
+    tables.push(table);
+    tablesByName.set(tableName, table);
   }
 
   function handleAlter(s: SqlAlterStmt) {
@@ -398,16 +413,14 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       const def = op.create_definitions;
       if (!def) continue;
       const ct = (def.constraint_type ?? "").toLowerCase();
-      if (!ct.includes("foreign")) {
+      if (ct !== "foreign key") {
         warnings.push(`Unsupported constraint type on ${tableName}: ${def.constraint_type}`);
         continue;
       }
-      const srcCols = ((def.definition as SqlColRef[]) ?? [])
-        .map(colName)
-        .filter((x): x is string => !!x);
+      const srcCols = collectNonEmpty(def.definition as SqlColRef[] | undefined, colName);
       const ref = def.reference_definition;
       const tgtTable = ref?.table?.[0]?.table ?? "";
-      const tgtCols = (ref?.definition ?? []).map(colName).filter((x): x is string => !!x);
+      const tgtCols = collectNonEmpty(ref?.definition, colName);
       if (!srcCols.length || !tgtTable || !tgtCols.length) {
         warnings.push(`Malformed ADD CONSTRAINT on ${tableName}, skipped`);
         continue;
@@ -461,8 +474,8 @@ function fkRulesFrom(on_action: SqlRefDef["on_action"]): {
     const t = (a.type ?? "").toLowerCase();
     const v = a.value?.value ?? null;
     if (!v) continue;
-    if (t.includes("update")) onUpdate = v.toUpperCase();
-    else if (t.includes("delete")) onDelete = v.toUpperCase();
+    if (t === "on update") onUpdate = v.toUpperCase();
+    else if (t === "on delete") onDelete = v.toUpperCase();
   }
   return { onUpdate, onDelete };
 }

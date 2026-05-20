@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { onActivateKey } from "@/lib/a11y";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
 import { useUi } from "../stores/ui";
@@ -204,7 +205,13 @@ function FolderRow({
       <div
         className="group flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sidebar-accent"
         style={{ paddingLeft: 8 + depth * 12 }}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
         onClick={() => setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] }))}
+        onKeyDown={onActivateKey(() =>
+          setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] })),
+        )}
       >
         {isOpen ? (
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -332,8 +339,12 @@ function ConnRow({
   const openImportDialog = useUi((s) => s.openImportDialog);
   return (
     <div
+      role="button"
+      tabIndex={0}
+      aria-pressed={isActive}
       onClick={() => onActivate(c.id)}
       onDoubleClick={() => onEdit(c.id)}
+      onKeyDown={onActivateKey(() => onActivate(c.id))}
       className={cn(
         "group relative cursor-pointer rounded-md py-1 pr-2 text-xs",
         isActive ? "bg-primary/15 text-foreground" : "hover:bg-sidebar-accent",

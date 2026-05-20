@@ -98,24 +98,23 @@ function tableFromIntro(t: DiagTable, fks: DiagFk[]): DiagramTable {
 
 export function introspectionToDoc(intro: DiagramIntrospection, engine: DbKind): DiagramDoc {
   const tables = intro.tables.map((t) => tableFromIntro(t, intro.foreign_keys));
-  const edges: DiagramEdge[] = intro.foreign_keys
-    .map((fk) => {
-      const source = tableId(fk.from_schema, fk.from_table);
-      const target = tableId(fk.to_schema, fk.to_table);
-      if (!tables.some((t) => t.id === source)) return null;
-      if (!tables.some((t) => t.id === target)) return null;
-      return {
-        id: fk.id,
-        name: fk.name,
-        source,
-        target,
-        sourceColumns: fk.from_columns,
-        targetColumns: fk.to_columns,
-        onUpdate: fk.on_update,
-        onDelete: fk.on_delete,
-      } satisfies DiagramEdge;
-    })
-    .filter((e): e is DiagramEdge => e !== null);
+  const tableIds = new Set(tables.map((t) => t.id));
+  const edges: DiagramEdge[] = [];
+  for (const fk of intro.foreign_keys) {
+    const source = tableId(fk.from_schema, fk.from_table);
+    const target = tableId(fk.to_schema, fk.to_table);
+    if (!tableIds.has(source) || !tableIds.has(target)) continue;
+    edges.push({
+      id: fk.id,
+      name: fk.name,
+      source,
+      target,
+      sourceColumns: fk.from_columns,
+      targetColumns: fk.to_columns,
+      onUpdate: fk.on_update,
+      onDelete: fk.on_delete,
+    });
+  }
   return { version: 1, engine, tables, edges };
 }
 

@@ -65,9 +65,13 @@ function hsvToHex({ h, s, v }: Hsv): string {
   return `#${to(r)}${to(g)}${to(b)}`;
 }
 
-const PRESET_VALUES: ReadonlySet<string> = new Set(
-  CONNECTION_COLORS.map((c) => c.value).filter((v): v is NonNullable<typeof v> => v !== null),
-);
+const PRESET_VALUES: ReadonlySet<string> = (() => {
+  const out = new Set<string>();
+  for (const c of CONNECTION_COLORS) {
+    if (c.value !== null) out.add(c.value);
+  }
+  return out;
+})();
 
 type Props = {
   value: string | null;

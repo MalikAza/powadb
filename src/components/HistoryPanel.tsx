@@ -64,7 +64,7 @@ export function HistoryPanel() {
         </div>
       </div>
       {entries.length === 0 && (
-        <p className="text-muted-foreground">No history yet — run a query.</p>
+        <p className="text-muted-foreground">No history yet: run a query.</p>
       )}
       <div className="flex flex-col gap-1">
         {entries.map((e) => {

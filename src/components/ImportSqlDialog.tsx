@@ -8,7 +8,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -57,16 +57,59 @@ function ImportSqlDialogBody({
 }) {
   const conn = useConnections((s) => s.connections.find((c) => c.id === connectionId));
 
+  type Form = {
+    engine: DumpEngine;
+    inputPath: string;
+    singleTransaction: boolean;
+    confirmed: boolean;
+  };
   const [tools, setTools] = useState<ToolStatus | null>(null);
-  const [engine, setEngine] = useState<DumpEngine>("tool");
-  const [inputPath, setInputPath] = useState("");
-  const [singleTransaction, setSingleTransaction] = useState(true);
-  const [confirmed, setConfirmed] = useState(false);
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState<DumpProgressEvent | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<ImportSummary | null>(null);
+  const [form, setForm] = useState<Form>({
+    engine: "tool",
+    inputPath: "",
+    singleTransaction: true,
+    confirmed: false,
+  });
+  type RunState = {
+    status: "idle" | "running" | "done" | "error";
+    progress: DumpProgressEvent | null;
+    error: string | null;
+    summary: ImportSummary | null;
+  };
+  type RunAction =
+    | { type: "start" }
+    | { type: "progress"; progress: DumpProgressEvent }
+    | { type: "success"; summary: ImportSummary }
+    | { type: "fail"; error: string };
+  const [run, dispatchRun] = useReducer(
+    (s: RunState, a: RunAction): RunState => {
+      switch (a.type) {
+        case "start":
+          return { status: "running", progress: null, error: null, summary: null };
+        case "progress":
+          return { ...s, progress: a.progress };
+        case "success":
+          return { status: "done", progress: s.progress, error: null, summary: a.summary };
+        case "fail":
+          return { status: "error", progress: s.progress, error: a.error, summary: null };
+      }
+    },
+    { status: "idle", progress: null, error: null, summary: null },
+  );
+  const running = run.status === "running";
+  const progress = run.progress;
+  const error = run.error;
+  const summary = run.summary;
   const jobIdRef = useRef<string>("");
+
+  const engine = form.engine;
+  const inputPath = form.inputPath;
+  const singleTransaction = form.singleTransaction;
+  const confirmed = form.confirmed;
+  const setEngine = (v: DumpEngine) => setForm((f) => ({ ...f, engine: v }));
+  const setInputPath = (v: string) => setForm((f) => ({ ...f, inputPath: v }));
+  const setSingleTransaction = (v: boolean) => setForm((f) => ({ ...f, singleTransaction: v }));
+  const setConfirmed = (v: boolean) => setForm((f) => ({ ...f, confirmed: v }));
 
   useEffect(() => {
     if (!conn) return;
@@ -81,31 +124,27 @@ function ImportSqlDialogBody({
     if (picked) setInputPath(picked);
   }
 
-  async function run() {
+  async function runImport() {
     if (!conn || !inputPath || !confirmed) return;
     const jobId = crypto.randomUUID();
     jobIdRef.current = jobId;
-    setRunning(true);
-    setError(null);
-    setSummary(null);
-    setProgress(null);
+    dispatchRun({ type: "start" });
 
     let unlisten: UnlistenFn | null = null;
     try {
       unlisten = await listen<DumpProgressEvent>("dump-progress", (e) => {
-        if (e.payload.job_id === jobId) setProgress(e.payload);
+        if (e.payload.job_id === jobId) dispatchRun({ type: "progress", progress: e.payload });
       });
       const result = await ipc.importSql(conn.id, inputPath, {
         engine,
         single_transaction: singleTransaction,
         job_id: jobId,
       });
-      setSummary(result);
+      dispatchRun({ type: "success", summary: result });
     } catch (e) {
-      setError(String(e));
+      dispatchRun({ type: "fail", error: String(e) });
     } finally {
       unlisten?.();
-      setRunning(false);
     }
   }
 
@@ -121,7 +160,7 @@ function ImportSqlDialogBody({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Import SQL — {conn.name}</DialogTitle>
+        <DialogTitle>Import SQL: {conn.name}</DialogTitle>
       </DialogHeader>
 
       <div className="grid gap-4">
@@ -222,7 +261,7 @@ function ImportSqlDialogBody({
         {summary && (
           <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs">
             <CheckCircle2 className="size-3.5" />
-            Import finished — {summary.statements_executed.toLocaleString()} statement(s) executed.
+            Import finished: {summary.statements_executed.toLocaleString()} statement(s) executed.
           </div>
         )}
       </div>
@@ -240,7 +279,7 @@ function ImportSqlDialogBody({
             </Button>
             <Button
               variant="destructive"
-              onClick={run}
+              onClick={runImport}
               type="button"
               disabled={!inputPath || !confirmed || toolMissing}
             >

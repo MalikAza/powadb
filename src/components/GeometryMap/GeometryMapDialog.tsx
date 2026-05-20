@@ -1,6 +1,6 @@
 import type { Feature, FeatureCollection, GeoJsonObject, Geometry } from "geojson";
 import { Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useReducer } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ipc } from "@/ipc";
 import { FeatureClickPopup } from "./FeatureClickPopup";
@@ -70,10 +70,37 @@ function toFeatures(input: GeoJsonObject, properties: Record<string, unknown>): 
   return [{ type: "Feature", properties, geometry: input as Geometry }];
 }
 
+type LoadState =
+  | { status: "idle"; loaded: null; error: null }
+  | { status: "loading"; loaded: null; error: null }
+  | { status: "ready"; loaded: Loaded; error: null }
+  | { status: "error"; loaded: null; error: string };
+type LoadAction =
+  | { type: "reset" }
+  | { type: "load" }
+  | { type: "ready"; loaded: Loaded }
+  | { type: "fail"; error: string };
+function loadReducer(_s: LoadState, a: LoadAction): LoadState {
+  switch (a.type) {
+    case "reset":
+      return { status: "idle", loaded: null, error: null };
+    case "load":
+      return { status: "loading", loaded: null, error: null };
+    case "ready":
+      return { status: "ready", loaded: a.loaded, error: null };
+    case "fail":
+      return { status: "error", loaded: null, error: a.error };
+  }
+}
+
 export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: Props) {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [state, dispatch] = useReducer(loadReducer, {
+    status: "idle",
+    loaded: null,
+    error: null,
+  });
+  const { loaded, error } = state;
+  const loading = state.status === "loading";
 
   const title = useMemo(() => {
     if (input.kind === "single") return input.columnName;
@@ -85,13 +112,11 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
 
   useEffect(() => {
     if (!open) {
-      setLoaded(null);
-      setError(null);
+      dispatch({ type: "reset" });
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+    dispatch({ type: "load" });
 
     if (input.kind === "single") {
       ipc
@@ -103,17 +128,13 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
             columnName: input.columnName,
             rowData: input.rowData ?? null,
           });
-          setLoaded({
-            kind: "single",
-            columnName: input.columnName,
-            features,
+          dispatch({
+            type: "ready",
+            loaded: { kind: "single", columnName: input.columnName, features },
           });
         })
         .catch((e) => {
-          if (!cancelled) setError(String(e));
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
+          if (!cancelled) dispatch({ type: "fail", error: String(e) });
         });
       return () => {
         cancelled = true;
@@ -128,11 +149,13 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
     });
 
     if (flat.length === 0) {
-      setLoaded({
-        kind: "multi",
-        columns: input.columns.map((c) => ({ name: c.name, features: [] })),
+      dispatch({
+        type: "ready",
+        loaded: {
+          kind: "multi",
+          columns: input.columns.map((c) => ({ name: c.name, features: [] })),
+        },
       });
-      setLoading(false);
       return;
     }
 
@@ -167,13 +190,10 @@ export function GeometryMapDialog({ open, onOpenChange, connectionId, input }: P
             geometry,
           });
         });
-        setLoaded({ kind: "multi", columns: perColumn });
+        dispatch({ type: "ready", loaded: { kind: "multi", columns: perColumn } });
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) dispatch({ type: "fail", error: String(e) });
       });
 
     return () => {

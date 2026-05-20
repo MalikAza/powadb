@@ -1,7 +1,7 @@
 import type BaseLayer from "ol/layer/Base";
 import type Layer from "ol/layer/Layer";
 import type OLMap from "ol/Map";
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 
 export type MapContextValue = {
   map: OLMap;
@@ -14,7 +14,7 @@ export type MapContextValue = {
 export const MapContext = createContext<MapContextValue | null>(null);
 
 export function useMapContext(): MapContextValue {
-  const ctx = useContext(MapContext);
+  const ctx = use(MapContext);
   if (!ctx) {
     throw new Error("GeometryMap components must be used inside <MapRoot>");
   }

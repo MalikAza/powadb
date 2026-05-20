@@ -108,7 +108,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          VITE_UPDATER_GH_TOKEN: ${{ secrets.UPDATER_PAT }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: true
@@ -130,53 +129,3 @@ jobs:
           gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" \
             -F draft=false \
             -F prerelease=false
-
-  publish-manifest:
-    needs: publish-release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Rewrite latest.json with API asset URLs and force-push to release-manifest branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-
-          # Pull the manifest tauri-action just uploaded.
-          gh release download "$TAG" --repo "$REPO" --pattern latest.json --output original.json
-
-          # Build a {asset_name -> asset_id} map for this release.
-          gh api "repos/$REPO/releases/tags/$TAG" \
-            --jq '.assets | map({(.name): .id}) | add' > assets.json
-
-          # Replace each platform's url with the api.github.com asset endpoint
-          # (which honors Authorization headers; the public download URL doesn't).
-          jq --slurpfile assets assets.json --arg repo "$REPO" '
-            .platforms |= with_entries(
-              .value.url as $url
-              | ($url | split("/") | last) as $name
-              | $assets[0][$name] as $id
-              | .value.url = "https://api.github.com/repos/\($repo)/releases/assets/\($id)"
-            )
-          ' original.json > latest.json
-
-          # Force-push manifest to its own orphan branch so the updater has a
-          # stable URL (raw.githubusercontent.com/.../release-manifest/latest.json).
-          # Build the branch contents in a fresh repo to keep the build
-          # checkout untouched.
-          mkdir manifest-tree
-          cp latest.json manifest-tree/
-          cd manifest-tree
-          git init -q -b release-manifest
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config commit.gpgsign false
-          git add latest.json
-          git commit -q -m "release: $TAG manifest"
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" \
-            release-manifest:release-manifest

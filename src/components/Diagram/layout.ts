@@ -24,8 +24,8 @@ export async function layoutDoc(doc: DiagramDoc): Promise<DiagramDoc> {
     layoutOptions: {
       "elk.algorithm": "layered",
       "elk.direction": "RIGHT",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "80",
-      "elk.spacing.nodeNode": "60",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "160",
+      "elk.spacing.nodeNode": "120",
     },
     children: doc.tables.map((t) => ({
       id: t.id,
@@ -58,7 +58,7 @@ export async function layoutDoc(doc: DiagramDoc): Promise<DiagramDoc> {
 
 function gridLayout(doc: DiagramDoc): DiagramDoc {
   const cols = Math.ceil(Math.sqrt(doc.tables.length));
-  const colWidth = NODE_WIDTH + 80;
+  const colWidth = NODE_WIDTH + 160;
   let rowY = 0;
   let rowMax = 0;
   return {
@@ -66,7 +66,7 @@ function gridLayout(doc: DiagramDoc): DiagramDoc {
     tables: doc.tables.map((t, i) => {
       const col = i % cols;
       if (col === 0 && i > 0) {
-        rowY += rowMax + 60;
+        rowY += rowMax + 120;
         rowMax = 0;
       }
       const height = estimateNodeHeight(t);

@@ -1,5 +1,5 @@
 import { AlertTriangle, FileCode2, FileJson, FolderOpen, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useReducer, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,31 @@ import type { DiagramDoc } from "../types";
 
 type Format = "json" | "sql";
 
+type LoadState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; doc: DiagramDoc; warnings: string[] }
+  | { status: "error"; error: string };
+
+type LoadAction =
+  | { type: "reset" }
+  | { type: "start" }
+  | { type: "success"; doc: DiagramDoc; warnings: string[] }
+  | { type: "fail"; error: string };
+
+function loadReducer(_s: LoadState, a: LoadAction): LoadState {
+  switch (a.type) {
+    case "reset":
+      return { status: "idle" };
+    case "start":
+      return { status: "loading" };
+    case "success":
+      return { status: "ready", doc: a.doc, warnings: a.warnings };
+    case "fail":
+      return { status: "error", error: a.error };
+  }
+}
+
 export function ImportDialog({
   open,
   onOpenChange,
@@ -29,59 +54,46 @@ export function ImportDialog({
 }) {
   const [path, setPath] = useState<string | null>(null);
   const [format, setFormat] = useState<Format>("json");
-  const [busy, setBusy] = useState(false);
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [previewDoc, setPreviewDoc] = useState<DiagramDoc | null>(null);
+  const [load, dispatch] = useReducer(loadReducer, { status: "idle" });
 
   function reset() {
     setPath(null);
-    setWarnings([]);
-    setError(null);
-    setPreviewDoc(null);
+    dispatch({ type: "reset" });
   }
 
   async function pick() {
     const p = await ipc.pickOpenPathWithFilter("Diagram", ["json", "sql"]);
     if (!p) return;
     setPath(p);
-    setWarnings([]);
-    setError(null);
-    setPreviewDoc(null);
+    dispatch({ type: "reset" });
     const fmt: Format = p.toLowerCase().endsWith(".sql") ? "sql" : "json";
     setFormat(fmt);
     await parseFile(p, fmt);
   }
 
   async function parseFile(p: string, fmt: Format) {
-    setBusy(true);
+    dispatch({ type: "start" });
     try {
       const text = await ipc.readTextFile(p);
-      if (fmt === "json") {
-        const result = parseJsonImport(text);
-        setPreviewDoc(result.doc);
-        setWarnings(result.warnings);
-      } else {
-        const result = await parseSqlImport(text, engine);
-        setPreviewDoc(result.doc);
-        setWarnings(result.warnings);
-      }
+      const result = fmt === "json" ? parseJsonImport(text) : await parseSqlImport(text, engine);
+      dispatch({ type: "success", doc: result.doc, warnings: result.warnings });
     } catch (e) {
-      setError(String(e));
-      setPreviewDoc(null);
-    } finally {
-      setBusy(false);
+      dispatch({ type: "fail", error: String(e) });
     }
   }
 
   function doImport() {
-    if (!previewDoc || !path) return;
-    onImport(previewDoc, path);
+    if (load.status !== "ready" || !path) return;
+    onImport(load.doc, path);
     toast.success("Diagram imported");
     onOpenChange(false);
     reset();
   }
 
+  const busy = load.status === "loading";
+  const previewDoc = load.status === "ready" ? load.doc : null;
+  const warnings = load.status === "ready" ? load.warnings : [];
+  const error = load.status === "error" ? load.error : null;
   const tableCount = previewDoc?.tables.length ?? 0;
   const edgeCount = previewDoc?.edges.length ?? 0;
 
@@ -100,8 +112,8 @@ export function ImportDialog({
 
         <p className="text-xs text-muted-foreground">
           Importing replaces the current canvas. JSON imports preserve table positions; SQL imports
-          auto-layout. SQL is best-effort and may skip statements it can't parse — see warnings
-          below.
+          auto-layout. SQL is best-effort and may skip statements it can't parse (see warnings
+          below).
         </p>
 
         <div className="flex items-center gap-2">

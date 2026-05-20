@@ -3,6 +3,7 @@ mod drivers;
 mod error;
 mod job_registry;
 mod pool_registry;
+mod sql_split;
 mod ssh;
 mod storage;
 mod wireguard;
@@ -160,6 +161,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::query::run_query,
+            commands::query::run_script,
             commands::query::cancel_query,
             commands::connections::list_connections,
             commands::connections::save_connection,
@@ -191,6 +193,7 @@ pub fn run() {
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
+            commands::snippets::update_snippet_bytea_modes,
             commands::themes::list_themes,
             commands::themes::save_theme,
             commands::themes::delete_theme,
@@ -215,6 +218,7 @@ pub fn run() {
             commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
             commands::settings::save_settings,
+            commands::settings::open_external,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
