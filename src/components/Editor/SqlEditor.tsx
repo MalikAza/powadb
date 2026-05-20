@@ -1,12 +1,15 @@
+import { acceptCompletion, autocompletion, completionStatus } from "@codemirror/autocomplete";
+import { indentWithTab } from "@codemirror/commands";
 import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { highlightSelectionMatches, search } from "@codemirror/search";
 import { Prec } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, keymap, placeholder } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { useMemo } from "react";
 import { useConnections } from "../../stores/connections";
 import { buildCmSchema, useSchema } from "../../stores/schema";
-import { useResolvedTheme } from "../../stores/theme";
 import type { DbKind } from "../../types";
+import { cmAppTheme, cmHighlightStyle } from "./editorTheme";
 
 type Props = {
   value: string;
@@ -18,7 +21,6 @@ type Props = {
 export function SqlEditor({ value, onChange, onRun, kind }: Props) {
   const activeId = useConnections((s) => s.activeId);
   const schemas = useSchema((s) => (activeId ? s.byConnection[activeId] : undefined));
-  const resolvedTheme = useResolvedTheme();
 
   const extensions = useMemo(() => {
     const dialect = kind === "mysql" ? MySQL : kind === "sqlite" ? SQLite : PostgreSQL;
@@ -40,11 +42,29 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
               return true;
             },
           },
+          {
+            key: "Tab",
+            run: (view) => {
+              if (completionStatus(view.state) === "active") return acceptCompletion(view);
+              return false;
+            },
+          },
+          indentWithTab,
         ]),
       ),
+      autocompletion({
+        activateOnTyping: true,
+        closeOnBlur: true,
+        defaultKeymap: true,
+        icons: false,
+      }),
+      search({ top: true }),
+      highlightSelectionMatches(),
+      placeholder("-- Write your query, then Cmd+Enter to run"),
+      cmAppTheme,
+      cmHighlightStyle,
       EditorView.theme({
         "&": { height: "100%", fontSize: "13px" },
-        ".cm-scroller": { fontFamily: "ui-monospace, monospace" },
       }),
     ];
   }, [kind, schemas, onRun]);
@@ -53,7 +73,7 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
     <CodeMirror
       value={value}
       onChange={onChange}
-      theme={resolvedTheme}
+      theme="none"
       height="100%"
       autoFocus
       selection={{ anchor: value.length }}
@@ -61,10 +81,11 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
       basicSetup={{
         lineNumbers: true,
         highlightActiveLine: true,
-        highlightSelectionMatches: true,
+        highlightSelectionMatches: false,
         bracketMatching: true,
         closeBrackets: true,
-        autocompletion: true,
+        autocompletion: false,
+        searchKeymap: false,
       }}
       style={{ flex: 1, minHeight: 0, overflow: "hidden" }}
     />

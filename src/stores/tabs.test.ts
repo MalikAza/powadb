@@ -8,7 +8,7 @@ function reset() {
 describe("useTabs", () => {
   beforeEach(reset);
 
-  it("creates a new query tab with the default SQL and activates it", () => {
+  it("creates a new query tab empty by default and activates it", () => {
     const id = useTabs.getState().newQueryTab("c1");
     const s = useTabs.getState();
     expect(s.tabs).toHaveLength(1);
@@ -17,7 +17,7 @@ describe("useTabs", () => {
     expect(tab.kind).toBe("query");
     expect(tab.connectionId).toBe("c1");
     if (tab.kind === "query") {
-      expect(tab.sql).toBe("SELECT 1;");
+      expect(tab.sql).toBe("");
       expect(tab.runningQueryId).toBeNull();
     }
   });

@@ -78,7 +78,7 @@ type Actions = {
   patchTab: (id: string, patch: Partial<Tab>) => void;
 };
 
-const defaultSql = "SELECT 1;";
+const defaultSql = "";
 
 export const useTabs = create<State & Actions>((set, get) => ({
   tabs: [],

@@ -3,6 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { Check, Copy, FileText, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { cmAppTheme, cmHighlightStyle } from "@/components/Editor/editorTheme";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -70,10 +71,15 @@ export function GenerateScriptDialog({
               <CodeMirror
                 value={script}
                 height="100%"
-                extensions={[sql()]}
+                extensions={[sql(), cmAppTheme, cmHighlightStyle]}
                 editable={false}
-                basicSetup={{ lineNumbers: true, foldGutter: false }}
-                theme="dark"
+                basicSetup={{
+                  lineNumbers: true,
+                  foldGutter: false,
+                  highlightActiveLine: false,
+                  highlightActiveLineGutter: false,
+                }}
+                theme="none"
               />
             </div>
           )}

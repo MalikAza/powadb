@@ -21,11 +21,6 @@ const DiagramTabPane = lazy(() =>
   import("./Diagram/DiagramTabPane").then((m) => ({ default: m.DiagramTabPane })),
 );
 
-const STARTER_SQL: Record<string, string> = {
-  postgres: "SELECT 1 AS one, 'hello' AS greeting, now() AS ts;",
-  mysql: "SELECT 1 AS one, 'hello' AS greeting, NOW() AS ts;",
-};
-
 export function QueryView() {
   const { connections, activeId } = useConnections();
   const conn = connections.find((c) => c.id === activeId);
@@ -59,8 +54,8 @@ export function QueryView() {
 
   useEffect(() => {
     const unlistenQuery = listen("new-tab", () => {
-      if (!activeId || !conn) return;
-      newQueryTab(activeId, STARTER_SQL[conn.kind]);
+      if (!activeId) return;
+      newQueryTab(activeId);
     });
     const unlistenDiagram = listen("new-diagram-tab", () => {
       if (!activeId) return;
@@ -70,7 +65,7 @@ export function QueryView() {
       unlistenQuery.then((fn) => fn());
       unlistenDiagram.then((fn) => fn());
     };
-  }, [activeId, conn, newQueryTab, openDiagramTab]);
+  }, [activeId, newQueryTab, openDiagramTab]);
 
   if (!activeId || !conn) {
     return (
@@ -85,7 +80,7 @@ export function QueryView() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
         <p>No tab open.</p>
-        <Button onClick={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}>
+        <Button onClick={() => newQueryTab(activeId)}>
           <Plus className="size-4" /> New query tab
         </Button>
       </div>
@@ -99,7 +94,7 @@ export function QueryView() {
         activeId={activeTab.id}
         onSelect={(id) => setActiveTab(id)}
         onClose={(id) => closeTab(id)}
-        onNewQuery={() => newQueryTab(activeId, STARTER_SQL[conn.kind])}
+        onNewQuery={() => newQueryTab(activeId)}
         onNewDiagram={() => openDiagramTab(activeId)}
       />
       {activeTab.kind === "browse" ? (
