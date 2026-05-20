@@ -19,6 +19,19 @@ const PARSER_DIALECT: Record<DbKind, string> = {
 let counter = 0;
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${++counter}`;
 
+function collectNonEmpty<T>(
+  arr: readonly T[] | null | undefined,
+  fn: (t: T) => string | null | undefined,
+): string[] {
+  if (!arr) return [];
+  const out: string[] = [];
+  for (const t of arr) {
+    const v = fn(t);
+    if (v) out.push(v);
+  }
+  return out;
+}
+
 // ─── JSON import ─────────────────────────────────────────────────────────────
 
 export function parseJsonImport(text: string): ImportResult {
@@ -282,11 +295,9 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
           }
         } else if (ct.includes("foreign")) {
           const ref = def.reference_definition;
-          const srcCols = ((def.definition as SqlColRef[]) ?? [])
-            .map(colName)
-            .filter((x): x is string => !!x);
+          const srcCols = collectNonEmpty(def.definition as SqlColRef[] | undefined, colName);
           const tgtTable = ref?.table?.[0]?.table ?? "";
-          const tgtCols = (ref?.definition ?? []).map(colName).filter((x): x is string => !!x);
+          const tgtCols = collectNonEmpty(ref?.definition, colName);
           if (srcCols.length && tgtTable && tgtCols.length) {
             const { onUpdate, onDelete } = fkRulesFrom(ref?.on_action);
             inlineFks.push({
@@ -344,7 +355,7 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
       if (def.reference_definition) {
         const ref = def.reference_definition;
         const tgtTable = ref.table?.[0]?.table ?? "";
-        const tgtCols = (ref.definition ?? []).map(colName).filter((x): x is string => !!x);
+        const tgtCols = collectNonEmpty(ref.definition, colName);
         if (tgtTable && tgtCols.length) {
           const { onUpdate, onDelete } = fkRulesFrom(ref.on_action);
           inlineFks.push({
@@ -369,8 +380,9 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
 
     // Mark composite PKs (when they came from a separate constraint, the cols
     // were defined above without isPk set).
+    const colByName = new Map(cols.map((c) => [c.name, c]));
     for (const pk of pkCols) {
-      const c = cols.find((x) => x.name === pk);
+      const c = colByName.get(pk);
       if (c) c.isPk = true;
     }
 
@@ -402,12 +414,10 @@ export async function parseSqlImport(text: string, engine: DbKind): Promise<Impo
         warnings.push(`Unsupported constraint type on ${tableName}: ${def.constraint_type}`);
         continue;
       }
-      const srcCols = ((def.definition as SqlColRef[]) ?? [])
-        .map(colName)
-        .filter((x): x is string => !!x);
+      const srcCols = collectNonEmpty(def.definition as SqlColRef[] | undefined, colName);
       const ref = def.reference_definition;
       const tgtTable = ref?.table?.[0]?.table ?? "";
-      const tgtCols = (ref?.definition ?? []).map(colName).filter((x): x is string => !!x);
+      const tgtCols = collectNonEmpty(ref?.definition, colName);
       if (!srcCols.length || !tgtTable || !tgtCols.length) {
         warnings.push(`Malformed ADD CONSTRAINT on ${tableName}, skipped`);
         continue;

@@ -12,16 +12,56 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { onActivateKey } from "@/lib/a11y";
 import { ipc, type SchemaMeta } from "../ipc";
 import { useConnections } from "../stores/connections";
 import { useSchema } from "../stores/schema";
 import { useTabs } from "../stores/tabs";
 import { useUi } from "../stores/ui";
 import { ConfirmDialog } from "./ConfirmDialog";
+
+type TableMeta = SchemaMeta["tables"][number];
+
+type FetchState = {
+  status: "idle" | "loading" | "ready";
+  schemas: SchemaMeta[] | null;
+  databases: string[] | null;
+  error: string | null;
+};
+type FetchAction =
+  | { type: "reset" }
+  | { type: "load" }
+  | { type: "ready"; schemas?: SchemaMeta[]; databases?: string[]; error?: string }
+  | { type: "setDatabases"; databases: string[] };
+
+function fetchReducer(s: FetchState, a: FetchAction): FetchState {
+  switch (a.type) {
+    case "reset":
+      return { status: "idle", schemas: null, databases: null, error: null };
+    case "load":
+      return { ...s, status: "loading", error: null };
+    case "ready":
+      return {
+        status: "ready",
+        schemas: a.schemas ?? s.schemas,
+        databases: a.databases ?? s.databases,
+        error: a.error ?? null,
+      };
+    case "setDatabases":
+      return { ...s, databases: a.databases };
+  }
+}
+
+const initialFetchState: FetchState = {
+  status: "idle",
+  schemas: null,
+  databases: null,
+  error: null,
+};
 
 export function SchemaTree() {
   const { activeId, connections } = useConnections();
@@ -38,59 +78,64 @@ export function SchemaTree() {
   const setSchemaOpen = useUi((s) => s.setSchemaOpen);
   const schemaSearchFocusToken = useUi((s) => s.schemaSearchFocusToken);
 
-  const [schemas, setSchemas] = useState<SchemaMeta[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [fetch, dispatchFetch] = useReducer(fetchReducer, initialFetchState);
+  const schemas = fetch.schemas;
+  const databases = fetch.databases;
+  const error = fetch.error;
+  const loading = fetch.status === "loading";
   const [search, setSearch] = useState("");
-  const [databases, setDatabases] = useState<string[] | null>(null);
-  const [databasesOpen, setDatabasesOpen] = useState(false);
-  const [createDbOpen, setCreateDbOpen] = useState(false);
-  const [createDbName, setCreateDbName] = useState("");
-  const [creatingDb, setCreatingDb] = useState(false);
-  const [pendingDropDb, setPendingDropDb] = useState<string | null>(null);
-  const [droppingDb, setDroppingDb] = useState<string | null>(null);
+  const [dropDb, setDropDb] = useState<{ pending: string | null; busy: string | null }>({
+    pending: null,
+    busy: null,
+  });
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const supportsDbAdmin = conn?.kind === "postgres" || conn?.kind === "mysql";
 
   async function refresh() {
     if (!activeId) return;
-    setLoading(true);
-    setError(null);
+    dispatchFetch({ type: "load" });
     // The two probes are independent; running them in parallel halves perceived latency
     // and ensures the database list is fetched even when schema introspection fails.
     const [schemaResult, dbResult] = await Promise.allSettled([
       ipc.introspectSchema(activeId),
       ipc.listDatabases(activeId),
     ]);
+    let nextSchemas: SchemaMeta[] | undefined;
+    let nextDatabases: string[] | undefined;
+    let nextError: string | undefined;
     if (schemaResult.status === "fulfilled") {
-      const result = schemaResult.value;
-      setSchemas(result);
-      setSchemaInStore(activeId, result);
+      nextSchemas = schemaResult.value;
+      setSchemaInStore(activeId, schemaResult.value);
       if (conn?.kind === "postgres") setSchemaOpen("public", true);
       else if (conn?.kind === "sqlite") setSchemaOpen("main", true);
-      else if (result[0]) setSchemaOpen(result[0].name, true);
+      else if (schemaResult.value[0]) setSchemaOpen(schemaResult.value[0].name, true);
     } else {
-      setError(String(schemaResult.reason));
+      nextError = String(schemaResult.reason);
     }
     if (dbResult.status === "fulfilled") {
-      setDatabases(dbResult.value);
+      nextDatabases = dbResult.value;
       setDatabasesInStore(activeId, dbResult.value);
     } else {
-      setDatabases([]);
+      nextDatabases = [];
       setDatabasesInStore(activeId, []);
     }
-    setLoading(false);
+    dispatchFetch({
+      type: "ready",
+      schemas: nextSchemas,
+      databases: nextDatabases,
+      error: nextError,
+    });
   }
 
-  useEffect(() => {
-    setSchemas(null);
-    setError(null);
+  const resetAll = () => {
+    dispatchFetch({ type: "reset" });
     setSearch("");
-    setDatabases(null);
-    setCreateDbOpen(false);
-    setCreateDbName("");
-    setPendingDropDb(null);
+    setDropDb({ pending: null, busy: null });
+  };
+
+  useEffect(() => {
+    resetAll();
     if (activeId) refresh();
   }, [activeId, conn?.database]);
 
@@ -98,44 +143,31 @@ export function SchemaTree() {
     if (!activeId) return;
     try {
       const dbs = await ipc.listDatabases(activeId);
-      setDatabases(dbs);
+      dispatchFetch({ type: "setDatabases", databases: dbs });
       setDatabasesInStore(activeId, dbs);
     } catch (e) {
       toast.error(`Failed to list databases: ${String(e)}`);
     }
   }
 
-  async function submitCreateDatabase() {
+  async function createDatabase(name: string) {
     if (!activeId) return;
-    const name = createDbName.trim();
-    if (!name) return;
-    setCreatingDb(true);
-    try {
-      await ipc.createDatabase(activeId, name);
-      toast.success(`Database "${name}" created`);
-      setCreateDbName("");
-      setCreateDbOpen(false);
-      setDatabasesOpen(true);
-      await refreshDatabases();
-    } catch (e) {
-      toast.error(`Failed to create database: ${String(e)}`);
-    } finally {
-      setCreatingDb(false);
-    }
+    await ipc.createDatabase(activeId, name);
+    toast.success(`Database "${name}" created`);
+    await refreshDatabases();
   }
 
   async function dropDatabase(db: string) {
     if (!activeId) return;
-    setDroppingDb(db);
+    setDropDb((s) => ({ ...s, busy: db }));
     try {
       await ipc.dropDatabase(activeId, db);
       toast.success(`Database "${db}" dropped`);
-      setPendingDropDb(null);
+      setDropDb({ pending: null, busy: null });
       await refreshDatabases();
     } catch (e) {
       toast.error(`Failed to drop database: ${String(e)}`);
-    } finally {
-      setDroppingDb(null);
+      setDropDb((s) => ({ ...s, busy: null }));
     }
   }
 
@@ -176,14 +208,16 @@ export function SchemaTree() {
     if (!schemas) return null;
     const q = search.trim().toLowerCase();
     if (!q) return schemas;
-    return schemas
-      .map((s) => ({
-        ...s,
-        tables: s.tables.filter(
-          (t) => t.name.toLowerCase().includes(q) || s.name.toLowerCase().includes(q),
-        ),
-      }))
-      .filter((s) => s.tables.length > 0);
+    const out: SchemaMeta[] = [];
+    for (const s of schemas) {
+      const schemaMatches = s.name.toLowerCase().includes(q);
+      const tables = [];
+      for (const t of s.tables) {
+        if (schemaMatches || t.name.toLowerCase().includes(q)) tables.push(t);
+      }
+      if (tables.length > 0) out.push({ ...s, tables });
+    }
+    return out;
   }, [schemas, search]);
 
   // When searching, treat all matching schemas as open
@@ -205,10 +239,10 @@ export function SchemaTree() {
   // Scroll an externally-revealed table into view
   const lastOpenTableKey = useRef<string | null>(null);
   useEffect(() => {
-    const openedKeys = Object.entries(openTables)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
-    const newest = openedKeys[openedKeys.length - 1] ?? null;
+    let newest: string | null = null;
+    for (const [k, v] of Object.entries(openTables)) {
+      if (v) newest = k;
+    }
     if (newest && newest !== lastOpenTableKey.current) {
       const el = document.querySelector(`[data-table-row="${cssEscape(newest)}"]`);
       el?.scrollIntoView({ block: "nearest" });
@@ -221,112 +255,15 @@ export function SchemaTree() {
   return (
     <div className="text-xs">
       {databases && databases.length > 0 && (
-        <div className="mb-3">
-          <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            <button
-              type="button"
-              onClick={() => setDatabasesOpen((v) => !v)}
-              className="flex flex-1 items-center gap-1 rounded px-1 py-0.5 hover:bg-sidebar-accent"
-            >
-              {databasesOpen ? (
-                <ChevronDown className="size-3 shrink-0" />
-              ) : (
-                <ChevronRight className="size-3 shrink-0" />
-              )}
-              <span className="flex-1 text-left">Databases</span>
-              <span className="text-[10px] normal-case">{databases.length}</span>
-            </button>
-            {supportsDbAdmin && (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-5"
-                onClick={() => {
-                  setDatabasesOpen(true);
-                  setCreateDbOpen((v) => !v);
-                }}
-                title="Create database"
-              >
-                <Plus className="size-3" />
-              </Button>
-            )}
-          </div>
-          {databasesOpen && createDbOpen && supportsDbAdmin && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitCreateDatabase();
-              }}
-              className="mb-1 ml-1 flex items-center gap-1"
-            >
-              <Input
-                autoFocus
-                value={createDbName}
-                onChange={(e) => setCreateDbName(e.target.value)}
-                placeholder="new_database"
-                className="h-6 px-1.5 text-[11px]"
-              />
-              <Button
-                type="submit"
-                size="sm"
-                className="h-6 px-2 text-[11px]"
-                disabled={creatingDb || !createDbName.trim()}
-              >
-                {creatingDb ? "…" : "Create"}
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                className="size-6"
-                onClick={() => {
-                  setCreateDbOpen(false);
-                  setCreateDbName("");
-                }}
-                title="Cancel"
-              >
-                <X className="size-3" />
-              </Button>
-            </form>
-          )}
-          {databasesOpen &&
-            databases.map((db) => {
-              const isActive = db === conn?.database;
-              const isDropping = droppingDb === db;
-              return (
-                <div
-                  key={db}
-                  className={`group ml-1 flex w-[calc(100%-0.25rem)] items-center gap-1 rounded ${
-                    isActive ? "" : "hover:bg-sidebar-accent"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => switchDatabase(db)}
-                    disabled={isActive}
-                    title={isActive ? "Current database" : `Switch to ${db}`}
-                    className={`flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left ${
-                      isActive ? "cursor-default font-medium text-primary" : "text-foreground"
-                    }`}
-                  >
-                    <Database className="size-3 shrink-0 text-muted-foreground" />
-                    <span className="min-w-0 flex-1 truncate">{db}</span>
-                  </button>
-                  {supportsDbAdmin && !isActive && (
-                    <button
-                      type="button"
-                      onClick={() => setPendingDropDb(db)}
-                      disabled={isDropping}
-                      title={`Drop ${db}`}
-                      className="mr-1 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
-                    >
-                      <Trash2 className="size-3" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-        </div>
+        <DatabasesPanel
+          databases={databases}
+          activeDatabase={conn?.database}
+          supportsDbAdmin={supportsDbAdmin}
+          dropBusy={dropDb.busy}
+          onSwitch={switchDatabase}
+          onRequestDrop={(db) => setDropDb((s) => ({ ...s, pending: db }))}
+          onCreate={createDatabase}
+        />
       )}
 
       <div className="mb-2 flex items-center justify-between gap-1">
@@ -382,88 +319,27 @@ export function SchemaTree() {
       )}
 
       {filteredSchemas?.map((s) => (
-        <div key={s.name}>
-          <div
-            className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 font-medium hover:bg-sidebar-accent"
-            onClick={() => toggleSchema(s.name)}
-          >
-            {effectiveOpenSchemas[s.name] ? (
-              <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-            ) : (
-              <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-            )}
-            <span className="min-w-0 flex-1 truncate">{s.name}</span>
-            <span className="shrink-0 text-[10px] text-muted-foreground">{s.tables.length}</span>
-          </div>
-          {effectiveOpenSchemas[s.name] &&
-            s.tables.map((t) => {
-              const key = `${s.name}.${t.name}`;
-              const isOpen = openTables[key];
-              return (
-                <div key={key} className="ml-3" data-table-row={key}>
-                  <div
-                    className="group flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 hover:bg-sidebar-accent"
-                    onClick={() => toggleTable(s.name, t.name)}
-                  >
-                    {isOpen ? (
-                      <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-                    )}
-                    {t.kind === "view" ? (
-                      <Eye className="size-3 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <Table2 className="size-3 shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{t.name}</span>
-                  </div>
-                  {isOpen && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => browseTable(s.name, t.name)}
-                        className="mb-0.5 ml-6 flex w-[calc(100%-1.5rem)] items-center gap-1.5 rounded px-1.5 py-1 text-left text-primary hover:bg-primary/15"
-                      >
-                        <TableProperties className="size-3 shrink-0" />
-                        <span className="text-[11px]">Browse data</span>
-                      </button>
-                      <div className="ml-6">
-                        <div className="mb-0.5 px-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Columns
-                        </div>
-                        {t.columns.map((c) => (
-                          <div
-                            key={c.name}
-                            className="flex items-center justify-between gap-2 px-1.5 py-0.5 font-mono text-[11px]"
-                          >
-                            <span className="truncate">
-                              {c.name}
-                              {!c.nullable && <span className="text-primary"> *</span>}
-                            </span>
-                            <span className="shrink-0 text-[10px] text-muted-foreground">
-                              {c.data_type}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-        </div>
+        <SchemaRow
+          key={s.name}
+          schema={s}
+          isOpen={!!effectiveOpenSchemas[s.name]}
+          openTables={openTables}
+          onToggleSchema={toggleSchema}
+          onToggleTable={toggleTable}
+          onBrowse={browseTable}
+        />
       ))}
 
       <ConfirmDialog
-        open={pendingDropDb !== null}
+        open={dropDb.pending !== null}
         onOpenChange={(open) => {
-          if (!open) setPendingDropDb(null);
+          if (!open) setDropDb((s) => ({ ...s, pending: null }));
         }}
-        title={`Drop database "${pendingDropDb ?? ""}"?`}
+        title={`Drop database "${dropDb.pending ?? ""}"?`}
         description="This cannot be undone. All tables, views, and data in the database will be lost."
         confirmLabel="Drop"
         onConfirm={() => {
-          if (pendingDropDb) dropDatabase(pendingDropDb);
+          if (dropDb.pending) dropDatabase(dropDb.pending);
         }}
       />
     </div>
@@ -473,4 +349,275 @@ export function SchemaTree() {
 function cssEscape(s: string): string {
   if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(s);
   return s.replace(/(["\\])/g, "\\$1");
+}
+
+type DatabasesPanelProps = {
+  databases: string[];
+  activeDatabase: string | undefined;
+  supportsDbAdmin: boolean;
+  dropBusy: string | null;
+  onSwitch: (db: string) => void;
+  onRequestDrop: (db: string) => void;
+  onCreate: (name: string) => Promise<void>;
+};
+
+function DatabasesPanel({
+  databases,
+  activeDatabase,
+  supportsDbAdmin,
+  dropBusy,
+  onSwitch,
+  onRequestDrop,
+  onCreate,
+}: DatabasesPanelProps) {
+  const [databasesOpen, setDatabasesOpen] = useState(false);
+  const [createDb, setCreateDb] = useState<{ open: boolean; name: string; busy: boolean }>({
+    open: false,
+    name: "",
+    busy: false,
+  });
+  const createDbInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (createDb.open) createDbInputRef.current?.focus();
+  }, [createDb.open]);
+
+  async function submitCreateDatabase() {
+    const name = createDb.name.trim();
+    if (!name) return;
+    setCreateDb((s) => ({ ...s, busy: true }));
+    try {
+      await onCreate(name);
+      setCreateDb({ open: false, name: "", busy: false });
+      setDatabasesOpen(true);
+    } catch (e) {
+      toast.error(`Failed to create database: ${String(e)}`);
+      setCreateDb((s) => ({ ...s, busy: false }));
+    }
+  }
+
+  return (
+    <div className="mb-3">
+      <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => setDatabasesOpen((v) => !v)}
+          className="flex flex-1 items-center gap-1 rounded px-1 py-0.5 hover:bg-sidebar-accent"
+        >
+          {databasesOpen ? (
+            <ChevronDown className="size-3 shrink-0" />
+          ) : (
+            <ChevronRight className="size-3 shrink-0" />
+          )}
+          <span className="flex-1 text-left">Databases</span>
+          <span className="text-[10px] normal-case">{databases.length}</span>
+        </button>
+        {supportsDbAdmin && (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="size-5"
+            onClick={() => {
+              setDatabasesOpen(true);
+              setCreateDb((s) => ({ ...s, open: !s.open }));
+            }}
+            title="Create database"
+          >
+            <Plus className="size-3" />
+          </Button>
+        )}
+      </div>
+      {databasesOpen && createDb.open && supportsDbAdmin && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitCreateDatabase();
+          }}
+          className="mb-1 ml-1 flex items-center gap-1"
+        >
+          <Input
+            ref={createDbInputRef}
+            value={createDb.name}
+            onChange={(e) => {
+              const value = e.target.value;
+              setCreateDb((s) => ({ ...s, name: value }));
+            }}
+            placeholder="new_database"
+            className="h-6 px-1.5 text-[11px]"
+          />
+          <Button
+            type="submit"
+            size="sm"
+            className="h-6 px-2 text-[11px]"
+            disabled={createDb.busy || !createDb.name.trim()}
+          >
+            {createDb.busy ? "…" : "Create"}
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="size-6"
+            onClick={() => setCreateDb({ open: false, name: "", busy: false })}
+            title="Cancel"
+          >
+            <X className="size-3" />
+          </Button>
+        </form>
+      )}
+      {databasesOpen &&
+        databases.map((db) => {
+          const isActive = db === activeDatabase;
+          const isDropping = dropBusy === db;
+          return (
+            <div
+              key={db}
+              className={`group ml-1 flex w-[calc(100%-0.25rem)] items-center gap-1 rounded ${
+                isActive ? "" : "hover:bg-sidebar-accent"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => onSwitch(db)}
+                disabled={isActive}
+                title={isActive ? "Current database" : `Switch to ${db}`}
+                className={`flex min-w-0 flex-1 items-center gap-1 rounded px-1 py-0.5 text-left ${
+                  isActive ? "cursor-default font-medium text-primary" : "text-foreground"
+                }`}
+              >
+                <Database className="size-3 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate">{db}</span>
+              </button>
+              {supportsDbAdmin && !isActive && (
+                <button
+                  type="button"
+                  onClick={() => onRequestDrop(db)}
+                  disabled={isDropping}
+                  title={`Drop ${db}`}
+                  className="mr-1 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
+type SchemaRowProps = {
+  schema: SchemaMeta;
+  isOpen: boolean;
+  openTables: Record<string, boolean>;
+  onToggleSchema: (name: string) => void;
+  onToggleTable: (schema: string, table: string) => void;
+  onBrowse: (schema: string, table: string) => void;
+};
+
+function SchemaRow({
+  schema,
+  isOpen,
+  openTables,
+  onToggleSchema,
+  onToggleTable,
+  onBrowse,
+}: SchemaRowProps) {
+  return (
+    <div>
+      <div
+        className="flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 font-medium hover:bg-sidebar-accent"
+        role="button"
+        tabIndex={0}
+        onClick={() => onToggleSchema(schema.name)}
+        onKeyDown={onActivateKey(() => onToggleSchema(schema.name))}
+      >
+        {isOpen ? (
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{schema.name}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">{schema.tables.length}</span>
+      </div>
+      {isOpen &&
+        schema.tables.map((t) => {
+          const key = `${schema.name}.${t.name}`;
+          return (
+            <TableNode
+              key={key}
+              schemaName={schema.name}
+              table={t}
+              isOpen={!!openTables[key]}
+              onToggleTable={onToggleTable}
+              onBrowse={onBrowse}
+            />
+          );
+        })}
+    </div>
+  );
+}
+
+type TableNodeProps = {
+  schemaName: string;
+  table: TableMeta;
+  isOpen: boolean;
+  onToggleTable: (schema: string, table: string) => void;
+  onBrowse: (schema: string, table: string) => void;
+};
+
+function TableNode({ schemaName, table, isOpen, onToggleTable, onBrowse }: TableNodeProps) {
+  const key = `${schemaName}.${table.name}`;
+  return (
+    <div className="ml-3" data-table-row={key}>
+      <div
+        className="group flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 hover:bg-sidebar-accent"
+        role="button"
+        tabIndex={0}
+        onClick={() => onToggleTable(schemaName, table.name)}
+        onKeyDown={onActivateKey(() => onToggleTable(schemaName, table.name))}
+      >
+        {isOpen ? (
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+        )}
+        {table.kind === "view" ? (
+          <Eye className="size-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <Table2 className="size-3 shrink-0 text-muted-foreground" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{table.name}</span>
+      </div>
+      {isOpen && (
+        <>
+          <button
+            type="button"
+            onClick={() => onBrowse(schemaName, table.name)}
+            className="mb-0.5 ml-6 flex w-[calc(100%-1.5rem)] items-center gap-1.5 rounded px-1.5 py-1 text-left text-primary hover:bg-primary/15"
+          >
+            <TableProperties className="size-3 shrink-0" />
+            <span className="text-[11px]">Browse data</span>
+          </button>
+          <div className="ml-6">
+            <div className="mb-0.5 px-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Columns
+            </div>
+            {table.columns.map((c) => (
+              <div
+                key={c.name}
+                className="flex items-center justify-between gap-2 px-1.5 py-0.5 font-mono text-[11px]"
+              >
+                <span className="truncate">
+                  {c.name}
+                  {!c.nullable && <span className="text-primary"> *</span>}
+                </span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">{c.data_type}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }

@@ -1,7 +1,7 @@
 import { sql } from "@codemirror/lang-sql";
 import CodeMirror from "@uiw/react-codemirror";
 import { Check, Copy, FileText, Loader2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { toast } from "sonner";
 import { cmAppTheme, cmHighlightStyle } from "@/components/Editor/editorTheme";
 import { Button } from "@/components/ui/button";
@@ -26,20 +26,39 @@ export function GenerateScriptDialog({
   doc: DiagramDoc;
   onOpenInQueryTab?: (script: string) => void;
 }) {
-  const [script, setScript] = useState<string>("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  type FetchState =
+    | { status: "idle"; script: string; error: null }
+    | { status: "loading"; script: string; error: null }
+    | { status: "success"; script: string; error: null }
+    | { status: "error"; script: string; error: string };
+  type FetchAction =
+    | { type: "load" }
+    | { type: "success"; script: string }
+    | { type: "fail"; error: string };
+  const [fetchState, dispatchFetch] = useReducer(
+    (s: FetchState, a: FetchAction): FetchState => {
+      switch (a.type) {
+        case "load":
+          return { status: "loading", script: s.script, error: null };
+        case "success":
+          return { status: "success", script: a.script, error: null };
+        case "fail":
+          return { status: "error", script: s.script, error: a.error };
+      }
+    },
+    { status: "idle", script: "", error: null },
+  );
+  const { script, error } = fetchState;
+  const loading = fetchState.status === "loading";
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setLoading(true);
-    setError(null);
+    dispatchFetch({ type: "load" });
     ipc
       .generateDiagramDdl(JSON.stringify(doc), doc.engine)
-      .then(setScript)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+      .then((s) => dispatchFetch({ type: "success", script: s }))
+      .catch((e) => dispatchFetch({ type: "fail", error: String(e) }));
   }, [open, doc]);
 
   function copy() {

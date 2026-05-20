@@ -4,8 +4,8 @@ import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
 import { highlightSelectionMatches, search } from "@codemirror/search";
 import { Prec } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
-import CodeMirror from "@uiw/react-codemirror";
-import { useMemo } from "react";
+import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
+import { useEffect, useMemo, useRef } from "react";
 import { useConnections } from "../../stores/connections";
 import { buildCmSchema, useSchema } from "../../stores/schema";
 import type { DbKind } from "../../types";
@@ -21,6 +21,11 @@ type Props = {
 export function SqlEditor({ value, onChange, onRun, kind }: Props) {
   const activeId = useConnections((s) => s.activeId);
   const schemas = useSchema((s) => (activeId ? s.byConnection[activeId] : undefined));
+  const editorRef = useRef<ReactCodeMirrorRef | null>(null);
+
+  useEffect(() => {
+    editorRef.current?.view?.focus();
+  }, []);
 
   const extensions = useMemo(() => {
     const dialect = kind === "mysql" ? MySQL : kind === "sqlite" ? SQLite : PostgreSQL;
@@ -71,11 +76,11 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
 
   return (
     <CodeMirror
+      ref={editorRef}
       value={value}
       onChange={onChange}
       theme="none"
       height="100%"
-      autoFocus
       selection={{ anchor: value.length }}
       extensions={extensions}
       basicSetup={{

@@ -8,6 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { onActivateKey } from "@/lib/a11y";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
 import { useTabs } from "../stores/tabs";
@@ -139,7 +140,11 @@ function TabBar({
         {tabs.map((t) => (
           <div
             key={t.id}
+            role="tab"
+            tabIndex={0}
+            aria-selected={t.id === activeId}
             onClick={() => onSelect(t.id)}
+            onKeyDown={onActivateKey(() => onSelect(t.id))}
             className={cn(
               "group flex h-7 max-w-50 shrink-0 cursor-pointer items-center gap-1 rounded-md px-3 text-xs",
               t.id === activeId

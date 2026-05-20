@@ -82,10 +82,7 @@ export function useColumnResize(initialWidths: number[], options: Options = {}) 
       const startW = widthsRef.current[colIdx] ?? initialRef.current[colIdx] ?? RESIZE_MIN_PX;
       let latestWidth = startW;
 
-      const prevBodyCursor = document.body.style.cursor;
-      const prevBodyUserSelect = document.body.style.userSelect;
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
+      document.body.classList.add("col-resizing");
 
       const onMove = (ev: PointerEvent) => {
         const dx = ev.clientX - startX;
@@ -112,8 +109,7 @@ export function useColumnResize(initialWidths: number[], options: Options = {}) 
         target.removeEventListener("pointercancel", onUp);
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
-        document.body.style.cursor = prevBodyCursor;
-        document.body.style.userSelect = prevBodyUserSelect;
+        document.body.classList.remove("col-resizing");
         if (onLiveResizeRef.current && latestWidth !== startW) {
           // Commit the dragged width to React state once, on release.
           setWidths((prev) => {

@@ -103,8 +103,12 @@ function PgPlanNode({ node, depth }: { node: PgNode; depth: number }) {
         )}
         <DetailLines node={node} />
       </div>
-      {node.Plans?.map((child, i) => (
-        <PgPlanNode key={i} node={child} depth={depth + 1} />
+      {node.Plans?.map((child) => (
+        <PgPlanNode
+          key={`${child["Node Type"] ?? "?"}::${child.Alias ?? ""}::${child["Index Name"] ?? ""}::${child["Relation Name"] ?? ""}`}
+          node={child}
+          depth={depth + 1}
+        />
       ))}
     </div>
   );
@@ -131,8 +135,8 @@ function DetailLines({ node }: { node: PgNode }) {
   if (lines.length === 0) return null;
   return (
     <div className="mt-1 text-[11px] text-muted-foreground">
-      {lines.map((l, i) => (
-        <div key={i}>{l}</div>
+      {lines.map((l) => (
+        <div key={l}>{l}</div>
       ))}
     </div>
   );

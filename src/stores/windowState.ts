@@ -70,9 +70,11 @@ export function useRestoreAndPersistWindowState() {
             const isMax = await win.isMaximized();
             useWindowState.getState().setMaximized(isMax);
             if (isMax) return;
-            const factor = await win.scaleFactor();
-            const size = await win.outerSize();
-            const pos = await win.outerPosition();
+            const [factor, size, pos] = await Promise.all([
+              win.scaleFactor(),
+              win.outerSize(),
+              win.outerPosition(),
+            ]);
             const logicalSize = size.toLogical(factor);
             const logicalPos = pos.toLogical(factor);
             useWindowState.getState().setBounds({

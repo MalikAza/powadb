@@ -116,3 +116,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+body.col-resizing {
+  cursor: col-resize !important;
+  user-select: none !important;
+}

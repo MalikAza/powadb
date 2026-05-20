@@ -45,9 +45,11 @@ function App() {
   const focusSchemaSearch = useUi((s) => s.focusSchemaSearch);
   const exportDialog = useUi((s) => s.exportDialog);
   const importDialog = useUi((s) => s.importDialog);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [initialFolderId, setInitialFolderId] = useState<string | null>(null);
+  const [connForm, setConnForm] = useState<{
+    open: boolean;
+    editingId: string | null;
+    initialFolderId: string | null;
+  }>({ open: false, editingId: null, initialFolderId: null });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -120,16 +122,14 @@ function App() {
           >
             <ResizablePanel id="connections" defaultSize={18} minSize={8}>
               <ConnectionList
-                onAdd={(folderId) => {
-                  setEditingId(null);
-                  setInitialFolderId(folderId ?? null);
-                  setFormOpen(true);
-                }}
-                onEdit={(id) => {
-                  setEditingId(id);
-                  setInitialFolderId(null);
-                  setFormOpen(true);
-                }}
+                onAdd={(folderId) =>
+                  setConnForm({
+                    open: true,
+                    editingId: null,
+                    initialFolderId: folderId ?? null,
+                  })
+                }
+                onEdit={(id) => setConnForm({ open: true, editingId: id, initialFolderId: null })}
               />
             </ResizablePanel>
             {activeId && (
@@ -147,12 +147,12 @@ function App() {
           </ResizablePanelGroup>
         </div>
         <Suspense fallback={null}>
-          {formOpen && (
+          {connForm.open && (
             <ConnectionForm
-              editingId={editingId}
-              initialFolderId={initialFolderId}
-              open={formOpen}
-              onOpenChange={setFormOpen}
+              editingId={connForm.editingId}
+              initialFolderId={connForm.initialFolderId}
+              open={connForm.open}
+              onOpenChange={(open) => setConnForm((prev) => ({ ...prev, open }))}
             />
           )}
           {paletteOpen && <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />}

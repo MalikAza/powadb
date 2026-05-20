@@ -172,12 +172,12 @@ export function useResolvedTheme(): ResolvedTheme {
       setResolved(custom?.base ?? "light");
       return;
     }
-    setResolved(resolvePreset(selection.mode));
+    const computeFromPreset = () => setResolved(resolvePreset(selection.mode));
+    computeFromPreset();
     if (selection.mode !== "system") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = () => setResolved(resolvePreset(selection.mode));
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
+    mq.addEventListener("change", computeFromPreset);
+    return () => mq.removeEventListener("change", computeFromPreset);
   }, [selection, customThemes]);
 
   return resolved;

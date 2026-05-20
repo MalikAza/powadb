@@ -63,23 +63,22 @@ export function ThemeEditor({ open, onOpenChange, editing, seed }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    if (editing) {
-      setDraft({
-        name: editing.name,
-        base: editing.base,
-        radius: editing.radius,
-        colors: { ...editing.colors },
-      });
-    } else if (seed) {
-      setDraft({
-        name: seed.name ?? "",
-        base: seed.base ?? "light",
-        radius: seed.radius ?? DEFAULT_RADIUS,
-        colors: { ...(seed.colors ?? presetColors(seed.base ?? "light")) },
-      });
-    } else {
-      setDraft(emptyDraft());
-    }
+    const next: Draft = editing
+      ? {
+          name: editing.name,
+          base: editing.base,
+          radius: editing.radius,
+          colors: { ...editing.colors },
+        }
+      : seed
+        ? {
+            name: seed.name ?? "",
+            base: seed.base ?? "light",
+            radius: seed.radius ?? DEFAULT_RADIUS,
+            colors: { ...(seed.colors ?? presetColors(seed.base ?? "light")) },
+          }
+        : emptyDraft();
+    setDraft(next);
   }, [open, editing, seed]);
 
   const previewStyle = useMemo(() => {

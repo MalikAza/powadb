@@ -1,7 +1,7 @@
 import { sql } from "@codemirror/lang-sql";
 import CodeMirror from "@uiw/react-codemirror";
 import { AlertTriangle, Loader2, Play } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { toast } from "sonner";
 import { cmAppTheme, cmHighlightStyle } from "@/components/Editor/editorTheme";
 import { Button } from "@/components/ui/button";
@@ -41,34 +41,50 @@ export function ApplyDialog({
   doc: DiagramDoc;
   onApplied: () => void;
 }) {
-  const [ops, setOps] = useState<DiffOp[] | null>(null);
-  const [script, setScript] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  type DiffState = {
+    status: "idle" | "loading" | "ready" | "error";
+    ops: DiffOp[] | null;
+    script: string;
+    error: string | null;
+  };
+  type DiffAction =
+    | { type: "load" }
+    | { type: "ready"; ops: DiffOp[]; script: string }
+    | { type: "fail"; error: string };
+  const [diff, dispatchDiff] = useReducer(
+    (s: DiffState, a: DiffAction): DiffState => {
+      switch (a.type) {
+        case "load":
+          return { status: "loading", ops: null, script: "", error: null };
+        case "ready":
+          return { status: "ready", ops: a.ops, script: a.script, error: null };
+        case "fail":
+          return { ...s, status: "error", error: a.error };
+      }
+    },
+    { status: "idle", ops: null, script: "", error: null },
+  );
+  const { ops, script, error } = diff;
+  const loading = diff.status === "loading";
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    setOps(null);
-    setScript("");
-    setError(null);
-    setLoading(true);
+    let cancelled = false;
+    dispatchDiff({ type: "load" });
     (async () => {
       try {
-        const diff = await ipc.diffDiagram(connectionId, JSON.stringify(doc));
-        setOps(diff.ops);
-        if (diff.ops.length === 0) {
-          setScript("");
-        } else {
-          const sqlText = await ipc.generateAlterDdl(diff.ops, engine);
-          setScript(sqlText);
-        }
+        const result = await ipc.diffDiagram(connectionId, JSON.stringify(doc));
+        const sqlText =
+          result.ops.length === 0 ? "" : await ipc.generateAlterDdl(result.ops, engine);
+        if (!cancelled) dispatchDiff({ type: "ready", ops: result.ops, script: sqlText });
       } catch (e) {
-        setError(String(e));
-      } finally {
-        setLoading(false);
+        if (!cancelled) dispatchDiff({ type: "fail", error: String(e) });
       }
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [open, connectionId, engine, doc]);
 
   async function run() {
@@ -81,7 +97,7 @@ export function ApplyDialog({
       onOpenChange(false);
     } catch (e) {
       toast.error(`Apply failed: ${String(e)}`);
-      setError(String(e));
+      dispatchDiff({ type: "fail", error: String(e) });
     } finally {
       setRunning(false);
     }
@@ -107,7 +123,7 @@ export function ApplyDialog({
           </div>
         ) : empty ? (
           <p className="p-4 text-sm text-muted-foreground">
-            No changes — the database already matches the diagram.
+            No changes: the database already matches the diagram.
           </p>
         ) : (
           <>
@@ -116,11 +132,14 @@ export function ApplyDialog({
                 Summary ({ops?.length} change{ops?.length === 1 ? "" : "s"})
               </p>
               <ul className="space-y-0.5 rounded-md border border-border p-2 font-mono text-[11px]">
-                {ops?.map((op, i) => (
-                  <li key={`${op.kind}-${i}`} className="truncate">
-                    {diffOpSummary(op)}
-                  </li>
-                ))}
+                {ops?.map((op) => {
+                  const summary = diffOpSummary(op);
+                  return (
+                    <li key={`${op.kind}::${summary}`} className="truncate">
+                      {summary}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
 

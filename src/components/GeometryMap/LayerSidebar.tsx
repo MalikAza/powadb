@@ -59,9 +59,7 @@ function LayerGroup({
               <div className="text-xs text-muted-foreground">{emptyLabel}</div>
             ) : null
           ) : (
-            layers.map((layer, i) => (
-              <LayerControl key={`${getLayerName(layer)}-${i}`} layer={layer} />
-            ))
+            layers.map((layer) => <LayerControl key={getLayerName(layer)} layer={layer} />)
           )}
         </div>
       )}
@@ -70,8 +68,8 @@ function LayerGroup({
 }
 
 function LayerControl({ layer }: { layer: BaseLayer }) {
-  const [visible, setVisible] = useState(layer.getVisible());
-  const [opacity, setOpacity] = useState(Math.round(layer.getOpacity() * 100));
+  const [visible, setVisible] = useState(() => layer.getVisible());
+  const [opacity, setOpacity] = useState(() => Math.round(layer.getOpacity() * 100));
   const [expanded, setExpanded] = useState(false);
 
   // Keep local state in sync if the layer mutates externally.
@@ -143,7 +141,7 @@ function LayerControl({ layer }: { layer: BaseLayer }) {
         </span>
       </button>
       {expanded && (
-        <div className="border-t border-border px-2 py-2">
+        <div className="border-t border-border p-2">
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-muted-foreground">Opacity</span>
             <input

@@ -69,7 +69,6 @@ export function SaveDiagramDialog({
           <Label htmlFor="diagram-name">Name</Label>
           <Input
             id="diagram-name"
-            autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="schema-overview"
