@@ -38,6 +38,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -579,16 +583,6 @@ function DiagramToolbar({
         </Button>
         <Button
           size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onGenerateScript}
-          disabled={!hasLoaded || tableCount === 0}
-          title="Generate SQL DDL script"
-        >
-          <FileCode2 className="size-3.5" /> Generate script
-        </Button>
-        <Button
-          size="sm"
           variant="default"
           className="h-7 gap-1.5 text-xs"
           onClick={onApply}
@@ -597,58 +591,51 @@ function DiagramToolbar({
         >
           <Play className="size-3.5" /> Apply to DB…
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onSave}
-          disabled={!hasLoaded}
-          title="Save the diagram"
-        >
-          <Save className="size-3.5" /> Save
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onLoad}
-          title="Open a saved diagram"
-        >
-          <FolderOpen className="size-3.5" /> Load
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onImportOpen}
-          title="Import a diagram from a JSON or SQL file"
-        >
-          <Upload className="size-3.5" /> Import
-        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               size="sm"
               variant="ghost"
               className="h-7 gap-1.5 text-xs"
-              disabled={!hasLoaded || tableCount === 0}
-              title="Export the diagram"
+              disabled={!hasLoaded}
+              title="Save, load, import, export, or generate a script"
             >
-              <Download className="size-3.5" /> Export
+              <FolderOpen className="size-3.5" /> File
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => onExport("json")}>
-              <FileJson className="size-3.5" /> JSON (diagram doc)
+            <DropdownMenuItem onClick={onSave} disabled={!hasLoaded}>
+              <Save className="size-3.5" /> Save
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExport("sql")}>
-              <FileCode2 className="size-3.5" /> SQL (DDL script)
+            <DropdownMenuItem onClick={onLoad}>
+              <FolderOpen className="size-3.5" /> Load
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExport("png")}>
-              <ImageIcon className="size-3.5" /> PNG
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onImportOpen}>
+              <Upload className="size-3.5" /> Import…
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExport("jpg")}>
-              <ImageIcon className="size-3.5" /> JPEG
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={!hasLoaded || tableCount === 0}>
+                <Download className="size-3.5" /> Export
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem onClick={() => onExport("json")}>
+                  <FileJson className="size-3.5" /> JSON (diagram doc)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("sql")}>
+                  <FileCode2 className="size-3.5" /> SQL (DDL script)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("png")}>
+                  <ImageIcon className="size-3.5" /> PNG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("jpg")}>
+                  <ImageIcon className="size-3.5" /> JPEG
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onGenerateScript} disabled={!hasLoaded || tableCount === 0}>
+              <FileCode2 className="size-3.5" /> Generate script…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
