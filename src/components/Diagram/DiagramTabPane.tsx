@@ -28,6 +28,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Upload,
   Zap,
 } from "lucide-react";
@@ -44,6 +45,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import {
   type DiagIndex,
   type DiagramIntrospection,
@@ -73,6 +75,7 @@ import {
 import { exportDocAsJpg, exportDocAsJson, exportDocAsPng, exportDocAsSql } from "./exportDiagram";
 import { layoutDoc } from "./layout";
 import { TableNode } from "./TableNode";
+import { TableSearchPopover } from "./TableSearchPopover";
 import {
   type DiagramDoc,
   type DiagramTable as DocTable,
@@ -262,6 +265,8 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
     if (modeRef.current === "live") setApplyOpen(true);
   }
 
+  const [searchOpen, setSearchOpen] = useState(false);
+
   const [confirms, setConfirms] = useState<Confirms>({ edgeDelete: null, tableDelete: null });
   const { edgeDelete: confirmEdgeDelete, tableDelete: confirmTableDelete } = confirms;
   const setConfirmEdgeDelete = (v: string | null) =>
@@ -418,6 +423,33 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   };
   const onAddTable = () => setTableDialog({ open: true, editing: null });
 
+  const zoomToTable = useCallback(
+    (id: string) => {
+      const node = rf.getNode(id);
+      if (!node) return;
+      const w = node.measured?.width ?? node.width ?? 240;
+      const h = node.measured?.height ?? node.height ?? 120;
+      const cx = node.position.x + w / 2;
+      const cy = node.position.y + h / 2;
+      rf.setCenter(cx, cy, { zoom: 1.2, duration: 600 });
+    },
+    [rf],
+  );
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== "f") return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".cm-editor")) return;
+      e.preventDefault();
+      setSearchOpen((v) => !v);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="relative flex h-full flex-1 flex-col">
       <DiagramToolbar
@@ -437,6 +469,10 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
         onImportOpen={() => setImportOpen(true)}
         onExport={doExport}
         onRefresh={refresh}
+        tables={doc?.tables ?? []}
+        searchOpen={searchOpen}
+        setSearchOpen={setSearchOpen}
+        onZoomToTable={zoomToTable}
       />
 
       {error && (
@@ -516,6 +552,10 @@ type DiagramToolbarProps = {
   onImportOpen: () => void;
   onExport: (kind: "json" | "sql" | "png" | "jpg") => void;
   onRefresh: () => void;
+  tables: DocTable[];
+  searchOpen: boolean;
+  setSearchOpen: (v: boolean) => void;
+  onZoomToTable: (id: string) => void;
 };
 
 function DiagramToolbar({
@@ -535,6 +575,10 @@ function DiagramToolbar({
   onImportOpen,
   onExport,
   onRefresh,
+  tables,
+  searchOpen,
+  setSearchOpen,
+  onZoomToTable,
 }: DiagramToolbarProps) {
   return (
     <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
@@ -571,6 +615,30 @@ function DiagramToolbar({
         </button>
       </div>
       <div className="ml-auto flex items-center gap-1">
+        <Popover
+          open={searchOpen}
+          onOpenChange={(o) => {
+            if (!hasLoaded && o) return;
+            setSearchOpen(o);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1.5 text-xs"
+              disabled={!hasLoaded || tableCount === 0}
+              title="Find a table by name (⇧⌘F / Ctrl+Shift+F)"
+            >
+              <Search className="size-3.5" /> Find
+            </Button>
+          </PopoverTrigger>
+          <TableSearchPopover
+            tables={tables}
+            onSelect={onZoomToTable}
+            onClose={() => setSearchOpen(false)}
+          />
+        </Popover>
         <Button
           size="sm"
           variant="ghost"
