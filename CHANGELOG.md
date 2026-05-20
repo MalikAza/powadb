@@ -1,3 +1,24 @@
+## [0.9.0] - 2026-05-20
+
+### Added
+- Diagram visualization now renders foreign-key relationships, plus per-table indexes and sequences.
+- Custom query tabs can now be executed as scripts: multiple statements run sequentially and each result is surfaced.
+- Better query editor with usability improvements.
+- Snippets opened from the snippets panel now use the snippet's name as the tab title.
+- BYTEA type selection (Hex / UTF-8 / UUID / ULID / Base64) is now persisted for snippets and custom query tabs.
+- Filtering a BYTEA column by value now follows the column's selected BYTEA type (ULID / UUID) for input parsing.
+- Filter cells expose selection options for a smoother filter UX.
+- Filter inputs are now debounced to avoid re-querying on every keystroke.
+- Results grid columns are now resizable by dragging the column edge.
+- Report-a-bug button in Settings → About.
+
+### Changed
+- Wider spacing between tables in diagram visualization for better readability.
+- Frontend-wide refactor pass (react-doctor audit) across components, hooks and stores.
+
+### Fixed
+- Column resize handle UI in the results grid.
+
 ## [0.8.2] - 2026-05-19
 
 ### Fixed
