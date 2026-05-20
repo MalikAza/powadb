@@ -133,12 +133,14 @@ type Props = {
 export function BrowseTabPane({ tab, conn }: Props) {
   const patchTab = useTabs((s) => s.patchTab);
   const [fks, setFks] = useState<DiagFk[]>([]);
+  const byteaModes = useColumnDisplay((s) => s.byteaModes);
 
   const refresh = useCallback(async () => {
     const queryId = newQueryId();
     patchTab(tab.id, { loading: true, error: null });
     try {
-      const where = buildWhereClause(tab, conn.kind);
+      const cols = tab.result?.columns ?? [];
+      const where = buildWhereClause(tab, conn, cols, byteaModes);
       const orderBy = tab.sortCol
         ? ` ORDER BY ${quoteIdent(tab.sortCol, conn.kind)} ${tab.sortDir.toUpperCase()}`
         : "";
@@ -148,7 +150,7 @@ export function BrowseTabPane({ tab, conn }: Props) {
     } catch (e) {
       patchTab(tab.id, { error: String(e), loading: false });
     }
-  }, [tab, conn, patchTab]);
+  }, [tab, conn, patchTab, byteaModes]);
 
   useEffect(() => {
     refresh();
@@ -219,13 +221,77 @@ export function BrowseTabPane({ tab, conn }: Props) {
   );
 }
 
-function buildWhereClause(tab: BrowseTab, kind: DbKind): string {
+function buildWhereClause(
+  tab: BrowseTab,
+  conn: SavedConnection,
+  cols: Column[],
+  byteaModes: Record<string, ByteaDisplayMode>,
+): string {
+  const colsByName = new Map(cols.map((c) => [c.name, c]));
   const parts: string[] = [];
-  for (const [col, filter] of Object.entries(tab.filters)) {
-    if (isFilterComplete(filter)) parts.push(filterToSql(col, filter, kind));
+  for (const [colName, filter] of Object.entries(tab.filters)) {
+    const c = colsByName.get(colName);
+    const isBytea = c ? isByteaColumn(conn.kind, c) : false;
+    const byteaMode = isBytea
+      ? (byteaModes[columnDisplayKey(conn.id, tab.schema, tab.table, colName)] ?? "hex")
+      : null;
+    if (byteaMode && byteaMode !== "hex") {
+      const sql = byteaFilterToSql(colName, filter, conn.kind, byteaMode);
+      if (sql) parts.push(sql);
+      continue;
+    }
+    if (isFilterComplete(filter)) parts.push(filterToSql(colName, filter, conn.kind));
   }
   if (parts.length === 0) return "";
   return ` WHERE ${parts.join(" AND ")}`;
+}
+
+// BYTEA columns rendered as ULID/UUID need their filter values decoded back to
+// hex before going into SQL — otherwise the user typing a ULID would be compared
+// as a text string against the raw bytes and never match.
+function byteaFilterToSql(
+  colName: string,
+  filter: Filter,
+  kind: DbKind,
+  mode: ByteaDisplayMode,
+): string | null {
+  if (kind !== "postgres") return null;
+  const colQ = quoteIdent(colName, kind);
+  const toLit = (v: string): string | null => {
+    const hex = parseByteaInput(v, mode);
+    return hex === null ? null : `'\\x${hex}'::bytea`;
+  };
+  switch (filter.kind) {
+    case "is_null":
+      return `${colQ} IS NULL`;
+    case "is_not_null":
+      return `${colQ} IS NOT NULL`;
+    case "compare": {
+      const lit = toLit(filter.value);
+      return lit ? `${colQ} ${filter.op} ${lit}` : null;
+    }
+    case "like": {
+      // ULID/UUID substrings don't map to BYTEA substrings — require a fully
+      // valid value and treat "contains" as equality.
+      const lit = toLit(filter.value);
+      return lit ? `${colQ} = ${lit}` : null;
+    }
+    case "between": {
+      const a = toLit(filter.v1);
+      const b = toLit(filter.v2);
+      return a && b ? `${colQ} BETWEEN ${a} AND ${b}` : null;
+    }
+    case "in": {
+      const lits: string[] = [];
+      for (const v of filter.values) {
+        const lit = toLit(v);
+        if (!lit) return null;
+        lits.push(lit);
+      }
+      if (lits.length === 0) return null;
+      return `${colQ} IN (${lits.join(", ")})`;
+    }
+  }
 }
 
 function BrowseHeader({
@@ -494,6 +560,7 @@ function BrowseGrid({
             <BrowseFilterRow
               cols={cols}
               filters={tab.filters}
+              byteaColMode={byteaColMode}
               onFilter={onFilter}
               onStartResize={startResize}
               onResetWidth={resetWidth}
@@ -1210,12 +1277,14 @@ function BrowseHeaderRow({
 function BrowseFilterRow({
   cols,
   filters,
+  byteaColMode,
   onFilter,
   onStartResize,
   onResetWidth,
 }: {
   cols: Column[];
   filters: Record<string, Filter>;
+  byteaColMode: Map<number, ByteaDisplayMode>;
   onFilter: (col: string, filter: Filter | null) => void;
   onStartResize: (colIdx: number, e: React.PointerEvent) => void;
   onResetWidth: (colIdx: number) => void;
@@ -1224,17 +1293,25 @@ function BrowseFilterRow({
     <tr>
       <th className="border-b border-r border-border p-1"></th>
       <th className="border-b border-r border-border p-1"></th>
-      {cols.map((c, colIdx) => (
-        <th key={c.name} className="overflow-hidden border-b border-border p-0">
-          <div style={{ position: "relative" }} className="p-1">
-            <FilterCell filter={filters[c.name] ?? null} onCommit={(f) => onFilter(c.name, f)} />
-            <ColumnResizeHandle
-              onPointerDown={(e) => onStartResize(colIdx, e)}
-              onDoubleClick={() => onResetWidth(colIdx)}
-            />
-          </div>
-        </th>
-      ))}
+      {cols.map((c, colIdx) => {
+        const mode = byteaColMode.get(colIdx);
+        const byteaMode = mode && mode !== "hex" ? mode : null;
+        return (
+          <th key={c.name} className="overflow-hidden border-b border-border p-0">
+            <div style={{ position: "relative" }} className="p-1">
+              <FilterCell
+                filter={filters[c.name] ?? null}
+                byteaMode={byteaMode}
+                onCommit={(f) => onFilter(c.name, f)}
+              />
+              <ColumnResizeHandle
+                onPointerDown={(e) => onStartResize(colIdx, e)}
+                onDoubleClick={() => onResetWidth(colIdx)}
+              />
+            </div>
+          </th>
+        );
+      })}
     </tr>
   );
 }
@@ -1728,9 +1805,11 @@ function buildFilter(op: FilterOp, v1: string, v2: string): Filter | null {
 
 function FilterCell({
   filter,
+  byteaMode,
   onCommit,
 }: {
   filter: Filter | null;
+  byteaMode: ByteaDisplayMode | null;
   onCommit: (filter: Filter | null) => void;
 }) {
   const [state, setState] = useState<{ op: FilterOp; v1: string; v2: string }>(() => {
@@ -1775,15 +1854,30 @@ function FilterCell({
   const needsValue = op !== "is_null" && op !== "is_not_null";
   const isBetween = op === "between";
 
-  const placeholder = isBetween
-    ? "min"
-    : op === "in"
-      ? "v1, v2, v3"
-      : op === "like"
-        ? "filter…"
-        : "value";
+  const byteaHint = byteaMode === "ulid" ? "ULID" : byteaMode === "uuid" ? "UUID" : null;
+  const placeholder = byteaHint
+    ? isBetween
+      ? `min ${byteaHint}`
+      : op === "in"
+        ? `${byteaHint}, ${byteaHint}, …`
+        : byteaHint
+    : isBetween
+      ? "min"
+      : op === "in"
+        ? "v1, v2, v3"
+        : op === "like"
+          ? "filter…"
+          : "value";
+
+  // Flag invalid bytea input (typed value doesn't parse as the active mode) so
+  // the user sees why the filter isn't being applied.
+  const v1Invalid =
+    byteaMode !== null && v1.trim() !== "" && parseByteaInput(v1, byteaMode) === null;
+  const v2Invalid =
+    byteaMode !== null && isBetween && v2.trim() !== "" && parseByteaInput(v2, byteaMode) === null;
 
   const inputClass = "h-6 min-w-0 flex-1 px-1.5 text-[11px]";
+  const invalidClass = "border-destructive focus-visible:ring-destructive";
 
   return (
     <ButtonGroup className="w-full">
@@ -1814,15 +1908,17 @@ function FilterCell({
           value={v1}
           onChange={(e) => setV1(e.target.value)}
           placeholder={placeholder}
-          className={inputClass}
+          className={cn(inputClass, v1Invalid && invalidClass)}
+          title={v1Invalid ? `Invalid ${byteaHint} value` : undefined}
         />
       )}
       {isBetween && (
         <Input
           value={v2}
           onChange={(e) => setV2(e.target.value)}
-          placeholder="max"
-          className={inputClass}
+          placeholder={byteaHint ? `max ${byteaHint}` : "max"}
+          className={cn(inputClass, v2Invalid && invalidClass)}
+          title={v2Invalid ? `Invalid ${byteaHint} value` : undefined}
         />
       )}
     </ButtonGroup>
