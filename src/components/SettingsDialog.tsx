@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import {
+  Bug,
   CheckCircle2,
   Download,
   Laptop,
@@ -387,15 +388,29 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                 <div className="text-xs text-muted-foreground">
                   PowaDB <span className="font-mono">v{version ?? "…"}</span>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={checkForUpdate}
-                  disabled={checkingUpdate}
-                >
-                  <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
-                  Check for updates
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      ipc
+                        .openExternal("https://github.com/MalikAza/powadb/issues/new")
+                        .catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
+                    }
+                  >
+                    <Bug className="size-3.5" />
+                    Report a bug
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={checkForUpdate}
+                    disabled={checkingUpdate}
+                  >
+                    <RefreshCw className={cn("size-3.5", checkingUpdate && "animate-spin")} />
+                    Check for updates
+                  </Button>
+                </div>
               </div>
             </Section>
           </TabsContent>

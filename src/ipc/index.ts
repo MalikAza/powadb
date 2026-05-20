@@ -179,6 +179,8 @@ export const ipc = {
   getSettings: (): Promise<AppSettings> => invoke("get_settings"),
   saveSettings: (settings: AppSettings): Promise<AppSettings> =>
     invoke("save_settings", { settings }),
+
+  openExternal: (url: string): Promise<void> => invoke("open_external", { url }),
 };
 
 export type DecodedGeometry = {

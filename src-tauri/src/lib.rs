@@ -216,6 +216,7 @@ pub fn run() {
             commands::dump::pick_sqlite_path,
             commands::settings::get_settings,
             commands::settings::save_settings,
+            commands::settings::open_external,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
