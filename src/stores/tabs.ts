@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { ByteaDisplayMode } from "@/lib/bytea";
-import type { DiagramIntrospection } from "../ipc";
+import type { DiagramIntrospection, ScriptResult } from "../ipc";
 import type { QueryResult } from "../types";
 import type { Filter } from "../utils/sql";
 
@@ -22,6 +22,13 @@ export type QueryTab = BaseTab & {
   runningQueryId: string | null;
   byteaModes: Record<string, ByteaDisplayMode>;
   snippetId: string | null;
+  /** When true, the editor runs as a multi-statement script: SQL is split
+   *  client-side and each statement runs on a shared connection. The results
+   *  panel switches from a single grid to a per-statement summary list. */
+  runAsScript: boolean;
+  /** Result of the most recent script run. Mutually exclusive with `result`
+   *  in practice — `result` is populated for single-statement runs. */
+  scriptResult: ScriptResult | null;
 };
 
 export type BrowseTab = BaseTab & {
@@ -91,6 +98,8 @@ export const useTabs = create<State & Actions>((set, get) => ({
       runningQueryId: null,
       byteaModes: init?.byteaModes ?? {},
       snippetId: init?.snippetId ?? null,
+      runAsScript: false,
+      scriptResult: null,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
     return id;

@@ -3,6 +3,7 @@ mod drivers;
 mod error;
 mod job_registry;
 mod pool_registry;
+mod sql_split;
 mod ssh;
 mod storage;
 mod wireguard;
@@ -160,6 +161,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::query::run_query,
+            commands::query::run_script,
             commands::query::cancel_query,
             commands::connections::list_connections,
             commands::connections::save_connection,

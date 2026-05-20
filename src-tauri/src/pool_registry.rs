@@ -9,7 +9,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex};
 
 use crate::commands::connections::resolve_connection;
-use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult};
+use crate::drivers::{
+    mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult, ScriptResult,
+};
 use crate::error::{AppError, AppResult};
 use crate::ssh::{self, SshConfig, SshTunnelHandle};
 use crate::storage::{DbKind, SavedConnection};
@@ -289,6 +291,31 @@ pub async fn run_with_cancel(
             PoolHandle::Postgres(p) => pg_drv::execute(&p, sql).await,
             PoolHandle::MySql(p) => mysql_drv::execute(&p, sql).await,
             PoolHandle::Sqlite(p) => sqlite_drv::execute(&p, sql).await,
+        }
+    };
+
+    let result = tokio::select! {
+        r = exec => r,
+        _ = cancel_rx => Err(crate::error::AppError::Canceled),
+    };
+
+    registry.forget_cancel(query_id).await;
+    result
+}
+
+pub async fn run_script_with_cancel(
+    registry: &PoolRegistry,
+    handle: PoolHandle,
+    query_id: &str,
+    sql: &str,
+) -> AppResult<ScriptResult> {
+    let cancel_rx = registry.register_cancel(query_id).await;
+
+    let exec = async move {
+        match handle {
+            PoolHandle::Postgres(p) => pg_drv::execute_script(&p, sql).await,
+            PoolHandle::MySql(p) => mysql_drv::execute_script(&p, sql).await,
+            PoolHandle::Sqlite(p) => sqlite_drv::execute_script(&p, sql).await,
         }
     };
 

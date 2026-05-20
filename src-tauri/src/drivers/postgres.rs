@@ -6,8 +6,9 @@ use sqlx::postgres::types::Oid;
 use sqlx::postgres::{PgPool, PgPoolOptions, PgRow};
 use sqlx::{Column, Executor, Row, TypeInfo, ValueRef};
 
-use super::{Column as ColMeta, QueryResult};
+use super::{sql_excerpt, Column as ColMeta, QueryResult, ScriptResult, StatementResult};
 use crate::error::{AppError, AppResult};
+use crate::sql_split::split_statements;
 
 pub async fn connect(url: &str) -> AppResult<PgPool> {
     let pool = PgPoolOptions::new()
@@ -77,6 +78,131 @@ pub async fn execute(pool: &PgPool, sql: &str) -> AppResult<QueryResult> {
         rows: json_rows,
         elapsed_ms: start.elapsed().as_millis(),
     })
+}
+
+/// Execute a multi-statement SQL script on a single pooled connection.
+///
+/// Each statement is run in order. Row-returning and non-row-returning
+/// statements are handled uniformly via `fetch_many`, which yields the row
+/// stream interleaved with the driver's per-statement `QueryResult` (carrying
+/// `rows_affected`). When a statement errors we stop and return everything
+/// accumulated so far with the error on the failing statement.
+pub async fn execute_script(pool: &PgPool, sql: &str) -> AppResult<ScriptResult> {
+    let stmts = split_statements(sql);
+    let mut conn = pool.acquire().await?;
+    let mut statements: Vec<StatementResult> = Vec::with_capacity(stmts.len());
+
+    for (idx, stmt) in stmts.iter().enumerate() {
+        let excerpt = sql_excerpt(stmt);
+        let started = Instant::now();
+        let outcome = run_one_pg(&mut conn, pool, stmt).await;
+        let elapsed_ms = started.elapsed().as_millis();
+        match outcome {
+            Ok((result, rows_affected)) => {
+                statements.push(StatementResult {
+                    index: idx,
+                    sql_excerpt: excerpt,
+                    elapsed_ms,
+                    rows_affected,
+                    result,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                statements.push(StatementResult {
+                    index: idx,
+                    sql_excerpt: excerpt,
+                    elapsed_ms,
+                    rows_affected: None,
+                    result: None,
+                    error: Some(e.to_string()),
+                });
+                break;
+            }
+        }
+    }
+
+    Ok(ScriptResult { statements })
+}
+
+async fn run_one_pg(
+    conn: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    stmt: &str,
+) -> AppResult<(Option<QueryResult>, Option<u64>)> {
+    let started = Instant::now();
+    // Ask the driver to describe the statement first so we can pick the right
+    // execution path. `describe` errors are non-fatal — we just assume the
+    // statement returns rows and let `fetch_all` decide.
+    let returns_rows = match conn.describe(stmt).await {
+        Ok(d) => !d.columns.is_empty(),
+        Err(_) => true,
+    };
+
+    if !returns_rows {
+        let r = sqlx::query(stmt).execute(&mut *conn).await?;
+        return Ok((None, Some(r.rows_affected())));
+    }
+
+    let rows: Vec<PgRow> = sqlx::query(stmt).fetch_all(&mut *conn).await?;
+    let first = match rows.first() {
+        Some(r) => r,
+        // Describe said the statement returns rows but the result was empty.
+        // We still want column metadata for the UI grid. Re-describe and use
+        // its columns; ignore errors and fall back to an empty column list.
+        None => {
+            let raw_cols: Vec<RawCol> = match conn.describe(stmt).await {
+                Ok(d) => d
+                    .columns
+                    .iter()
+                    .map(|c| RawCol {
+                        name: c.name().to_string(),
+                        type_name: c.type_info().name().to_string(),
+                        relation_id: c.relation_id().map(|o| o.0),
+                        relation_attribute_no: c.relation_attribute_no(),
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+            let columns = resolve_pg_origins(pool, raw_cols).await;
+            return Ok((
+                Some(QueryResult {
+                    columns,
+                    rows: Vec::new(),
+                    elapsed_ms: started.elapsed().as_millis(),
+                }),
+                None,
+            ));
+        }
+    };
+
+    let raw_cols: Vec<RawCol> = first
+        .columns()
+        .iter()
+        .map(|c| RawCol {
+            name: c.name().to_string(),
+            type_name: c.type_info().name().to_string(),
+            relation_id: c.relation_id().map(|o| o.0),
+            relation_attribute_no: c.relation_attribute_no(),
+        })
+        .collect();
+    let columns = resolve_pg_origins(pool, raw_cols).await;
+    let mut json_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut out = Vec::with_capacity(row.columns().len());
+        for (i, col) in row.columns().iter().enumerate() {
+            out.push(decode_pg(row, i, col.type_info().name())?);
+        }
+        json_rows.push(out);
+    }
+    Ok((
+        Some(QueryResult {
+            columns,
+            rows: json_rows,
+            elapsed_ms: started.elapsed().as_millis(),
+        }),
+        None,
+    ))
 }
 
 fn decode_pg(row: &PgRow, idx: usize, type_name: &str) -> AppResult<Value> {

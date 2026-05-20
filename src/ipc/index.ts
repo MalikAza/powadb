@@ -21,6 +21,9 @@ export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
 
+  runScript: (connectionId: string, queryId: string, sql: string): Promise<ScriptResult> =>
+    invoke("run_script", { connectionId, queryId, sql }),
+
   cancelQuery: (queryId: string): Promise<boolean> => invoke("cancel_query", { queryId }),
 
   listConnections: (): Promise<SavedConnection[]> => invoke("list_connections"),
@@ -181,6 +184,19 @@ export const ipc = {
     invoke("save_settings", { settings }),
 
   openExternal: (url: string): Promise<void> => invoke("open_external", { url }),
+};
+
+export type StatementResult = {
+  index: number;
+  sql_excerpt: string;
+  elapsed_ms: number;
+  rows_affected?: number;
+  result?: QueryResult;
+  error?: string;
+};
+
+export type ScriptResult = {
+  statements: StatementResult[];
 };
 
 export type DecodedGeometry = {

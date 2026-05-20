@@ -4,8 +4,9 @@ use serde_json::{json, Value};
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{Column, Executor, Row, TypeInfo};
 
-use super::{Column as ColMeta, QueryResult};
+use super::{sql_excerpt, Column as ColMeta, QueryResult, ScriptResult, StatementResult};
 use crate::error::{AppError, AppResult};
+use crate::sql_split::split_statements;
 
 pub async fn connect(url: &str) -> AppResult<MySqlPool> {
     let pool = MySqlPoolOptions::new()
@@ -73,6 +74,106 @@ pub async fn execute(pool: &MySqlPool, sql: &str) -> AppResult<QueryResult> {
         rows: json_rows,
         elapsed_ms: start.elapsed().as_millis(),
     })
+}
+
+pub async fn execute_script(pool: &MySqlPool, sql: &str) -> AppResult<ScriptResult> {
+    let stmts = split_statements(sql);
+    let mut conn = pool.acquire().await?;
+    let mut statements: Vec<StatementResult> = Vec::with_capacity(stmts.len());
+
+    for (idx, stmt) in stmts.iter().enumerate() {
+        let excerpt = sql_excerpt(stmt);
+        let started = Instant::now();
+        let outcome = run_one_mysql(&mut conn, stmt).await;
+        let elapsed_ms = started.elapsed().as_millis();
+        match outcome {
+            Ok((result, rows_affected)) => {
+                statements.push(StatementResult {
+                    index: idx,
+                    sql_excerpt: excerpt,
+                    elapsed_ms,
+                    rows_affected,
+                    result,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                statements.push(StatementResult {
+                    index: idx,
+                    sql_excerpt: excerpt,
+                    elapsed_ms,
+                    rows_affected: None,
+                    result: None,
+                    error: Some(e.to_string()),
+                });
+                break;
+            }
+        }
+    }
+
+    Ok(ScriptResult { statements })
+}
+
+async fn run_one_mysql(
+    conn: &mut sqlx::MySqlConnection,
+    stmt: &str,
+) -> AppResult<(Option<QueryResult>, Option<u64>)> {
+    let started = Instant::now();
+    let returns_rows = match conn.describe(stmt).await {
+        Ok(d) => !d.columns.is_empty(),
+        Err(_) => true,
+    };
+
+    if !returns_rows {
+        let r = sqlx::query(stmt).execute(&mut *conn).await?;
+        return Ok((None, Some(r.rows_affected())));
+    }
+
+    let rows: Vec<MySqlRow> = sqlx::query(stmt).fetch_all(&mut *conn).await?;
+    let columns: Vec<ColMeta> = if let Some(first) = rows.first() {
+        first
+            .columns()
+            .iter()
+            .map(|c| ColMeta {
+                name: c.name().to_string(),
+                type_name: c.type_info().name().to_string(),
+                source_schema: None,
+                source_table: None,
+                source_column: None,
+            })
+            .collect()
+    } else {
+        match conn.describe(stmt).await {
+            Ok(d) => d
+                .columns
+                .iter()
+                .map(|c| ColMeta {
+                    name: c.name().to_string(),
+                    type_name: c.type_info().name().to_string(),
+                    source_schema: None,
+                    source_table: None,
+                    source_column: None,
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    let mut json_rows: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut out = Vec::with_capacity(row.columns().len());
+        for (i, col) in row.columns().iter().enumerate() {
+            out.push(decode_mysql(row, i, col.type_info().name())?);
+        }
+        json_rows.push(out);
+    }
+    Ok((
+        Some(QueryResult {
+            columns,
+            rows: json_rows,
+            elapsed_ms: started.elapsed().as_millis(),
+        }),
+        None,
+    ))
 }
 
 fn decode_mysql(row: &MySqlRow, idx: usize, type_name: &str) -> AppResult<Value> {
