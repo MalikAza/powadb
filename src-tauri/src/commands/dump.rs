@@ -300,9 +300,8 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Mysql, ToolKind::Client) => s.mysql_path.as_deref(),
         // sqlite3 binary handles both dump (`.dump`) and client (`.read`) modes.
         (DbKind::Sqlite, _) => s.sqlite3_path.as_deref(),
-        // Mongo: no override fields in AppSettings yet (Phase-7 work); rely
-        // on `which` finding mongodump/mongorestore on the user's PATH.
-        (DbKind::Mongo, _) => None,
+        (DbKind::Mongo, ToolKind::Dump) => s.mongodump_path.as_deref(),
+        (DbKind::Mongo, ToolKind::Client) => s.mongorestore_path.as_deref(),
     };
     if let Some(p) = override_path.filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));

@@ -163,6 +163,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::query::run_query,
             commands::query::run_script,
+            commands::query::run_engine_query,
             commands::query::cancel_query,
             commands::connections::list_connections,
             commands::connections::save_connection,

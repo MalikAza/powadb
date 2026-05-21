@@ -49,6 +49,7 @@ import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
 import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
+import { mongoDocumentsToQueryResult } from "../utils/mongo";
 import {
   type CompareOp,
   type Filter,
@@ -139,6 +140,31 @@ export function BrowseTabPane({ tab, conn }: Props) {
     const queryId = newQueryId();
     patchTab(tab.id, { loading: true, error: null });
     try {
+      if (conn.kind === "mongo") {
+        // Mongo branch: tab.schema is the database name, tab.table is the
+        // collection. The SQL filter UI doesn't translate yet — we send a
+        // bare find({}) with paging. Sorting is also SQL-only for now.
+        const er = await ipc.runEngineQuery(conn.id, {
+          kind: "mongo",
+          value: {
+            op: "find",
+            collection: tab.table,
+            database: tab.schema,
+            filter: {},
+            limit: tab.limit,
+            skip: tab.offset,
+          },
+        });
+        if (er.kind !== "documents") {
+          throw new Error(`Mongo find returned unexpected result kind: ${er.kind}`);
+        }
+        const result = mongoDocumentsToQueryResult(
+          er.docs as Record<string, unknown>[],
+          er.elapsed_ms,
+        );
+        patchTab(tab.id, { result, loading: false });
+        return;
+      }
       const cols = tab.result?.columns ?? [];
       const where = buildWhereClause(tab, conn, cols, byteaModes);
       const orderBy = tab.sortCol
@@ -158,13 +184,23 @@ export function BrowseTabPane({ tab, conn }: Props) {
 
   useEffect(() => {
     if (tab.pkCols !== null) return;
+    // Mongo has implicit _id as the primary key — no need to query the server.
+    if (conn.kind === "mongo") {
+      patchTab(tab.id, { pkCols: ["_id"] });
+      return;
+    }
     ipc
       .getPrimaryKeyColumns(conn.id, tab.schema, tab.table)
       .then((cols) => patchTab(tab.id, { pkCols: cols }))
       .catch(() => patchTab(tab.id, { pkCols: [] }));
-  }, [tab.id, tab.pkCols, conn.id, tab.schema, tab.table, patchTab]);
+  }, [tab.id, tab.pkCols, conn.id, conn.kind, tab.schema, tab.table, patchTab]);
 
   useEffect(() => {
+    // Foreign keys don't exist in Mongo; skip the IPC entirely.
+    if (conn.kind === "mongo") {
+      setFks([]);
+      return;
+    }
     let cancelled = false;
     ipc
       .listForeignKeys(conn.id, tab.schema, tab.table)
@@ -177,7 +213,7 @@ export function BrowseTabPane({ tab, conn }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [conn.id, tab.schema, tab.table]);
+  }, [conn.id, conn.kind, tab.schema, tab.table]);
 
   function setFilter(col: string, filter: Filter | null) {
     const next = { ...tab.filters };

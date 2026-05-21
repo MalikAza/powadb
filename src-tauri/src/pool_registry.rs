@@ -489,6 +489,14 @@ async fn open_pool(
         // Mongo uses its own URI syntax (mongodb:// or mongodb+srv://). For
         // now we accept the connection's `database` field as the URI verbatim
         // if it looks like one; otherwise build a basic URI from host/port.
+        //
+        // Auth source: MongoDB derives the auth source from the database in
+        // the URI path (overridable by `?authSource=…`). Most app users are
+        // registered against a specific database, not `admin`, so we put the
+        // connection's `database` in the path. If the user truly wants to
+        // authenticate against `admin`, they can either leave the database
+        // empty (we default to `admin`) or paste a full URI with the explicit
+        // `?authSource=admin` parameter.
         let uri = if conn.database.starts_with("mongodb://")
             || conn.database.starts_with("mongodb+srv://")
         {
@@ -499,17 +507,24 @@ async fn open_pool(
                 None if !conn.username.is_empty() => format!("{}@", urlencode(&conn.username)),
                 None => String::new(),
             };
-            format!("mongodb://{userinfo}{host}:{port}")
+            let db_path = if conn.database.trim().is_empty() {
+                "admin".to_string()
+            } else {
+                urlencode(conn.database.trim())
+            };
+            format!("mongodb://{userinfo}{host}:{port}/{db_path}")
         };
-        // For mongo, `database` doubles as either URI or default-db. When it's
-        // a URI, fall back to "admin" as the default database the user can
-        // switch from.
-        let default_db = if conn.database.starts_with("mongodb") {
-            "admin"
+        // The default DB for collection lookups: prefer the connection's
+        // configured database; fall back to "admin" only if nothing is set
+        // (or the user supplied a full URI, in which case `parse` will pick
+        // up whatever's in the URI path).
+        let default_db = if conn.database.starts_with("mongodb") || conn.database.trim().is_empty()
+        {
+            "admin".to_string()
         } else {
-            &conn.database
+            conn.database.trim().to_string()
         };
-        return Ok(Arc::new(MongoEngine::connect(&uri, default_db).await?));
+        return Ok(Arc::new(MongoEngine::connect(&uri, &default_db).await?));
     }
     let url = build_url(
         &conn.kind,

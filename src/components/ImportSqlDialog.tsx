@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import type { DbKind } from "@/types";
 import {
   type DumpEngine,
   type DumpProgressEvent,
@@ -292,9 +293,10 @@ function ImportSqlDialogBody({
   );
 }
 
-function clientToolName(kind: "postgres" | "mysql" | "sqlite"): string {
+function clientToolName(kind: DbKind): string {
   if (kind === "postgres") return "psql";
   if (kind === "mysql") return "mysql";
+  if (kind === "mongo") return "mongorestore";
   return "sqlite3";
 }
 

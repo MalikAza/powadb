@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { DbKind } from "@/types";
 
-export const dbKindSchema = z.enum(["postgres", "mysql", "sqlite"]);
+export const dbKindSchema = z.enum(["postgres", "mysql", "sqlite", "mongo"]);
 
 export const themeModeSchema = z.enum(["light", "dark", "system"]);
 export type ThemeModeEnum = z.infer<typeof themeModeSchema>;
@@ -68,6 +68,13 @@ export const connectionFormSchema = z
         });
       }
       return;
+    }
+    if (v.kind === "mongo") {
+      // Mongo accepts either a full URI in the database field or host+port.
+      // Skip host/port validation when the database looks like a URI.
+      const looksLikeUri =
+        v.database.startsWith("mongodb://") || v.database.startsWith("mongodb+srv://");
+      if (looksLikeUri) return;
     }
     if (v.host.trim() === "") {
       ctx.addIssue({
@@ -267,4 +274,7 @@ export const KIND_DEFAULTS: Record<DbKind, { port: number; database: string; use
   mysql: { port: 3306, database: "", username: "root" },
   // SQLite is file-based: host/port/username are unused; `database` holds the file path.
   sqlite: { port: 0, database: "", username: "" },
+  // Mongo: `database` may hold a full mongodb:// or mongodb+srv:// URI, in
+  // which case host/port/username are ignored.
+  mongo: { port: 27017, database: "", username: "" },
 };

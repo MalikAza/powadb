@@ -134,6 +134,13 @@ pub trait Engine: Send + Sync {
     fn as_sql_pool(&self) -> Option<SqlPoolView<'_>> {
         None
     }
+
+    /// Downcast to the Mongo engine for command paths that need direct
+    /// `mongodb::Client` access (introspection, namespace listing, …).
+    /// SQL engines return `None`.
+    fn as_mongo(&self) -> Option<&crate::engine::mongo::MongoEngine> {
+        None
+    }
 }
 
 /// Borrow the SQL pool view from an engine handle, or return a consistent
@@ -154,8 +161,13 @@ pub fn require_sql_pool<'a>(handle: &'a EngineHandle, op: &str) -> AppResult<Sql
 
 /// What the user is asking the engine to do. The variant matches the engine's
 /// query language; the IPC layer parses the editor text accordingly.
+///
+/// Serde representation: adjacently tagged (`{ kind, value }`). Internal
+/// tagging doesn't work here because `Sql(String)` is a newtype around a
+/// primitive — serde's internal tag needs every variant's payload to be a
+/// struct or map-like type.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum EngineQuery {
     /// Raw SQL, single statement or multi-statement script.
     Sql(String),
@@ -170,6 +182,12 @@ pub enum EngineQuery {
 pub enum MongoOp {
     Find {
         collection: String,
+        /// Database override. When `None`, the op runs against the engine's
+        /// default database (taken from the connection URI). Set this when
+        /// the UI is browsing a specific Mongo database — the sidebar's
+        /// per-DB grouping won't otherwise be reflected in the query path.
+        #[serde(default)]
+        database: Option<String>,
         #[serde(default)]
         filter: Value,
         #[serde(default)]
@@ -183,29 +201,42 @@ pub enum MongoOp {
     },
     Aggregate {
         collection: String,
+        #[serde(default)]
+        database: Option<String>,
         /// JSON array of stages: `[{"$match": {...}}, {"$group": {...}}, ...]`.
         pipeline: Value,
     },
     InsertOne {
         collection: String,
+        #[serde(default)]
+        database: Option<String>,
         document: Value,
     },
     InsertMany {
         collection: String,
+        #[serde(default)]
+        database: Option<String>,
         documents: Vec<Value>,
     },
     UpdateMany {
         collection: String,
+        #[serde(default)]
+        database: Option<String>,
         filter: Value,
         update: Value,
     },
     DeleteMany {
         collection: String,
+        #[serde(default)]
+        database: Option<String>,
         filter: Value,
     },
     /// Escape hatch for the long tail of admin commands. Mirrors
-    /// `db.runCommand(doc)`.
-    RunCommand(Value),
+    /// `db.runCommand(doc)`. Carries the command document as `value` so the
+    /// shape matches the internally-tagged convention (`{ op: "run_command",
+    /// value: { ... } }`) — serde's internal tagging needs every variant's
+    /// payload to be a struct or map, not a bare `serde_json::Value`.
+    RunCommand { value: Value },
 }
 
 /// Engine-agnostic query result. SQL engines return `Tabular`; Mongo returns

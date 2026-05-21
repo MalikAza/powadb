@@ -32,6 +32,15 @@ pub async fn introspect_schema(
     connection_id: String,
 ) -> AppResult<Vec<SchemaMeta>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
+
+    // MongoDB: shoehorn databases → collections into the SchemaMeta shape so
+    // the existing schema sidebar can render them with no UI changes.
+    // Collections appear as "tables" with no columns (Mongo has no fixed
+    // schema; a future pass could sample documents to infer field shapes).
+    if let Some(mongo) = handle.as_mongo() {
+        return introspect_mongo(mongo).await;
+    }
+
     match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(pool)) => {
             let rows = sqlx::query(
@@ -156,6 +165,133 @@ struct RowOut {
     data_type: String,
     nullable: bool,
     table_type: String,
+}
+
+/// Sample documents from each collection to infer field names + BSON types.
+/// MongoDB has no fixed schema, so this is a best-effort snapshot: we look at
+/// `SAMPLE_SIZE` documents and report every top-level field we saw, with the
+/// set of BSON types observed for each. A field is marked `nullable` if at
+/// least one sampled document didn't contain it (or contained an explicit
+/// null).
+const MONGO_SAMPLE_SIZE: i64 = 25;
+
+async fn introspect_mongo(mongo: &crate::engine::MongoEngine) -> AppResult<Vec<SchemaMeta>> {
+    use futures_util::TryStreamExt;
+    use mongodb::bson::{doc, Document};
+    use std::collections::BTreeMap;
+
+    let mut schemas: Vec<SchemaMeta> = Vec::new();
+    let dbs = mongo
+        .client
+        .list_database_names()
+        .await
+        .map_err(|e| AppError::Other(format!("mongo list databases: {e}")))?;
+    for db_name in dbs {
+        // Skip internal admin DBs so the sidebar isn't cluttered.
+        if matches!(db_name.as_str(), "admin" | "config" | "local") {
+            continue;
+        }
+        let db = mongo.client.database(&db_name);
+        let coll_cursor = db
+            .list_collections()
+            .await
+            .map_err(|e| AppError::Other(format!("mongo list collections: {e}")))?;
+        let coll_specs: Vec<mongodb::results::CollectionSpecification> = coll_cursor
+            .try_collect()
+            .await
+            .map_err(|e| AppError::Other(format!("mongo list collections: {e}")))?;
+
+        let mut tables: Vec<TableMeta> = Vec::with_capacity(coll_specs.len());
+        for spec in coll_specs {
+            let kind = match spec.collection_type {
+                mongodb::results::CollectionType::View => "view".into(),
+                _ => "table".into(),
+            };
+            // BTreeMap so columns come out alphabetically — predictable for the
+            // sidebar. Insert order on Mongo's side is undefined anyway.
+            let mut fields: BTreeMap<String, FieldStats> = BTreeMap::new();
+            let mut sampled = 0u64;
+            let coll = db.collection::<Document>(&spec.name);
+            // $sample is cheap on collections of any size and avoids scanning
+            // the whole thing just to peek at the shape.
+            if let Ok(cursor) = coll
+                .aggregate(vec![doc! { "$sample": { "size": MONGO_SAMPLE_SIZE } }])
+                .await
+            {
+                let docs: Vec<Document> = cursor.try_collect().await.unwrap_or_default();
+                sampled = docs.len() as u64;
+                for d in &docs {
+                    for (k, v) in d {
+                        let stats = fields.entry(k.clone()).or_default();
+                        stats.present += 1;
+                        let type_name = bson_type_name(v);
+                        if !stats.types.iter().any(|t| t == type_name) {
+                            stats.types.push(type_name.to_string());
+                        }
+                    }
+                }
+            }
+            let columns: Vec<ColumnMeta> = fields
+                .into_iter()
+                .map(|(name, stats)| {
+                    let data_type = if stats.types.is_empty() {
+                        "unknown".into()
+                    } else {
+                        stats.types.join(" | ")
+                    };
+                    ColumnMeta {
+                        name,
+                        data_type,
+                        // Field is nullable if any sampled doc was missing it.
+                        nullable: sampled > 0 && stats.present < sampled,
+                    }
+                })
+                .collect();
+            tables.push(TableMeta {
+                name: spec.name,
+                kind,
+                columns,
+            });
+        }
+        schemas.push(SchemaMeta {
+            name: db_name,
+            tables,
+        });
+    }
+    Ok(schemas)
+}
+
+#[derive(Default)]
+struct FieldStats {
+    present: u64,
+    types: Vec<String>,
+}
+
+fn bson_type_name(b: &mongodb::bson::Bson) -> &'static str {
+    use mongodb::bson::Bson;
+    match b {
+        Bson::Double(_) => "double",
+        Bson::String(_) => "string",
+        Bson::Array(_) => "array",
+        Bson::Document(_) => "object",
+        Bson::Boolean(_) => "bool",
+        Bson::Null => "null",
+        Bson::RegularExpression(_) => "regex",
+        Bson::JavaScriptCode(_) => "javascript",
+        Bson::JavaScriptCodeWithScope(_) => "javascript_scoped",
+        Bson::Int32(_) => "int32",
+        Bson::Int64(_) => "int64",
+        Bson::Timestamp(_) => "timestamp",
+        Bson::Binary(_) => "binary",
+        Bson::ObjectId(_) => "ObjectId",
+        Bson::DateTime(_) => "Date",
+        Bson::Symbol(_) => "symbol",
+        Bson::Decimal128(_) => "decimal128",
+        Bson::Undefined => "undefined",
+        Bson::MaxKey => "MaxKey",
+        Bson::MinKey => "MinKey",
+        Bson::DbPointer(_) => "DbPointer",
+    }
 }
 
 #[tauri::command]

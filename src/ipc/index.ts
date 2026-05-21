@@ -34,6 +34,46 @@ export type Capabilities = {
   query_language: QueryLanguage;
 };
 
+/// MongoDB operations the frontend can issue via `runEngineQuery`. Mirrors
+/// the Rust `MongoOp` enum (serde tag = "op", snake_case). For exploration
+/// we accept structured ops; a future `mongosh`-style DSL parser would emit
+/// these from `db.users.find({...}).limit(10)` etc.
+export type MongoOp =
+  | {
+      op: "find";
+      collection: string;
+      database?: string;
+      filter?: unknown;
+      projection?: unknown;
+      limit?: number;
+      skip?: number;
+      sort?: unknown;
+    }
+  | { op: "aggregate"; collection: string; database?: string; pipeline: unknown[] }
+  | { op: "insert_one"; collection: string; database?: string; document: unknown }
+  | { op: "insert_many"; collection: string; database?: string; documents: unknown[] }
+  | {
+      op: "update_many";
+      collection: string;
+      database?: string;
+      filter: unknown;
+      update: unknown;
+    }
+  | { op: "delete_many"; collection: string; database?: string; filter: unknown }
+  | { op: "run_command"; value: unknown };
+
+/// Engine-agnostic query input. SQL engines accept `{ kind: "sql", value: "<sql>" }`;
+/// Mongo accepts `{ kind: "mongo", value: MongoOp }`.
+export type EngineQuery = { kind: "sql"; value: string } | { kind: "mongo"; value: MongoOp };
+
+/// Engine-agnostic result. The variant the frontend sees depends on the
+/// engine: SQL → `tabular`, Mongo find/aggregate → `documents`, Mongo writes
+/// → `affected`.
+export type EngineResult =
+  | { kind: "tabular"; columns: unknown[]; rows: unknown[][]; elapsed_ms: number }
+  | { kind: "documents"; docs: unknown[]; elapsed_ms: number }
+  | { kind: "affected"; rows: number; elapsed_ms: number };
+
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
@@ -78,6 +118,13 @@ export const ipc = {
 
   getCapabilities: (connectionId: string): Promise<Capabilities> =>
     invoke("get_capabilities", { connectionId }),
+
+  /// Engine-agnostic query path used for non-SQL engines (currently Mongo).
+  /// SQL connections should keep using `runQuery` / `runScript` — those still
+  /// log to history correctly, while this path is logging-stubbed (Phase-8
+  /// follow-up).
+  runEngineQuery: (connectionId: string, query: EngineQuery): Promise<EngineResult> =>
+    invoke("run_engine_query", { connectionId, query }),
 
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),

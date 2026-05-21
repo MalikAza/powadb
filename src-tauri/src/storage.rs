@@ -830,6 +830,10 @@ pub struct AppSettings {
     #[serde(default)]
     pub sqlite3_path: Option<String>,
     #[serde(default)]
+    pub mongodump_path: Option<String>,
+    #[serde(default)]
+    pub mongorestore_path: Option<String>,
+    #[serde(default)]
     pub theme_kind: Option<String>,
     #[serde(default)]
     pub theme_value: Option<String>,
