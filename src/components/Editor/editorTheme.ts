@@ -5,10 +5,12 @@ import { tags as t } from "@lezer/highlight";
 // dynamic `import()` below, so consumers awaiting `loadEditorTheme()` only
 // pull CodeMirror's view layer on first use.
 
-const selectionBg = "color-mix(in oklch, var(--primary) 30%, transparent)";
-const searchMatchBg = "color-mix(in oklch, var(--primary) 25%, transparent)";
-const searchMatchSelectedBg = "color-mix(in oklch, var(--primary) 50%, transparent)";
-const selectionMatchBg = "color-mix(in oklch, var(--ring) 20%, transparent)";
+// NOTE: selection / search-match / selection-match background colors are
+// defined in `src/index.css` as global, theme-aware rules with `.dark`
+// overrides. Putting them here in the JS theme didn't survive the theme
+// switch reliably (CSS variables inside CodeMirror's generated stylesheet
+// weren't re-evaluating in the Tauri WebView), so we don't define
+// selectionBg/searchMatchBg/etc. in this file anymore.
 const stringColor = "color-mix(in oklch, var(--primary) 45%, var(--foreground))";
 
 const themeSpec = {
@@ -26,9 +28,8 @@ const themeSpec = {
   ".cm-cursor, .cm-dropCursor": {
     borderLeftColor: "var(--foreground)",
   },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
-    backgroundColor: selectionBg,
-  },
+  // Selection background intentionally omitted — handled by global rules in
+  // `src/index.css` so theme changes take effect (see comment above).
   ".cm-gutters": {
     backgroundColor: "var(--card)",
     color: "var(--muted-foreground)",
@@ -38,6 +39,9 @@ const themeSpec = {
     backgroundColor: "var(--accent)",
     color: "var(--accent-foreground)",
   },
+  // Active-line is suppressed entirely when a selection is active (see
+  // `selectionAwareActiveLine` in SqlEditor.tsx), so when this background
+  // *is* drawn it can be fully opaque without conflicting with selection.
   ".cm-activeLine": {
     backgroundColor: "var(--accent)",
   },
@@ -115,16 +119,8 @@ const themeSpec = {
   ".cm-button:hover": {
     backgroundColor: "var(--accent)",
   },
-  ".cm-searchMatch": {
-    backgroundColor: searchMatchBg,
-    outline: "1px solid color-mix(in oklch, var(--primary) 60%, transparent)",
-  },
-  ".cm-searchMatch.cm-searchMatch-selected": {
-    backgroundColor: searchMatchSelectedBg,
-  },
-  ".cm-selectionMatch": {
-    backgroundColor: selectionMatchBg,
-  },
+  // Search-match / selection-match backgrounds also live in `src/index.css`
+  // for the same reason as the selection background above.
   ".cm-matchingBracket, &.cm-focused .cm-matchingBracket": {
     backgroundColor: "transparent",
     outline: "1px solid var(--ring)",

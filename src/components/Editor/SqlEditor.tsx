@@ -14,6 +14,8 @@ import { type EditorThemeBundle, loadEditorTheme } from "./editorTheme";
 type PrecHighest = <T>(ext: T) => T;
 type CmRuntime = {
   EditorView: typeof import("@codemirror/view").EditorView;
+  Decoration: typeof import("@codemirror/view").Decoration;
+  ViewPlugin: typeof import("@codemirror/view").ViewPlugin;
   keymap: typeof import("@codemirror/view").keymap;
   placeholder: typeof import("@codemirror/view").placeholder;
   precHighest: PrecHighest;
@@ -28,15 +30,54 @@ function loadCmRuntime(): Promise<CmRuntime> {
     import("@codemirror/state"),
     loadEditorTheme(),
   ]).then(([view, state, theme]) => {
-    cachedRuntime = {
+    const rt: CmRuntime = {
       EditorView: view.EditorView,
+      Decoration: view.Decoration,
+      ViewPlugin: view.ViewPlugin,
       keymap: view.keymap,
       placeholder: view.placeholder,
       precHighest: state.Prec.highest as PrecHighest,
       theme,
     };
-    return cachedRuntime;
+    cachedRuntime = rt;
+    return rt;
   });
+}
+
+/// Active-line highlight that suppresses itself when there's a non-empty
+/// selection. The built-in `highlightActiveLine` always adds the line
+/// decoration, which paints over the selection layer on the line containing
+/// the cursor (giving that one line a different appearance than the rest of
+/// a multi-line selection). This variant only decorates the line when the
+/// main selection is a bare cursor.
+function selectionAwareActiveLine(runtime: CmRuntime) {
+  const { Decoration, ViewPlugin } = runtime;
+  const lineDeco = Decoration.line({ attributes: { class: "cm-activeLine" } });
+  type View = import("@codemirror/view").EditorView;
+  type ViewUpdate = import("@codemirror/view").ViewUpdate;
+  type DecorationSet = import("@codemirror/view").DecorationSet;
+
+  function compute(view: View): DecorationSet {
+    const sel = view.state.selection.main;
+    if (sel.from !== sel.to) return Decoration.none;
+    const line = view.state.doc.lineAt(sel.head);
+    return Decoration.set([lineDeco.range(line.from)]);
+  }
+
+  return ViewPlugin.fromClass(
+    class {
+      decorations: DecorationSet;
+      constructor(view: View) {
+        this.decorations = compute(view);
+      }
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.selectionSet) {
+          this.decorations = compute(update.view);
+        }
+      }
+    },
+    { decorations: (v) => v.decorations },
+  );
 }
 
 type Props = {
@@ -102,6 +143,7 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
       }),
       search({ top: true }),
       highlightSelectionMatches(),
+      selectionAwareActiveLine(runtime),
       placeholder("-- Write your query, then Cmd+Enter to run"),
       theme.cmAppTheme,
       theme.cmHighlightStyle,
@@ -124,7 +166,9 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
       extensions={extensions}
       basicSetup={{
         lineNumbers: true,
-        highlightActiveLine: true,
+        // Disabled in favor of our `selectionAwareActiveLine` extension,
+        // which suppresses the line decoration during non-empty selections.
+        highlightActiveLine: false,
         highlightSelectionMatches: false,
         bracketMatching: true,
         closeBrackets: true,
