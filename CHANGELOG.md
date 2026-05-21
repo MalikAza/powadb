@@ -1,3 +1,17 @@
+## [0.9.2] - 2026-05-21
+
+### Added
+- Postgres `hstore` type coverage.
+- Postgres `ltree` type coverage.
+- Postgres `arrays` type coverage.
+- Postgres `ranges` type coverage.
+
+### Changed
+- Improved fallback when no typed decoder matches the bytes aren't clean UTF-8 return them as a hex literal instead of bubbling an `UnsupportedType` error
+
+### Fixed
+- Fix `VECTOR` type handling in PostgreSQL.
+
 ## [0.9.1] - 2026-05-21
 
 ### Added
