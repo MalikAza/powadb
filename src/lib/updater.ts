@@ -23,9 +23,10 @@ export async function runUpdateCheck({ notifyWhenUpToDate = false }: Options = {
       return;
     }
 
+    const toastId = `update-${update.version}`;
     toast(`Update ${update.version} available`, {
-      id: `update-${update.version}`,
-      description: update.body || undefined,
+      id: toastId,
+      description: "A new version of PowaDB is ready to install.",
       duration: Number.POSITIVE_INFINITY,
       action: {
         label: "Update",
@@ -42,6 +43,10 @@ export async function runUpdateCheck({ notifyWhenUpToDate = false }: Options = {
             });
           }
         },
+      },
+      cancel: {
+        label: "Later",
+        onClick: () => toast.dismiss(toastId),
       },
     });
   } catch (err) {
