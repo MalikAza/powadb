@@ -142,18 +142,12 @@ export function SchemaTree() {
   // Kick the actual schema/db introspection only once the backend reports the
   // tunnel + pool are ready. This avoids painting an error string while SSH /
   // WireGuard is still negotiating; the UI sticks on the "Connecting…"
-  // placeholder until the connection settles.
+  // placeholder until the connection settles. The connection itself is opened
+  // by `useConnections.activate` — auto-firing prewarm on `idle` here would
+  // re-open a pool the user just disconnected.
   useEffect(() => {
     if (!activeId) return;
     if (connState?.kind === "ready") refresh();
-    // Trigger prewarm if user clicked an idle connection — backend will move
-    // through Connecting → Ready and the next effect run will refresh().
-    if (connState?.kind === "idle") {
-      ipc.prewarmConnection(activeId).catch(() => {
-        // The connection-state-changed event will report the failure;
-        // no need to toast twice.
-      });
-    }
   }, [activeId, connState?.kind, conn?.database]);
 
   async function refreshDatabases() {

@@ -10,6 +10,7 @@ const ipcMock = {
   saveFolder: vi.fn(),
   deleteFolder: vi.fn(),
   disconnect: vi.fn(),
+  prewarmConnection: vi.fn(),
 };
 
 vi.mock("../ipc", () => ({
@@ -53,6 +54,7 @@ beforeEach(() => {
     loaded: false,
   });
   for (const fn of Object.values(ipcMock)) fn.mockReset();
+  ipcMock.prewarmConnection.mockResolvedValue(undefined);
   closeTabsForConnection.mockReset();
 });
 

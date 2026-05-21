@@ -118,6 +118,15 @@ export const useConnections = create<State & Actions>((set, get) => ({
 
   activate(id) {
     set({ activeId: id });
+    // Eagerly open the tunnel/pool so the SchemaTree never has to. Putting the
+    // trigger here (rather than in a SchemaTree effect on `idle` state) means
+    // a post-disconnect `idle` event can't accidentally re-open the pool the
+    // user just closed.
+    if (!get().connectedIds.has(id)) {
+      ipc.prewarmConnection(id).catch(() => {
+        // Failures surface via the `connection-state-changed` Error event.
+      });
+    }
   },
 
   deactivate() {
