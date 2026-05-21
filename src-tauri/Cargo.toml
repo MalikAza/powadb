@@ -1,6 +1,6 @@
 [package]
 name = "powadb"
-version = "0.9.1"
+version = "0.9.2"
 description = "PowaDB — a fast modern database client"
 authors = ["aza"]
 edition = "2021"
@@ -20,7 +20,7 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "fs", "io-util", "process"] }
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite", "macros", "chrono", "uuid", "json", "bigdecimal"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls", "postgres", "mysql", "sqlite", "macros", "chrono", "uuid", "json", "bigdecimal", "ipnetwork", "mac_address", "bit-vec"] }
 thiserror = "1"
 futures = "0.3"
 uuid = { version = "1", features = ["v4", "serde"] }
