@@ -8,6 +8,7 @@ import { QueryView } from "./components/QueryView";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { UpdateChecker } from "./components/UpdateChecker";
+import type { ConnStateChangedEvent } from "./ipc";
 import { useConnections } from "./stores/connections";
 import { usePanelLayouts } from "./stores/panelLayouts";
 import { useApplyTheme, useResolvedTheme, useTheme } from "./stores/theme";
@@ -71,6 +72,16 @@ function App() {
   useEffect(() => {
     const unlisten = listen<string[]>("pools-changed", (e) => {
       useConnections.setState({ connectedIds: new Set(e.payload) });
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    const unlisten = listen<ConnStateChangedEvent>("connection-state-changed", (e) => {
+      const { connection_id, state } = e.payload;
+      useConnections.getState().setConnState(connection_id, state);
     });
     return () => {
       unlisten.then((fn) => fn());

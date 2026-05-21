@@ -337,6 +337,28 @@ function ConnRow({
 }) {
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
+  // Subscribe to just this connection's state so we don't re-render the whole
+  // list every time any other connection's state changes.
+  const connState = useConnections((s) => s.connStates[c.id]);
+  const stateKind = connState?.kind ?? (isConnected ? "ready" : "idle");
+  const indicatorClass =
+    stateKind === "ready"
+      ? "bg-emerald-500"
+      : stateKind === "connecting"
+        ? "bg-amber-500 animate-pulse"
+        : stateKind === "error"
+          ? "bg-destructive"
+          : "bg-muted-foreground/30";
+  const indicatorTitle =
+    stateKind === "ready"
+      ? "Connected"
+      : stateKind === "connecting"
+        ? "Connecting…"
+        : stateKind === "error"
+          ? connState?.kind === "error"
+            ? connState.message
+            : "Connection error"
+          : "Not connected";
   return (
     <div
       role="button"
@@ -361,12 +383,9 @@ function ConnRow({
       <div className="flex items-center justify-between gap-1">
         <span
           role="status"
-          aria-label={isConnected ? "Connected" : "Not connected"}
-          title={isConnected ? "Connected" : "Not connected"}
-          className={cn(
-            "size-1.5 shrink-0 rounded-full",
-            isConnected ? "bg-emerald-500" : "bg-muted-foreground/30",
-          )}
+          aria-label={indicatorTitle}
+          title={indicatorTitle}
+          className={cn("size-1.5 shrink-0 rounded-full", indicatorClass)}
         />
         <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
         <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">

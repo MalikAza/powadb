@@ -54,6 +54,11 @@ export const ipc = {
 
   listActiveConnections: (): Promise<string[]> => invoke("list_active_connections"),
 
+  switchDatabase: (connectionId: string, database: string): Promise<void> =>
+    invoke("switch_database", { connectionId, database }),
+
+  prewarmConnection: (id: string): Promise<void> => invoke("prewarm_connection", { id }),
+
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
 
@@ -184,6 +189,17 @@ export const ipc = {
     invoke("save_settings", { settings }),
 
   openExternal: (url: string): Promise<void> => invoke("open_external", { url }),
+};
+
+export type ConnState =
+  | { kind: "idle" }
+  | { kind: "connecting" }
+  | { kind: "ready" }
+  | { kind: "error"; message: string };
+
+export type ConnStateChangedEvent = {
+  connection_id: string;
+  state: ConnState;
 };
 
 export type StatementResult = {

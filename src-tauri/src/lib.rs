@@ -168,6 +168,8 @@ pub fn run() {
             commands::connections::delete_connection,
             commands::connections::disconnect,
             commands::connections::list_active_connections,
+            commands::connections::switch_database,
+            commands::connections::prewarm_connection,
             commands::connections::get_connection_password,
             commands::connections::get_connection_wg_config,
             commands::connections::get_connection_ssh_config,

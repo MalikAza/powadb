@@ -65,8 +65,9 @@ const initialFetchState: FetchState = {
 
 export function SchemaTree() {
   const { activeId, connections } = useConnections();
-  const saveConnection = useConnections((s) => s.save);
+  const connStates = useConnections((s) => s.connStates);
   const conn = connections.find((c) => c.id === activeId);
+  const connState = activeId ? (connStates[activeId] ?? { kind: "idle" }) : null;
   const openBrowseTab = useTabs((s) => s.openBrowseTab);
   const openDiagramTab = useTabs((s) => s.openDiagramTab);
   const setSchemaInStore = useSchema((s) => s.set);
@@ -136,8 +137,24 @@ export function SchemaTree() {
 
   useEffect(() => {
     resetAll();
-    if (activeId) refresh();
   }, [activeId, conn?.database]);
+
+  // Kick the actual schema/db introspection only once the backend reports the
+  // tunnel + pool are ready. This avoids painting an error string while SSH /
+  // WireGuard is still negotiating; the UI sticks on the "Connecting…"
+  // placeholder until the connection settles.
+  useEffect(() => {
+    if (!activeId) return;
+    if (connState?.kind === "ready") refresh();
+    // Trigger prewarm if user clicked an idle connection — backend will move
+    // through Connecting → Ready and the next effect run will refresh().
+    if (connState?.kind === "idle") {
+      ipc.prewarmConnection(activeId).catch(() => {
+        // The connection-state-changed event will report the failure;
+        // no need to toast twice.
+      });
+    }
+  }, [activeId, connState?.kind, conn?.database]);
 
   async function refreshDatabases() {
     if (!activeId) return;
@@ -179,24 +196,15 @@ export function SchemaTree() {
   async function switchDatabase(db: string) {
     if (!conn || db === conn.database) return;
     try {
-      // Carry the tunnel flags across — omitting them defaults the backend
-      // to `false`, which would silently disable WG/SSH and wipe their config.
-      // The full tunnel payloads (wg_config / ssh_config) are NOT sent: the
-      // backend preserves the stored ones when those fields are absent.
-      await saveConnection({
-        id: conn.id,
-        name: conn.name,
-        kind: conn.kind,
-        host: conn.host,
-        port: conn.port,
-        database: db,
-        username: conn.username,
-        ssl: conn.ssl,
-        folder_id: conn.folder_id,
-        color: conn.color,
-        wg_enabled: !!conn.wg,
-        ssh_enabled: !!conn.ssh,
-      });
+      // The dedicated `switch_database` command reuses the active SSH/WG
+      // tunnel and only rebuilds the sqlx pool, so the swap is sub-second
+      // instead of paying a full handshake.
+      await ipc.switchDatabase(conn.id, db);
+      // Reflect the database change in the local store; the backend has
+      // already persisted it.
+      useConnections.setState((s) => ({
+        connections: s.connections.map((c) => (c.id === conn.id ? { ...c, database: db } : c)),
+      }));
       toast.success(`Switched to ${db}`);
     } catch (e) {
       toast.error(`Failed to switch: ${String(e)}`);
@@ -313,7 +321,34 @@ export function SchemaTree() {
         )}
       </div>
 
-      {error && <p className="whitespace-pre-wrap text-destructive">{error}</p>}
+      {(connState?.kind === "connecting" || connState?.kind === "idle") && !schemas && (
+        <p className="flex items-center gap-2 text-muted-foreground">
+          <RefreshCw className="size-3 animate-spin" />
+          <span>
+            {conn?.ssh
+              ? "Connecting via SSH…"
+              : conn?.wg
+                ? "Connecting via WireGuard…"
+                : "Connecting…"}
+          </span>
+        </p>
+      )}
+      {connState?.kind === "error" && (
+        <div className="space-y-1">
+          <p className="whitespace-pre-wrap text-destructive">{connState.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 text-[11px]"
+            onClick={() => activeId && ipc.prewarmConnection(activeId).catch(() => {})}
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+      {error && connState?.kind === "ready" && (
+        <p className="whitespace-pre-wrap text-destructive">{error}</p>
+      )}
       {filteredSchemas?.length === 0 && search && (
         <p className="text-muted-foreground">No tables match.</p>
       )}

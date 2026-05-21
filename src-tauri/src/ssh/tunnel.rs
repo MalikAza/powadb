@@ -151,6 +151,29 @@ pub async fn open_tunnel(
         .local_addr()
         .map_err(|e| AppError::SshTunnel(format!("local_addr failed: {e}")))?;
 
+    // Probe that the SSH server is willing to forward to the target before we
+    // return success. Without this, "auth ok but forwarding denied" or
+    // "target unreachable from jumphost" only surface as the first user query
+    // hanging on a half-open TCP connection. Opening — and immediately closing —
+    // a direct-tcpip channel makes that error happen right here.
+    match handle
+        .channel_open_direct_tcpip(target_host.clone(), target_port as u32, "127.0.0.1", 0)
+        .await
+    {
+        Ok(channel) => {
+            let _ = channel.eof().await;
+            let _ = channel.close().await;
+        }
+        Err(e) => {
+            let _ = handle
+                .disconnect(russh::Disconnect::ByApplication, "", "")
+                .await;
+            return Err(AppError::SshTunnel(format!(
+                "ssh server refused to forward to {target_host}:{target_port}: {e}"
+            )));
+        }
+    }
+
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let task = tokio::spawn(run_accept_loop(
         handle,

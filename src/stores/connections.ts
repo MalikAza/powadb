@@ -3,11 +3,20 @@ import { ipc } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
 import { useTabs } from "./tabs";
 
+export type ConnState =
+  | { kind: "idle" }
+  | { kind: "connecting" }
+  | { kind: "ready" }
+  | { kind: "error"; message: string };
+
 type State = {
   connections: SavedConnection[];
   folders: Folder[];
   activeId: string | null;
   connectedIds: Set<string>;
+  /// Per-connection state machine driven by `connection-state-changed` events.
+  /// Absence from the map == idle.
+  connStates: Record<string, ConnState>;
   loaded: boolean;
 };
 
@@ -21,6 +30,7 @@ type Actions = {
   deactivate: () => void;
   refreshConnected: () => Promise<void>;
   disconnect: (id: string) => Promise<void>;
+  setConnState: (id: string, state: ConnState) => void;
 };
 
 export const useConnections = create<State & Actions>((set, get) => ({
@@ -28,6 +38,7 @@ export const useConnections = create<State & Actions>((set, get) => ({
   folders: [],
   activeId: null,
   connectedIds: new Set(),
+  connStates: {},
   loaded: false,
 
   async load() {
@@ -111,5 +122,17 @@ export const useConnections = create<State & Actions>((set, get) => ({
 
   deactivate() {
     set({ activeId: null });
+  },
+
+  setConnState(id, state) {
+    set((s) => {
+      if (state.kind === "idle") {
+        if (!(id in s.connStates)) return s;
+        const next = { ...s.connStates };
+        delete next[id];
+        return { connStates: next };
+      }
+      return { connStates: { ...s.connStates, [id]: state } };
+    });
   },
 }));

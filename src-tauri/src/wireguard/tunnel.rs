@@ -27,12 +27,18 @@ use smoltcp::socket::tcp::{Socket as TcpSocket, SocketBuffer as TcpBuffer, State
 use smoltcp::time::Instant as SmolInstant;
 use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr, Ipv4Address};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::error::{AppError, AppResult};
 use crate::wireguard::WgConfig;
+
+/// How long `open_tunnel` waits for boringtun to record the first successful
+/// handshake before giving up. Real-world WG handshakes complete in well under
+/// a second on a reachable peer; budgeting 8 s tolerates retries on lossy links
+/// without making "peer unreachable" cases hang the UI.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Handle for an active tunnel. Drop the value (or call `shutdown`) to tear it down.
 pub struct TunnelHandle {
@@ -123,6 +129,10 @@ pub async fn open_tunnel(cfg: &WgConfig, target: SocketAddr) -> AppResult<Tunnel
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<EngineCommand>();
+    // Set to `true` by the engine once boringtun reports a completed handshake.
+    // `open_tunnel` blocks on this before returning so the DB pool never sees a
+    // local listener that forwards into a tunnel still negotiating crypto.
+    let (handshake_tx, mut handshake_rx) = watch::channel(false);
 
     let engine_task = tokio::spawn(run_engine(
         tunn.clone(),
@@ -130,9 +140,43 @@ pub async fn open_tunnel(cfg: &WgConfig, target: SocketAddr) -> AppResult<Tunnel
         self_ipv4,
         cmd_rx,
         shutdown_rx,
+        handshake_tx,
     ));
 
     let accept_task = tokio::spawn(run_accept(listener, cmd_tx, target_v4));
+
+    // Wait for the first handshake, or fail cleanly if it never completes.
+    let wait = async {
+        loop {
+            if *handshake_rx.borrow() {
+                return Ok(());
+            }
+            if handshake_rx.changed().await.is_err() {
+                return Err(AppError::WgTunnel(
+                    "wireguard engine exited before completing the initial handshake".into(),
+                ));
+            }
+        }
+    };
+    let wait_result = tokio::time::timeout(HANDSHAKE_TIMEOUT, wait).await;
+    let (shutdown_tx, error_to_return) = match wait_result {
+        Ok(Ok(())) => (shutdown_tx, None),
+        Ok(Err(e)) => (shutdown_tx, Some(e)),
+        Err(_) => (
+            shutdown_tx,
+            Some(AppError::WgTunnel(format!(
+                "wireguard handshake did not complete within {}s — check peer endpoint, keys, and AllowedIPs",
+                HANDSHAKE_TIMEOUT.as_secs(),
+            ))),
+        ),
+    };
+    if let Some(err) = error_to_return {
+        // Send shutdown so the engine drains its child pumps; abort the accept
+        // loop directly (it isn't selected against shutdown).
+        let _ = shutdown_tx.send(());
+        accept_task.abort();
+        return Err(err);
+    }
 
     Ok(TunnelHandle {
         local_addr,
@@ -161,6 +205,7 @@ async fn run_engine(
     self_ipv4: Ipv4Addr,
     mut cmd_rx: mpsc::UnboundedReceiver<EngineCommand>,
     mut shutdown_rx: oneshot::Receiver<()>,
+    handshake_tx: watch::Sender<bool>,
 ) {
     // Channels between the virtual device and the UDP socket.
     let (udp_to_dev_tx, udp_to_dev_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -214,6 +259,7 @@ async fn run_engine(
     let tunn_recv = tunn.clone();
     let udp_recv = udp.clone();
     let udp_for_handshake = udp.clone();
+    let handshake_tx_recv = handshake_tx;
     let recv_pump = tokio::spawn(async move {
         let mut datagram = vec![0u8; 65535];
         loop {
@@ -235,6 +281,19 @@ async fn run_engine(
             };
             let input = datagram[..n].to_vec();
             drain_decapsulate(&tunn_recv, &input, &udp_to_dev_tx, &udp_for_handshake).await;
+            // After every successful decrypt, ask boringtun whether the peer has
+            // completed its handshake. The first `Some(_)` flips the watch and
+            // unblocks `open_tunnel`, so the DB pool only opens once the tunnel
+            // is actually carrying traffic.
+            if !*handshake_tx_recv.borrow() {
+                let done = {
+                    let t = tunn_recv.lock().await;
+                    t.time_since_last_handshake().is_some()
+                };
+                if done {
+                    let _ = handshake_tx_recv.send(true);
+                }
+            }
         }
     });
 
