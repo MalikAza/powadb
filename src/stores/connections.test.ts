@@ -179,4 +179,115 @@ describe("useConnections", () => {
     useConnections.getState().deactivate();
     expect(useConnections.getState().activeId).toBeNull();
   });
+
+  it("activate() prewarms the pool when not yet connected", () => {
+    useConnections.setState({ connectedIds: new Set() });
+    useConnections.getState().activate("c1");
+    expect(ipcMock.prewarmConnection).toHaveBeenCalledWith("c1");
+  });
+
+  it("activate() skips prewarming when the pool is already open", () => {
+    useConnections.setState({ connectedIds: new Set(["c1"]) });
+    useConnections.getState().activate("c1");
+    expect(ipcMock.prewarmConnection).not.toHaveBeenCalled();
+  });
+
+  it("activate() swallows prewarm failures (errors surface via events)", async () => {
+    const err = new Error("nope");
+    ipcMock.prewarmConnection.mockRejectedValueOnce(err);
+    useConnections.getState().activate("c1");
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useConnections.getState().activeId).toBe("c1");
+  });
+
+  it("save() updates an existing connection by id (no duplicate)", async () => {
+    const original = makeConn({ id: "c1", name: "old" });
+    useConnections.setState({ connections: [original] });
+    const updated = makeConn({ id: "c1", name: "new" });
+    ipcMock.saveConnection.mockResolvedValue(updated);
+
+    await useConnections.getState().save({
+      id: "c1",
+      name: "new",
+      kind: "postgres",
+      host: "h",
+      port: 5432,
+      database: "d",
+      username: "u",
+      ssl: false,
+    } as ConnectionInput);
+
+    const conns = useConnections.getState().connections;
+    expect(conns).toHaveLength(1);
+    expect(conns[0]?.name).toBe("new");
+  });
+
+  it("saveFolder() updates an existing folder by id (no duplicate)", async () => {
+    useConnections.setState({ folders: [makeFolder("f1", "Old")] });
+    const renamed = makeFolder("f1", "Renamed");
+    ipcMock.saveFolder.mockResolvedValue(renamed);
+
+    await useConnections.getState().saveFolder({ id: "f1", name: "Renamed" } as FolderInput);
+
+    const folders = useConnections.getState().folders;
+    expect(folders).toHaveLength(1);
+    expect(folders[0]?.name).toBe("Renamed");
+  });
+
+  it("removeFolder() promotes sub-folders and connections to the parent", async () => {
+    const root = makeFolder("root", "Root");
+    const mid = makeFolder("mid", "Mid", "root");
+    const leaf = makeFolder("leaf", "Leaf", "mid");
+    const conn = makeConn({ id: "c1", folder_id: "mid" });
+    useConnections.setState({
+      folders: [root, mid, leaf],
+      connections: [conn],
+    });
+    ipcMock.deleteFolder.mockResolvedValue(undefined);
+
+    await useConnections.getState().removeFolder("mid");
+
+    const s = useConnections.getState();
+    expect(s.folders.find((f) => f.id === "mid")).toBeUndefined();
+    expect(s.folders.find((f) => f.id === "leaf")?.parent_id).toBe("root");
+    expect(s.connections.find((c) => c.id === "c1")?.folder_id).toBe("root");
+  });
+
+  it("removeFolder() promotes orphaned children to root when removing a top-level folder", async () => {
+    const root = makeFolder("root", "Root");
+    const child = makeFolder("child", "Child", "root");
+    const conn = makeConn({ id: "c1", folder_id: "root" });
+    useConnections.setState({
+      folders: [root, child],
+      connections: [conn],
+    });
+    ipcMock.deleteFolder.mockResolvedValue(undefined);
+
+    await useConnections.getState().removeFolder("root");
+
+    const s = useConnections.getState();
+    expect(s.folders.find((f) => f.id === "child")?.parent_id).toBeNull();
+    expect(s.connections.find((c) => c.id === "c1")?.folder_id).toBeNull();
+  });
+
+  it("setConnState() stores a non-idle state for the connection", () => {
+    useConnections.getState().setConnState("c1", { kind: "connecting" });
+    expect(useConnections.getState().connStates.c1).toEqual({ kind: "connecting" });
+
+    useConnections.getState().setConnState("c1", { kind: "error", message: "boom" });
+    expect(useConnections.getState().connStates.c1).toEqual({ kind: "error", message: "boom" });
+  });
+
+  it("setConnState() with idle removes the entry from the map", () => {
+    useConnections.setState({ connStates: { c1: { kind: "ready" } } });
+    useConnections.getState().setConnState("c1", { kind: "idle" });
+    expect(useConnections.getState().connStates).toEqual({});
+  });
+
+  it("setConnState() with idle is a no-op when the entry is absent", () => {
+    const before = useConnections.getState().connStates;
+    useConnections.getState().setConnState("missing", { kind: "idle" });
+    expect(useConnections.getState().connStates).toBe(before);
+  });
 });
