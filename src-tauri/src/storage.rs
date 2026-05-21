@@ -14,6 +14,7 @@ pub enum DbKind {
     Postgres,
     Mysql,
     Sqlite,
+    Mongo,
 }
 
 impl DbKind {
@@ -22,6 +23,7 @@ impl DbKind {
             DbKind::Postgres => "postgres",
             DbKind::Mysql => "mysql",
             DbKind::Sqlite => "sqlite",
+            DbKind::Mongo => "mongo",
         }
     }
     fn parse(s: &str) -> Option<DbKind> {
@@ -29,6 +31,7 @@ impl DbKind {
             "postgres" => Some(DbKind::Postgres),
             "mysql" => Some(DbKind::Mysql),
             "sqlite" => Some(DbKind::Sqlite),
+            "mongo" => Some(DbKind::Mongo),
             _ => None,
         }
     }

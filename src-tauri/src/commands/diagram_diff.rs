@@ -661,6 +661,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 quote_ident(from, kind),
                 quote_ident(to, kind),
             )]),
+            DbKind::Mongo => unreachable!("Mongo has no DDL"),
         },
         DiffOp::AddColumn {
             schema,
@@ -725,6 +726,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
             DbKind::Sqlite => Err(AppError::Other(format!(
                 "SQLite cannot ALTER COLUMN TYPE on \"{table}\".\"{column}\"; rebuild the table manually for now"
             ))),
+            DbKind::Mongo => unreachable!("Mongo has no DDL"),
         },
         DiffOp::AlterColumnNullable {
             schema,
@@ -745,6 +747,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
             DbKind::Sqlite => Err(AppError::Other(format!(
                 "SQLite cannot change nullability on \"{table}\".\"{column}\" without a table rebuild"
             ))),
+            DbKind::Mongo => unreachable!("Mongo has no DDL"),
         },
         DiffOp::AlterColumnDefault {
             schema,
@@ -781,6 +784,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
             DbKind::Sqlite => Err(AppError::Other(format!(
                 "SQLite cannot change DEFAULT on \"{table}\".\"{column}\" without a table rebuild"
             ))),
+            DbKind::Mongo => unreachable!("Mongo has no DDL"),
         },
         DiffOp::AddFk {
             schema,
@@ -842,6 +846,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 "SQLite can't DROP FOREIGN KEY on an existing table; rebuild the table manually"
                     .into(),
             )),
+            DbKind::Mongo => unreachable!("Mongo has no DDL"),
         },
     }
 }

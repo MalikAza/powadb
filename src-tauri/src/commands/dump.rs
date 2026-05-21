@@ -300,6 +300,9 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Mysql, ToolKind::Client) => s.mysql_path.as_deref(),
         // sqlite3 binary handles both dump (`.dump`) and client (`.read`) modes.
         (DbKind::Sqlite, _) => s.sqlite3_path.as_deref(),
+        // Mongo: no override fields in AppSettings yet (Phase-7 work); rely
+        // on `which` finding mongodump/mongorestore on the user's PATH.
+        (DbKind::Mongo, _) => None,
     };
     if let Some(p) = override_path.filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
@@ -310,12 +313,39 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Mysql, ToolKind::Dump) => "mysqldump",
         (DbKind::Mysql, ToolKind::Client) => "mysql",
         (DbKind::Sqlite, _) => "sqlite3",
+        (DbKind::Mongo, ToolKind::Dump) => "mongodump",
+        (DbKind::Mongo, ToolKind::Client) => "mongorestore",
     };
     which::which(bin).ok()
 }
 
 fn path_to_string(p: PathBuf) -> String {
     p.to_string_lossy().into_owned()
+}
+
+/// Build a mongodb:// URI for use with `mongodump` / `mongorestore`. When the
+/// `database` field already looks like a full URI, return it verbatim.
+fn build_mongo_uri(conn: &SavedConnection, password: Option<&str>) -> String {
+    if conn.database.starts_with("mongodb://") || conn.database.starts_with("mongodb+srv://") {
+        return conn.database.clone();
+    }
+    let userinfo = match (conn.username.as_str(), password) {
+        ("", _) | (_, None) => String::new(),
+        (user, Some(pw)) => format!("{}:{}@", url_encode_minimal(user), url_encode_minimal(pw)),
+    };
+    format!("mongodb://{userinfo}{}:{}", conn.host, conn.port)
+}
+
+fn url_encode_minimal(s: &str) -> String {
+    s.bytes()
+        .flat_map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                vec![b as char]
+            } else {
+                format!("%{:02X}", b).chars().collect()
+            }
+        })
+        .collect()
 }
 
 // ─── Tool engine: export ──────────────────────────────────────────────────────
@@ -403,6 +433,20 @@ async fn export_with_tool(
                 s
             };
             cmd.arg(dotcmd);
+        }
+        DbKind::Mongo => {
+            // mongodump writes to a directory of BSON files, not a single SQL
+            // file. We point it at the output path treated as a directory.
+            cmd.arg(format!(
+                "--uri={}",
+                build_mongo_uri(conn, password.as_deref())
+            ))
+            .arg(format!("--out={}", output_path));
+            if let Some(tables) = &opts.tables {
+                for t in tables {
+                    cmd.arg(format!("--collection={}", t.table));
+                }
+            }
         }
     }
 
@@ -496,6 +540,14 @@ async fn import_with_tool(
                 cmd.env("MYSQL_PWD", pw);
             }
             feed_via_stdin = true;
+        }
+        DbKind::Mongo => {
+            // mongorestore consumes the dump directory produced by mongodump.
+            cmd.arg(format!(
+                "--uri={}",
+                build_mongo_uri(conn, password.as_deref())
+            ))
+            .arg(input_path);
         }
         DbKind::Sqlite => {
             // `sqlite3 <file>` reads SQL from stdin.
@@ -943,12 +995,14 @@ async fn dump_table_data(
         .map(|c| match kind {
             DbKind::Postgres | DbKind::Sqlite => format!("\"{}\"", c.name),
             DbKind::Mysql => format!("`{}`", c.name),
+            DbKind::Mongo => unreachable!("dump_table_data only runs for SQL engines"),
         })
         .collect();
     let table_qualified = match kind {
         DbKind::Postgres => format!("\"{}\".\"{}\"", t.schema, t.table),
         DbKind::Mysql => format!("`{}`", t.table),
         DbKind::Sqlite => format!("\"{}\"", t.table.replace('"', "\"\"")),
+        DbKind::Mongo => unreachable!("dump_table_data only runs for SQL engines"),
     };
 
     let chunk_size = 500usize;
@@ -1019,6 +1073,7 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
                     "0".into()
                 }
             }
+            DbKind::Mongo => unreachable!("format_sql_literal only runs for SQL engines"),
         },
         Value::Number(n) => n.to_string(),
         Value::String(s) => {

@@ -27,10 +27,12 @@ use crate::drivers::{QueryResult, ScriptResult};
 use crate::error::{AppError, AppResult};
 use crate::storage::DbKind;
 
+pub mod mongo;
 pub mod mysql;
 pub mod postgres;
 pub mod sqlite;
 
+pub use mongo::MongoEngine;
 pub use mysql::MysqlEngine;
 pub use postgres::PostgresEngine;
 pub use sqlite::SqliteEngine;
@@ -159,8 +161,8 @@ pub enum EngineQuery {
     Sql(String),
     /// A MongoDB operation. Parsed from the mongosh-style DSL on the frontend
     /// into this structured form so the backend doesn't have to embed a JS
-    /// parser.
-    Mongo(MongoOp),
+    /// parser. Boxed because `MongoOp` is much larger than `String`.
+    Mongo(Box<MongoOp>),
 }
 
 #[derive(Debug, Clone, Deserialize)]

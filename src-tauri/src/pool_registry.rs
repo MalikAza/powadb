@@ -11,7 +11,7 @@ use crate::commands::connections::resolve_connection;
 use crate::drivers::{
     mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult, ScriptResult,
 };
-use crate::engine::{EngineHandle, MysqlEngine, PostgresEngine, SqliteEngine};
+use crate::engine::{EngineHandle, MongoEngine, MysqlEngine, PostgresEngine, SqliteEngine};
 use crate::error::{AppError, AppResult};
 use crate::ssh::{self, SshConfig, SshTunnelHandle};
 use crate::storage::{DbKind, SavedConnection};
@@ -485,6 +485,32 @@ async fn open_pool(
         let pool = sqlite_drv::connect(&conn.database).await?;
         return Ok(Arc::new(SqliteEngine::new(pool)));
     }
+    if matches!(conn.kind, DbKind::Mongo) {
+        // Mongo uses its own URI syntax (mongodb:// or mongodb+srv://). For
+        // now we accept the connection's `database` field as the URI verbatim
+        // if it looks like one; otherwise build a basic URI from host/port.
+        let uri = if conn.database.starts_with("mongodb://")
+            || conn.database.starts_with("mongodb+srv://")
+        {
+            conn.database.clone()
+        } else {
+            let userinfo = match password {
+                Some(pw) => format!("{}:{}@", urlencode(&conn.username), urlencode(pw)),
+                None if !conn.username.is_empty() => format!("{}@", urlencode(&conn.username)),
+                None => String::new(),
+            };
+            format!("mongodb://{userinfo}{host}:{port}")
+        };
+        // For mongo, `database` doubles as either URI or default-db. When it's
+        // a URI, fall back to "admin" as the default database the user can
+        // switch from.
+        let default_db = if conn.database.starts_with("mongodb") {
+            "admin"
+        } else {
+            &conn.database
+        };
+        return Ok(Arc::new(MongoEngine::connect(&uri, default_db).await?));
+    }
     let url = build_url(
         &conn.kind,
         &conn.username,
@@ -497,7 +523,7 @@ async fn open_pool(
     let handle: EngineHandle = match conn.kind {
         DbKind::Postgres => Arc::new(PostgresEngine::new(pg_drv::connect(&url).await?)),
         DbKind::Mysql => Arc::new(MysqlEngine::new(mysql_drv::connect(&url).await?)),
-        DbKind::Sqlite => unreachable!("sqlite handled above"),
+        DbKind::Sqlite | DbKind::Mongo => unreachable!("handled above"),
     };
     Ok(handle)
 }
@@ -514,7 +540,7 @@ fn build_url(
     let scheme = match kind {
         DbKind::Postgres => "postgres",
         DbKind::Mysql => "mysql",
-        DbKind::Sqlite => unreachable!("sqlite does not use a URL"),
+        DbKind::Sqlite | DbKind::Mongo => unreachable!("non-SQL engines build their own URI"),
     };
     let userinfo = if let Some(pw) = password {
         format!("{}:{}", urlencode(username), urlencode(pw))

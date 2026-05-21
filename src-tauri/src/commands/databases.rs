@@ -34,6 +34,7 @@ fn quote_identifier(kind: DbKind, name: &str) -> String {
         DbKind::Postgres => format!("\"{}\"", name.replace('"', "\"\"")),
         DbKind::Mysql => format!("`{}`", name.replace('`', "``")),
         DbKind::Sqlite => name.to_string(),
+        DbKind::Mongo => unreachable!("Mongo doesn't use SQL identifier quoting"),
     }
 }
 
