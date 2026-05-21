@@ -64,9 +64,21 @@ describe("runUpdateCheck", () => {
     checkMock.mockResolvedValue(update);
     await runUpdateCheck();
     expect(toastFn).toHaveBeenCalledTimes(1);
-    const [title, opts] = toastFn.mock.calls[0] as [string, { action: { onClick: () => void } }];
+    const [title, opts] = toastFn.mock.calls[0] as [
+      string,
+      {
+        action: { onClick: () => void };
+        cancel: { label: string; onClick: () => void };
+      },
+    ];
     expect(title).toContain("1.2.3");
-    expect(opts).toMatchObject({ id: "update-1.2.3", description: "release notes" });
+    expect(opts).toMatchObject({
+      id: "update-1.2.3",
+      description: "A new version of PowaDB is ready to install.",
+    });
+    expect(opts.cancel.label).toBe("Later");
+    opts.cancel.onClick();
+    expect(toastDismiss).toHaveBeenCalledWith("update-1.2.3");
 
     toastLoading.mockReturnValue("dl");
     await opts.action.onClick();

@@ -1,12 +1,12 @@
 ---
-name: powadb-issue
-description: Fetch a GitHub issue from MalikAza/powadb via the `gh` CLI (title, description, labels, comments), present a structured plan for approval, then implement it on a new branch. DO NOT commit, push, or open a PR — the user reviews everything first. Usage&nbsp;: `/powadb-issue <issue number> [--no-git]`.
-argument-hint: "<issue number> [--no-git]"
+name: powadb-scope
+description: Prepare an implementation plan for MalikAza/powadb from a free-form scope description (no GitHub issue), present it for approval, then implement on a new branch. DO NOT commit, push, or open a PR — the user reviews everything first. Usage&nbsp;: `/powadb-scope <scope description> [--no-git]`.
+argument-hint: "<scope description> [--no-git]"
 ---
 
-# Resolve MalikAza/powadb issue #$ARGUMENTS
+# Resolve MalikAza/powadb scope: $ARGUMENTS
 
-Fetch issue **#$ARGUMENTS** from `MalikAza/powadb`, present an implementation plan for approval, then implement it. **You must NOT commit, push, or open any pull request** — the user reviews the diff and ships it themselves.
+Take the free-form scope description, present an implementation plan for approval, then implement it. **You must NOT commit, push, or open any pull request** — the user reviews the diff and ships it themselves.
 
 Run from the repo root. This is a single-repo Tauri 2 desktop app (React 19 frontend in `src/`, Rust backend in `src-tauri/`).
 
@@ -15,62 +15,37 @@ Run from the repo root. This is a single-repo Tauri 2 desktop app (React 19 fron
 The arguments are: `$ARGUMENTS`.
 
 - If `--no-git` is present in the arguments:
-  - **`--no-git` mode active**: skip **Step 3** (branch creation) entirely. The implementation happens directly on the current branch, with no git operations.
-  - The issue number to use is the remaining argument (e.g. if `$ARGUMENTS` = `42 --no-git`, the issue number is `42`).
-- Otherwise, run all steps normally, using `$ARGUMENTS` as the issue number.
+  - **`--no-git` mode active**: skip **Step 2** (branch creation) entirely. The implementation happens directly on the current branch, with no git operations.
+  - The scope is the remaining text (everything except `--no-git`).
+- Otherwise, run all steps normally, using `$ARGUMENTS` as the scope.
 
-> In the rest of this document, `<ISSUE>` refers to the issue number extracted from the arguments.
+> In the rest of this document, `<SCOPE>` refers to the scope text extracted from the arguments.
 
 ---
 
-## Step 1 — Fetch the issue
+## Step 1 — Reformulate the scope
 
-Pull the issue body, metadata, and comments in one shot via `gh`:
+Reformulate `<SCOPE>` in a structured way to validate your understanding:
 
-```bash
-gh issue view <ISSUE> --repo MalikAza/powadb \
-  --json number,title,state,author,labels,milestone,assignees,url,body,comments,createdAt,updatedAt
-```
+1. **Objective** — one short sentence describing the goal
+2. **Expected behaviour** — what the end user should be able to do
+3. **Out of scope** — what is explicitly not requested (if deducible)
 
-For a human-readable view that includes the comment thread inline, also run:
+If a major ambiguity blocks progress, ask one targeted question before continuing. Otherwise, state clear assumptions and call them out explicitly in the plan.
 
-```bash
-gh issue view <ISSUE> --repo MalikAza/powadb --comments
-```
+## Step 2 — Branch setup
 
-If the command fails (auth, network, unknown issue), surface the exact error to the user and stop — do not guess the issue contents. If `gh auth status` shows the CLI is not logged in, ask the user to run `gh auth login` themselves.
+> ⏭️ **Skip if `--no-git`**: go straight to Step 3.
 
-Read carefully:
-- **Title** and full **description**
-- **Labels** — type hints (`bug`, `enhancement`, `feature`, etc.) and scope hints (`frontend`, `backend`, `tauri`, …)
-- **Comments** in chronological order — these usually contain clarifications and final decisions that override the description
-- **Assignees / milestone** — useful context, not blocking
-
-## Step 2 — Analyze
-
-From the fetched content, determine:
-
-1. **Type**: feature, bug fix, refactor, or other
-2. **Branch prefix** from labels:
-   - `bug` / `type/bug` → `bug/`
-   - `feature` / `enhancement` / `type/feature` → `feature/`
-   - missing/other → `feature/` (default)
-3. **Scope**: `frontend` (`src/`), `backend` (`src-tauri/`), or both
-4. **Acceptance criteria** — every checkbox / explicit requirement
-5. **Dependencies / implementation order** — if the change spans both Rust and TS, usually do the Tauri command first, then wire the frontend
-6. **Open questions** — if anything is genuinely ambiguous, flag it in the plan. Do not invent product decisions.
-
-## Step 3 — Branch setup
-
-> ⏭️ **Skip if `--no-git`**: go straight to Step 4.
-
-Build the branch name as kebab-case derived from the issue title:
-
-```
-{feature|bug}/<ISSUE>-<short-kebab-case-description>
-```
-
-Example: `feature/42-connection-pool-metrics`
+1. Determine the type from `<SCOPE>`:
+   - Bug fix → `bug/` prefix
+   - Anything else (new feature, tweak, refactor…) → `feature/` prefix
+2. Build a **short kebab-case slug** (3–6 words) summarising the scope. Example: scope "add a connection filter on the snippets page" → slug `connection-filter-snippets-page`.
+3. Branch name:
+   ```
+   {feature|bug}/<slug>
+   ```
+   Example: `feature/connection-filter-snippets-page`
 
 **Always branch off the current branch** (usually `dev`) — do NOT switch to `main` first. Capture the current branch, pull the latest from origin, then create the new branch from there:
 
@@ -78,13 +53,23 @@ Example: `feature/42-connection-pool-metrics`
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 git fetch origin
 git pull origin "$CURRENT_BRANCH"
-git checkout -b {feature|bug}/<ISSUE>-<slug>
+git checkout -b {feature|bug}/<slug>
 ```
 
 Guardrails:
 - If a branch with that name already exists locally, ask the user whether to reuse, rename, or abort — never silently overwrite.
 - If `git status` shows uncommitted changes, **stop** and report. Do not stash or discard the user's work.
 - If the current branch has no upstream (so `git pull` would fail), skip the pull and just branch off the current local HEAD — mention this in the hand-off.
+
+## Step 3 — Analyze the scope
+
+From `<SCOPE>`, identify:
+
+1. **Type**: feature, bug fix, refactor, or other
+2. **Side(s) impacted**: `frontend` (`src/`), `backend` (`src-tauri/`), or both
+3. **Acceptance criteria** — explicit list of what must be delivered
+4. **Dependencies** — implementation order imposed by technical couplings
+5. **Open questions** — any ambiguity, to flag in the plan
 
 ## Step 4 — Explore before planning
 
@@ -126,8 +111,11 @@ Enter plan mode (`EnterPlanMode`) and structure the plan as follows. Present it,
 - Estimate: low / medium / high
 - Notable risks (driver-specific edge cases, schema migrations, perf, platform-specific behaviour under `#[cfg(target_os = "macos")]`)
 
-### Open questions / assumptions
-- Anything ambiguous in the issue, plus any assumptions you're proceeding under.
+### Assumptions
+- Explicit list of assumptions you took to interpret `<SCOPE>` (especially useful here since there is no issue of record).
+
+### Open questions
+- Anything still ambiguous — flag, don't invent.
 
 For non-trivial work, also create a TaskCreate list to track the implementation steps.
 
@@ -158,9 +146,9 @@ Once approved, match the existing codebase style strictly. Highlights:
 - Keep `unsafe`, `unwrap`, `expect` out of command paths — propagate errors
 
 ### Cross-cutting
-- Don't add features, abstractions, or error handling beyond what the issue requires
+- Don't add features, abstractions, or error handling beyond what `<SCOPE>` requires
 - Match neighbouring code's style; don't drive-by-refactor unrelated files
-- Tests live next to the code they cover (Vitest for frontend, `#[cfg(test)] mod tests` for Rust) — only add tests if the issue explicitly asks for them or the change is non-trivial logic
+- Tests live next to the code they cover (Vitest for frontend, `#[cfg(test)] mod tests` for Rust) — only add tests if the scope explicitly asks for them or the change is non-trivial logic
 
 ## Step 7 — Quality checks
 
@@ -202,7 +190,7 @@ Report back to the user with:
 - The branch name (or "current branch" if `--no-git` was used)
 - A summary of files created / modified (grouped by frontend / backend)
 - Status of each quality check (typecheck, lint, clippy) — pass/fail with details if relevant
-- Notable decisions taken during implementation (especially anywhere the issue was ambiguous)
+- Notable decisions and assumptions taken during implementation (especially anywhere `<SCOPE>` was ambiguous)
 - Any open questions or follow-ups the user should be aware of before committing
 
 The user owns the commit, push, and PR steps after reviewing the diff.

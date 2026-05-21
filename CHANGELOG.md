@@ -1,3 +1,16 @@
+## [0.9.1] - 2026-05-21
+
+### Added
+- Diagram view: searchable table picker with autocomplete that zooms to the selected table.
+
+### Changed
+- Diagram toolbar file actions are grouped under a single dropdown for a tidier toolbar.
+- Diagram view performance improvements on large schemas.
+- Update toast now shows a clearer message and a "Later" cancel button.
+
+### Fixed
+- PostgreSQL decoding of user-defined types (enums, domains, etc.) — falls back to reading the raw UTF-8 bytes when sqlx's `String` decoder rejects the type.
+
 ## [0.9.0] - 2026-05-20
 
 ### Added

@@ -338,8 +338,25 @@ fn decode_pg(row: &PgRow, idx: usize, type_name: &str) -> AppResult<Value> {
 
     let s: Result<Option<String>, _> = row.try_get(idx);
     match s {
-        Ok(Some(x)) => Ok(Value::String(x)),
-        Ok(None) => Ok(Value::Null),
+        Ok(Some(x)) => return Ok(Value::String(x)),
+        Ok(None) => return Ok(Value::Null),
+        Err(_) => {}
+    }
+
+    // Last-resort fallback for user-defined types (enums, domains, etc.) that
+    // sqlx's `String` decoder refuses because their `type_info().name()` isn't
+    // one of the built-in text types. Postgres sends enum values as their
+    // label as UTF-8 on the wire in both text and binary formats, so reading
+    // the raw bytes directly works.
+    let raw = row.try_get_raw(idx)?;
+    if raw.is_null() {
+        return Ok(Value::Null);
+    }
+    let bytes = raw
+        .as_bytes()
+        .map_err(|_| AppError::UnsupportedType(type_name.to_string()))?;
+    match std::str::from_utf8(bytes) {
+        Ok(s) => Ok(Value::String(s.to_string())),
         Err(_) => Err(AppError::UnsupportedType(type_name.to_string())),
     }
 }

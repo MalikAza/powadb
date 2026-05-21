@@ -28,6 +28,7 @@ import {
   Plus,
   RefreshCw,
   Save,
+  Search,
   Upload,
   Zap,
 } from "lucide-react";
@@ -38,8 +39,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import {
   type DiagIndex,
   type DiagramIntrospection,
@@ -69,6 +75,7 @@ import {
 import { exportDocAsJpg, exportDocAsJson, exportDocAsPng, exportDocAsSql } from "./exportDiagram";
 import { layoutDoc } from "./layout";
 import { TableNode } from "./TableNode";
+import { TableSearchPopover } from "./TableSearchPopover";
 import {
   type DiagramDoc,
   type DiagramTable as DocTable,
@@ -77,6 +84,19 @@ import {
 } from "./types";
 
 const nodeTypes: NodeTypes = { table: TableNode };
+
+// Stable references so TableNode's memo doesn't bust when a table has no
+// indexes/sequences — fresh `[]` literals would compare unequal every render.
+const EMPTY_INDEXES: readonly DiagIndex[] = [];
+const EMPTY_SEQUENCES: readonly DiagSequence[] = [];
+
+// Shared across all edges so React Flow's edge memo sees a stable style ref.
+const DEFAULT_EDGE_OPTIONS = {
+  type: "default",
+  labelBgPadding: [4, 2] as [number, number],
+  labelBgBorderRadius: 4,
+  style: { stroke: "var(--muted-foreground)", strokeWidth: 1.2 },
+};
 
 function docToNodes(
   doc: DiagramDoc,
@@ -88,7 +108,9 @@ function docToNodes(
   const sequencesByTable = new Map<string, DiagSequence[]>();
   if (intro) {
     for (const t of intro.tables) {
-      indexesByTable.set(`${t.schema}.${t.name}`, t.indexes ?? []);
+      if (t.indexes && t.indexes.length > 0) {
+        indexesByTable.set(`${t.schema}.${t.name}`, t.indexes);
+      }
     }
     for (const s of intro.sequences ?? []) {
       if (!s.owned_by_schema || !s.owned_by_table) continue;
@@ -104,8 +126,8 @@ function docToNodes(
     position: t.position,
     data: {
       table: t,
-      indexes: indexesByTable.get(t.id) ?? [],
-      sequences: sequencesByTable.get(t.id) ?? [],
+      indexes: indexesByTable.get(t.id) ?? EMPTY_INDEXES,
+      sequences: sequencesByTable.get(t.id) ?? EMPTY_SEQUENCES,
       onEdit: onEditTable,
       onDelete: onDeleteTable,
     },
@@ -119,11 +141,7 @@ function docToEdges(doc: DiagramDoc): Edge[] {
     target: e.target,
     sourceHandle: `${e.source}.${e.sourceColumns[0]}::source`,
     targetHandle: `${e.target}.${e.targetColumns[0]}::target`,
-    type: "default",
     label: e.name ?? undefined,
-    labelBgPadding: [4, 2],
-    labelBgBorderRadius: 4,
-    style: { stroke: "var(--muted-foreground)", strokeWidth: 1.2 },
   }));
 }
 
@@ -257,6 +275,8 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   function maybeAutoApply() {
     if (modeRef.current === "live") setApplyOpen(true);
   }
+
+  const [searchOpen, setSearchOpen] = useState(false);
 
   const [confirms, setConfirms] = useState<Confirms>({ edgeDelete: null, tableDelete: null });
   const { edgeDelete: confirmEdgeDelete, tableDelete: confirmTableDelete } = confirms;
@@ -414,6 +434,33 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   };
   const onAddTable = () => setTableDialog({ open: true, editing: null });
 
+  const zoomToTable = useCallback(
+    (id: string) => {
+      const node = rf.getNode(id);
+      if (!node) return;
+      const w = node.measured?.width ?? node.width ?? 240;
+      const h = node.measured?.height ?? node.height ?? 120;
+      const cx = node.position.x + w / 2;
+      const cy = node.position.y + h / 2;
+      rf.setCenter(cx, cy, { zoom: 1.2, duration: 600 });
+    },
+    [rf],
+  );
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== "f") return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".cm-editor")) return;
+      e.preventDefault();
+      setSearchOpen((v) => !v);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="relative flex h-full flex-1 flex-col">
       <DiagramToolbar
@@ -433,6 +480,10 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
         onImportOpen={() => setImportOpen(true)}
         onExport={doExport}
         onRefresh={refresh}
+        tables={doc?.tables ?? []}
+        searchOpen={searchOpen}
+        setSearchOpen={setSearchOpen}
+        onZoomToTable={zoomToTable}
       />
 
       {error && (
@@ -512,6 +563,10 @@ type DiagramToolbarProps = {
   onImportOpen: () => void;
   onExport: (kind: "json" | "sql" | "png" | "jpg") => void;
   onRefresh: () => void;
+  tables: DocTable[];
+  searchOpen: boolean;
+  setSearchOpen: (v: boolean) => void;
+  onZoomToTable: (id: string) => void;
 };
 
 function DiagramToolbar({
@@ -531,6 +586,10 @@ function DiagramToolbar({
   onImportOpen,
   onExport,
   onRefresh,
+  tables,
+  searchOpen,
+  setSearchOpen,
+  onZoomToTable,
 }: DiagramToolbarProps) {
   return (
     <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border bg-sidebar px-2">
@@ -567,6 +626,30 @@ function DiagramToolbar({
         </button>
       </div>
       <div className="ml-auto flex items-center gap-1">
+        <Popover
+          open={searchOpen}
+          onOpenChange={(o) => {
+            if (!hasLoaded && o) return;
+            setSearchOpen(o);
+          }}
+        >
+          <PopoverTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 gap-1.5 text-xs"
+              disabled={!hasLoaded || tableCount === 0}
+              title="Find a table by name (⇧⌘F / Ctrl+Shift+F)"
+            >
+              <Search className="size-3.5" /> Find
+            </Button>
+          </PopoverTrigger>
+          <TableSearchPopover
+            tables={tables}
+            onSelect={onZoomToTable}
+            onClose={() => setSearchOpen(false)}
+          />
+        </Popover>
         <Button
           size="sm"
           variant="ghost"
@@ -579,16 +662,6 @@ function DiagramToolbar({
         </Button>
         <Button
           size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onGenerateScript}
-          disabled={!hasLoaded || tableCount === 0}
-          title="Generate SQL DDL script"
-        >
-          <FileCode2 className="size-3.5" /> Generate script
-        </Button>
-        <Button
-          size="sm"
           variant="default"
           className="h-7 gap-1.5 text-xs"
           onClick={onApply}
@@ -597,58 +670,51 @@ function DiagramToolbar({
         >
           <Play className="size-3.5" /> Apply to DB…
         </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onSave}
-          disabled={!hasLoaded}
-          title="Save the diagram"
-        >
-          <Save className="size-3.5" /> Save
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onLoad}
-          title="Open a saved diagram"
-        >
-          <FolderOpen className="size-3.5" /> Load
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs"
-          onClick={onImportOpen}
-          title="Import a diagram from a JSON or SQL file"
-        >
-          <Upload className="size-3.5" /> Import
-        </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               size="sm"
               variant="ghost"
               className="h-7 gap-1.5 text-xs"
-              disabled={!hasLoaded || tableCount === 0}
-              title="Export the diagram"
+              disabled={!hasLoaded}
+              title="Save, load, import, export, or generate a script"
             >
-              <Download className="size-3.5" /> Export
+              <FolderOpen className="size-3.5" /> File
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => onExport("json")}>
-              <FileJson className="size-3.5" /> JSON (diagram doc)
+            <DropdownMenuItem onClick={onSave} disabled={!hasLoaded}>
+              <Save className="size-3.5" /> Save
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExport("sql")}>
-              <FileCode2 className="size-3.5" /> SQL (DDL script)
+            <DropdownMenuItem onClick={onLoad}>
+              <FolderOpen className="size-3.5" /> Load
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExport("png")}>
-              <ImageIcon className="size-3.5" /> PNG
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onImportOpen}>
+              <Upload className="size-3.5" /> Import…
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onExport("jpg")}>
-              <ImageIcon className="size-3.5" /> JPEG
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={!hasLoaded || tableCount === 0}>
+                <Download className="size-3.5" /> Export
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem onClick={() => onExport("json")}>
+                  <FileJson className="size-3.5" /> JSON (diagram doc)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("sql")}>
+                  <FileCode2 className="size-3.5" /> SQL (DDL script)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("png")}>
+                  <ImageIcon className="size-3.5" /> PNG
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onExport("jpg")}>
+                  <ImageIcon className="size-3.5" /> JPEG
+                </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onGenerateScript} disabled={!hasLoaded || tableCount === 0}>
+              <FileCode2 className="size-3.5" /> Generate script…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -720,6 +786,9 @@ function DiagramCanvas({
           onConnect={onConnect}
           onEdgeClick={onEdgeClick}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+          onlyRenderVisibleElements
+          elevateNodesOnSelect={false}
           fitView
           minZoom={0.1}
           maxZoom={1.5}
