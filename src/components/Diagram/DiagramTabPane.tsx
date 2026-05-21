@@ -85,6 +85,19 @@ import {
 
 const nodeTypes: NodeTypes = { table: TableNode };
 
+// Stable references so TableNode's memo doesn't bust when a table has no
+// indexes/sequences — fresh `[]` literals would compare unequal every render.
+const EMPTY_INDEXES: readonly DiagIndex[] = [];
+const EMPTY_SEQUENCES: readonly DiagSequence[] = [];
+
+// Shared across all edges so React Flow's edge memo sees a stable style ref.
+const DEFAULT_EDGE_OPTIONS = {
+  type: "default",
+  labelBgPadding: [4, 2] as [number, number],
+  labelBgBorderRadius: 4,
+  style: { stroke: "var(--muted-foreground)", strokeWidth: 1.2 },
+};
+
 function docToNodes(
   doc: DiagramDoc,
   intro: DiagramIntrospection | null,
@@ -95,7 +108,9 @@ function docToNodes(
   const sequencesByTable = new Map<string, DiagSequence[]>();
   if (intro) {
     for (const t of intro.tables) {
-      indexesByTable.set(`${t.schema}.${t.name}`, t.indexes ?? []);
+      if (t.indexes && t.indexes.length > 0) {
+        indexesByTable.set(`${t.schema}.${t.name}`, t.indexes);
+      }
     }
     for (const s of intro.sequences ?? []) {
       if (!s.owned_by_schema || !s.owned_by_table) continue;
@@ -111,8 +126,8 @@ function docToNodes(
     position: t.position,
     data: {
       table: t,
-      indexes: indexesByTable.get(t.id) ?? [],
-      sequences: sequencesByTable.get(t.id) ?? [],
+      indexes: indexesByTable.get(t.id) ?? EMPTY_INDEXES,
+      sequences: sequencesByTable.get(t.id) ?? EMPTY_SEQUENCES,
       onEdit: onEditTable,
       onDelete: onDeleteTable,
     },
@@ -126,11 +141,7 @@ function docToEdges(doc: DiagramDoc): Edge[] {
     target: e.target,
     sourceHandle: `${e.source}.${e.sourceColumns[0]}::source`,
     targetHandle: `${e.target}.${e.targetColumns[0]}::target`,
-    type: "default",
     label: e.name ?? undefined,
-    labelBgPadding: [4, 2],
-    labelBgBorderRadius: 4,
-    style: { stroke: "var(--muted-foreground)", strokeWidth: 1.2 },
   }));
 }
 
@@ -775,6 +786,9 @@ function DiagramCanvas({
           onConnect={onConnect}
           onEdgeClick={onEdgeClick}
           nodeTypes={nodeTypes}
+          defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+          onlyRenderVisibleElements
+          elevateNodesOnSelect={false}
           fitView
           minZoom={0.1}
           maxZoom={1.5}
