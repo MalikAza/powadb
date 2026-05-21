@@ -1322,3 +1322,322 @@ fn find_dollar_tag_end(bytes: &[u8], start: usize) -> Option<usize> {
 fn emit_progress(app: &AppHandle, evt: &ProgressEvent) {
     let _ = app.emit("dump-progress", evt);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ─── is_copy_from_stdin ───────────────────────────────────────────────
+
+    #[test]
+    fn copy_from_stdin_matches_canonical_statement() {
+        assert!(is_copy_from_stdin("COPY public.t (id, name) FROM stdin;"));
+        assert!(is_copy_from_stdin("  copy t from STDIN with (format csv)"));
+    }
+
+    #[test]
+    fn copy_from_stdin_rejects_unrelated_statements() {
+        assert!(!is_copy_from_stdin("INSERT INTO t VALUES (1)"));
+        assert!(!is_copy_from_stdin("COPY t TO stdout"));
+        assert!(!is_copy_from_stdin("-- COPY t FROM stdin"));
+    }
+
+    // ─── split_statements ─────────────────────────────────────────────────
+
+    #[test]
+    fn split_returns_empty_for_empty_input() {
+        assert!(split_statements("").is_empty());
+        assert!(split_statements("   \n  \t  ").is_empty());
+    }
+
+    #[test]
+    fn split_separates_simple_statements_on_semicolons() {
+        let stmts = split_statements("SELECT 1; SELECT 2; SELECT 3;");
+        assert_eq!(stmts, vec!["SELECT 1", "SELECT 2", "SELECT 3"]);
+    }
+
+    #[test]
+    fn split_keeps_trailing_statement_without_semicolon() {
+        let stmts = split_statements("SELECT 1; SELECT 2");
+        assert_eq!(stmts, vec!["SELECT 1", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_ignores_semicolons_inside_single_quotes() {
+        let stmts = split_statements("INSERT INTO t VALUES ('a;b'); SELECT 1;");
+        assert_eq!(stmts, vec!["INSERT INTO t VALUES ('a;b')", "SELECT 1"]);
+    }
+
+    #[test]
+    fn split_treats_doubled_single_quote_as_escape() {
+        let stmts = split_statements("SELECT 'it''s ok; really'; SELECT 2");
+        assert_eq!(stmts, vec!["SELECT 'it''s ok; really'", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_ignores_semicolons_inside_double_quoted_identifiers() {
+        let stmts = split_statements("SELECT \"col;with;semis\" FROM t; SELECT 2");
+        assert_eq!(stmts, vec!["SELECT \"col;with;semis\" FROM t", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_treats_doubled_double_quote_as_escape() {
+        let stmts = split_statements("SELECT \"a\"\"b;c\" FROM t; SELECT 2");
+        assert_eq!(stmts, vec!["SELECT \"a\"\"b;c\" FROM t", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_ignores_semicolons_in_line_comments() {
+        let stmts = split_statements("SELECT 1; -- a; b;\nSELECT 2;");
+        assert_eq!(stmts, vec!["SELECT 1", "-- a; b;\nSELECT 2"]);
+    }
+
+    #[test]
+    fn split_ignores_semicolons_in_block_comments() {
+        let stmts = split_statements("SELECT 1 /* a; b; c */ FROM t; SELECT 2;");
+        assert_eq!(stmts, vec!["SELECT 1 /* a; b; c */ FROM t", "SELECT 2"]);
+    }
+
+    #[test]
+    fn split_respects_dollar_quoted_bodies() {
+        let stmts = split_statements(
+            "CREATE FUNCTION f() RETURNS void AS $body$ BEGIN; END; $body$ LANGUAGE plpgsql; SELECT 1;",
+        );
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("$body$"));
+        assert!(stmts[0].contains("BEGIN; END;"));
+        assert_eq!(stmts[1], "SELECT 1");
+    }
+
+    #[test]
+    fn split_supports_unlabeled_dollar_quotes() {
+        let stmts = split_statements("DO $$ BEGIN PERFORM 1; END $$; SELECT 2;");
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("PERFORM 1;"));
+        assert_eq!(stmts[1], "SELECT 2");
+    }
+
+    #[test]
+    fn split_treats_bare_dollar_without_closing_tag_as_literal() {
+        // `$1 + $2` is a numeric placeholder; not a dollar tag.
+        let stmts = split_statements("SELECT $1 + $2 FROM t; SELECT 2");
+        assert_eq!(stmts, vec!["SELECT $1 + $2 FROM t", "SELECT 2"]);
+    }
+
+    // ─── find_dollar_tag_end ──────────────────────────────────────────────
+
+    #[test]
+    fn dollar_tag_end_locates_closing_dollar_for_named_tag() {
+        let s = b"$body$ rest";
+        assert_eq!(find_dollar_tag_end(s, 0), Some(5));
+    }
+
+    #[test]
+    fn dollar_tag_end_locates_for_anonymous_tag() {
+        let s = b"$$";
+        assert_eq!(find_dollar_tag_end(s, 0), Some(1));
+    }
+
+    #[test]
+    fn dollar_tag_end_returns_none_when_punctuation_breaks_tag() {
+        let s = b"$1 + $2";
+        assert_eq!(find_dollar_tag_end(s, 0), None);
+    }
+
+    #[test]
+    fn dollar_tag_end_returns_none_when_tag_never_closes() {
+        let s = b"$abc";
+        assert_eq!(find_dollar_tag_end(s, 0), None);
+    }
+
+    #[test]
+    fn dollar_tag_end_accepts_underscores_and_alphanumerics_in_tag() {
+        let s = b"$tag_1$";
+        assert_eq!(find_dollar_tag_end(s, 0), Some(6));
+    }
+
+    // ─── format_sql_literal ───────────────────────────────────────────────
+
+    #[test]
+    fn literal_renders_null_for_any_engine() {
+        assert_eq!(
+            format_sql_literal(&Value::Null, "text", DbKind::Postgres),
+            "NULL"
+        );
+        assert_eq!(
+            format_sql_literal(&Value::Null, "INT", DbKind::Mysql),
+            "NULL"
+        );
+        assert_eq!(
+            format_sql_literal(&Value::Null, "TEXT", DbKind::Sqlite),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn literal_renders_bool_per_engine() {
+        assert_eq!(
+            format_sql_literal(&json!(true), "bool", DbKind::Postgres),
+            "TRUE"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(false), "bool", DbKind::Postgres),
+            "FALSE"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(true), "tinyint", DbKind::Mysql),
+            "1"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(false), "tinyint", DbKind::Mysql),
+            "0"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(true), "boolean", DbKind::Sqlite),
+            "1"
+        );
+    }
+
+    #[test]
+    fn literal_renders_numbers_without_quotes() {
+        assert_eq!(
+            format_sql_literal(&json!(42), "int", DbKind::Postgres),
+            "42"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(-1.5), "numeric", DbKind::Mysql),
+            "-1.5"
+        );
+    }
+
+    #[test]
+    fn literal_quotes_strings_and_escapes_single_quote() {
+        assert_eq!(
+            format_sql_literal(&json!("it's"), "text", DbKind::Postgres),
+            "'it''s'"
+        );
+    }
+
+    #[test]
+    fn literal_casts_postgres_bytea_strings() {
+        assert_eq!(
+            format_sql_literal(&json!("\\x00ff"), "bytea", DbKind::Postgres),
+            "'\\x00ff'::bytea"
+        );
+    }
+
+    #[test]
+    fn literal_passes_mysql_blob_strings_through_unchanged() {
+        // The driver layer already encodes BLOB values as `X'…'` literals.
+        let prebaked = json!("X'00ff'");
+        for ty in [
+            "BLOB",
+            "TINYBLOB",
+            "MEDIUMBLOB",
+            "LONGBLOB",
+            "BINARY",
+            "VARBINARY",
+        ] {
+            assert_eq!(format_sql_literal(&prebaked, ty, DbKind::Mysql), "X'00ff'");
+        }
+    }
+
+    #[test]
+    fn literal_casts_postgres_json_and_jsonb() {
+        let v = json!({"a": 1, "b": [2, 3]});
+        let pg_json = format_sql_literal(&v, "JSON", DbKind::Postgres);
+        let pg_jsonb = format_sql_literal(&v, "jsonb", DbKind::Postgres);
+        assert!(pg_json.ends_with("::json"));
+        assert!(pg_jsonb.ends_with("::jsonb"));
+        // Outer wrapping is single-quoted JSON text.
+        assert!(pg_json.starts_with("'{"));
+    }
+
+    #[test]
+    fn literal_falls_back_to_quoted_json_for_unknown_types() {
+        let v = json!([1, 2, 3]);
+        let s = format_sql_literal(&v, "unknown_type", DbKind::Sqlite);
+        assert_eq!(s, "'[1,2,3]'");
+    }
+
+    // ─── pg_render_type ───────────────────────────────────────────────────
+
+    #[test]
+    fn pg_type_varchar_uses_char_max_when_present() {
+        assert_eq!(
+            pg_render_type("character varying", "varchar", Some(255), None, None),
+            "varchar(255)"
+        );
+        assert_eq!(
+            pg_render_type("character varying", "varchar", None, None, None),
+            "varchar"
+        );
+    }
+
+    #[test]
+    fn pg_type_char_uses_char_max_when_present() {
+        assert_eq!(
+            pg_render_type("character", "bpchar", Some(10), None, None),
+            "char(10)"
+        );
+        assert_eq!(
+            pg_render_type("character", "bpchar", None, None, None),
+            "char"
+        );
+    }
+
+    #[test]
+    fn pg_type_numeric_renders_precision_and_scale_variants() {
+        assert_eq!(
+            pg_render_type("numeric", "numeric", None, Some(10), Some(2)),
+            "numeric(10,2)"
+        );
+        assert_eq!(
+            pg_render_type("numeric", "numeric", None, Some(10), None),
+            "numeric(10)"
+        );
+        assert_eq!(
+            pg_render_type("numeric", "numeric", None, None, None),
+            "numeric"
+        );
+    }
+
+    #[test]
+    fn pg_type_user_defined_and_array_return_the_udt_name() {
+        assert_eq!(
+            pg_render_type("USER-DEFINED", "my_enum", None, None, None),
+            "my_enum"
+        );
+        assert_eq!(pg_render_type("ARRAY", "_int4", None, None, None), "_int4");
+    }
+
+    #[test]
+    fn pg_type_passthrough_for_built_in_scalar_types() {
+        assert_eq!(
+            pg_render_type("integer", "int4", None, None, None),
+            "integer"
+        );
+        assert_eq!(
+            pg_render_type("timestamp without time zone", "timestamp", None, None, None),
+            "timestamp without time zone"
+        );
+    }
+
+    // ─── path_to_string ───────────────────────────────────────────────────
+
+    #[test]
+    fn path_to_string_round_trips_a_utf8_path() {
+        assert_eq!(
+            path_to_string(PathBuf::from("/tmp/foo.sql")),
+            "/tmp/foo.sql"
+        );
+    }
+
+    // ─── default_true ─────────────────────────────────────────────────────
+
+    #[test]
+    fn default_true_returns_true() {
+        assert!(default_true());
+    }
+}
