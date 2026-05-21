@@ -2,8 +2,8 @@ use serde::Serialize;
 use sqlx::Row;
 use tauri::State;
 
-use crate::error::AppResult;
-use crate::pool_registry::PoolHandle;
+use crate::engine::SqlPoolView;
+use crate::error::{AppError, AppResult};
 use crate::AppState;
 
 #[derive(Debug, Serialize)]
@@ -32,8 +32,8 @@ pub async fn introspect_schema(
     connection_id: String,
 ) -> AppResult<Vec<SchemaMeta>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => {
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => {
             let rows = sqlx::query(
                 r#"
                 SELECT
@@ -56,7 +56,7 @@ pub async fn introspect_schema(
                 ORDER BY c.table_schema, c.table_name, c.ordinal_position
                 "#,
             )
-            .fetch_all(&pool)
+            .fetch_all(pool)
             .await?;
             Ok(group_rows(rows.into_iter().map(|r| RowOut {
                 schema: r.try_get::<String, _>("schema_name").unwrap_or_default(),
@@ -67,7 +67,7 @@ pub async fn introspect_schema(
                 table_type: r.try_get::<String, _>("table_type").unwrap_or_default(),
             })))
         }
-        PoolHandle::MySql(pool) => {
+        Some(SqlPoolView::Mysql(pool)) => {
             // MySQL/MariaDB report information_schema string columns with a
             // binary flag in many setups; without an explicit CAST sqlx decodes
             // them as `Vec<u8>` and `try_get::<String>` silently fails, leaving
@@ -89,7 +89,7 @@ pub async fn introspect_schema(
                 ORDER BY c.table_schema, c.table_name, c.ordinal_position
                 "#,
             )
-            .fetch_all(&pool)
+            .fetch_all(pool)
             .await?;
             Ok(group_rows(rows.into_iter().map(|r| {
                 RowOut {
@@ -105,7 +105,7 @@ pub async fn introspect_schema(
                 }
             })))
         }
-        PoolHandle::Sqlite(pool) => {
+        Some(SqlPoolView::Sqlite(pool)) => {
             // sqlite_master lists tables/views; PRAGMA table_info gives columns.
             let tables = sqlx::query(
                 r#"
@@ -114,7 +114,7 @@ pub async fn introspect_schema(
                 ORDER BY type, name
                 "#,
             )
-            .fetch_all(&pool)
+            .fetch_all(pool)
             .await?;
 
             let mut rows_out: Vec<RowOut> = Vec::new();
@@ -122,7 +122,7 @@ pub async fn introspect_schema(
                 let name: String = tr.try_get("name").unwrap_or_default();
                 let ttype: String = tr.try_get("type").unwrap_or_default();
                 let pragma = format!("PRAGMA table_info(\"{}\")", name.replace('"', "\"\""));
-                let cols = sqlx::query(&pragma).fetch_all(&pool).await?;
+                let cols = sqlx::query(&pragma).fetch_all(pool).await?;
                 for c in cols {
                     let column: String = c.try_get("name").unwrap_or_default();
                     let data_type: String = c.try_get("type").unwrap_or_default();
@@ -143,6 +143,9 @@ pub async fn introspect_schema(
             }
             Ok(group_rows(rows_out.into_iter()))
         }
+        None => Err(AppError::Other(
+            "introspect_schema requires a SQL engine".into(),
+        )),
     }
 }
 
@@ -161,8 +164,8 @@ pub async fn list_databases(
     connection_id: String,
 ) -> AppResult<Vec<String>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => {
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => {
             let rows = sqlx::query(
                 r#"
                 SELECT datname::text AS name
@@ -171,14 +174,14 @@ pub async fn list_databases(
                 ORDER BY datname
                 "#,
             )
-            .fetch_all(&pool)
+            .fetch_all(pool)
             .await?;
             Ok(rows
                 .into_iter()
                 .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
                 .collect())
         }
-        PoolHandle::MySql(pool) => {
+        Some(SqlPoolView::Mysql(pool)) => {
             // See note in `introspect_schema`: information_schema string
             // columns can come back binary-flagged, so we CAST to CHAR.
             let rows = sqlx::query(
@@ -189,14 +192,15 @@ pub async fn list_databases(
                 ORDER BY schema_name
                 "#,
             )
-            .fetch_all(&pool)
+            .fetch_all(pool)
             .await?;
             Ok(rows
                 .into_iter()
                 .map(|r| r.try_get::<String, _>("name").unwrap_or_default())
                 .collect())
         }
-        PoolHandle::Sqlite(_) => Ok(Vec::new()),
+        Some(SqlPoolView::Sqlite(_)) => Ok(Vec::new()),
+        None => Ok(Vec::new()),
     }
 }
 

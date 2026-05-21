@@ -13,8 +13,8 @@ use tokio::process::Command;
 
 use crate::commands::connections::resolve_connection;
 use crate::drivers::{mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv};
+use crate::engine::{require_sql_pool, EngineHandle, SqlPoolView};
 use crate::error::{AppError, AppResult};
-use crate::pool_registry::PoolHandle;
 use crate::storage::{AppSettings, DbKind, SavedConnection};
 use crate::AppState;
 
@@ -580,7 +580,7 @@ async fn wait_with_cancel(
 
 async fn export_native(
     app: &AppHandle,
-    handle: PoolHandle,
+    handle: EngineHandle,
     opts: &ExportOptions,
     output_path: &str,
     cancel: Arc<AtomicBool>,
@@ -642,12 +642,15 @@ async fn export_native(
     })
 }
 
-async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppResult<Vec<TableRef>> {
+async fn list_target_tables(
+    handle: &EngineHandle,
+    opts: &ExportOptions,
+) -> AppResult<Vec<TableRef>> {
     if let Some(tables) = &opts.tables {
         return Ok(tables.clone());
     }
-    match handle {
-        PoolHandle::Postgres(pool) => {
+    match require_sql_pool(handle, "list_target_tables")? {
+        SqlPoolView::Postgres(pool) => {
             let rows = sqlx::query(
                 r#"
                 SELECT table_schema::text AS schema, table_name::text AS name
@@ -669,7 +672,7 @@ async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppRes
                 })
                 .collect())
         }
-        PoolHandle::MySql(pool) => {
+        SqlPoolView::Mysql(pool) => {
             // CAST AS CHAR — see schema.rs note about information_schema text
             // columns coming back binary-flagged.
             let rows = sqlx::query(
@@ -695,7 +698,7 @@ async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppRes
                 })
                 .collect())
         }
-        PoolHandle::Sqlite(pool) => {
+        SqlPoolView::Sqlite(pool) => {
             let rows = sqlx::query(
                 r#"
                 SELECT name FROM sqlite_master
@@ -718,9 +721,9 @@ async fn list_target_tables(handle: &PoolHandle, opts: &ExportOptions) -> AppRes
     }
 }
 
-async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<String> {
-    match handle {
-        PoolHandle::Postgres(pool) => {
+async fn generate_create_table(handle: &EngineHandle, t: &TableRef) -> AppResult<String> {
+    match require_sql_pool(handle, "generate_create_table")? {
+        SqlPoolView::Postgres(pool) => {
             let cols = sqlx::query(
                 r#"
                 SELECT
@@ -798,7 +801,7 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
                 lines.join(",\n"),
             ))
         }
-        PoolHandle::MySql(pool) => {
+        SqlPoolView::Mysql(pool) => {
             // CAST AS CHAR — see schema.rs note about information_schema text
             // columns coming back binary-flagged.
             let cols = sqlx::query(
@@ -869,7 +872,7 @@ async fn generate_create_table(handle: &PoolHandle, t: &TableRef) -> AppResult<S
                 lines.join(",\n"),
             ))
         }
-        PoolHandle::Sqlite(pool) => {
+        SqlPoolView::Sqlite(pool) => {
             // SQLite stores the exact CREATE statement; reuse it verbatim.
             let row =
                 sqlx::query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -912,7 +915,7 @@ fn pg_render_type(
 }
 
 async fn dump_table_data(
-    handle: &PoolHandle,
+    handle: &EngineHandle,
     t: &TableRef,
     file: &mut tokio::fs::File,
     app: &AppHandle,
@@ -923,10 +926,10 @@ async fn dump_table_data(
     let sql_my = format!("SELECT * FROM `{}`", t.table);
     let sql_lite = format!("SELECT * FROM \"{}\"", t.table.replace('"', "\"\""));
 
-    let result = match handle {
-        PoolHandle::Postgres(pool) => pg_drv::execute(pool, &sql_pg).await?,
-        PoolHandle::MySql(pool) => mysql_drv::execute(pool, &sql_my).await?,
-        PoolHandle::Sqlite(pool) => sqlite_drv::execute(pool, &sql_lite).await?,
+    let result = match require_sql_pool(handle, "dump_table_data")? {
+        SqlPoolView::Postgres(pool) => pg_drv::execute(pool, &sql_pg).await?,
+        SqlPoolView::Mysql(pool) => mysql_drv::execute(pool, &sql_my).await?,
+        SqlPoolView::Sqlite(pool) => sqlite_drv::execute(pool, &sql_lite).await?,
     };
 
     let kind = handle.kind();
@@ -1045,7 +1048,7 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
 
 async fn import_native(
     app: &AppHandle,
-    handle: PoolHandle,
+    handle: EngineHandle,
     opts: &ImportOptions,
     input_path: &str,
     cancel: Arc<AtomicBool>,
@@ -1094,8 +1097,8 @@ async fn import_native(
         };
     }
 
-    match handle {
-        PoolHandle::Postgres(pool) => {
+    match require_sql_pool(&handle, "import_native")? {
+        SqlPoolView::Postgres(pool) => {
             if opts.single_transaction {
                 let mut tx = pool.begin().await?;
                 for s in &statements {
@@ -1112,7 +1115,7 @@ async fn import_native(
                 for s in &statements {
                     check_cancel!();
                     sqlx::query(s)
-                        .execute(&pool)
+                        .execute(pool)
                         .await
                         .map_err(|e| exec_err!(s, e))?;
                     executed += 1;
@@ -1120,7 +1123,7 @@ async fn import_native(
                 }
             }
         }
-        PoolHandle::MySql(pool) => {
+        SqlPoolView::Mysql(pool) => {
             if opts.single_transaction {
                 let mut tx = pool.begin().await?;
                 for s in &statements {
@@ -1137,7 +1140,7 @@ async fn import_native(
                 for s in &statements {
                     check_cancel!();
                     sqlx::query(s)
-                        .execute(&pool)
+                        .execute(pool)
                         .await
                         .map_err(|e| exec_err!(s, e))?;
                     executed += 1;
@@ -1145,7 +1148,7 @@ async fn import_native(
                 }
             }
         }
-        PoolHandle::Sqlite(pool) => {
+        SqlPoolView::Sqlite(pool) => {
             if opts.single_transaction {
                 let mut tx = pool.begin().await?;
                 for s in &statements {
@@ -1162,7 +1165,7 @@ async fn import_native(
                 for s in &statements {
                     check_cancel!();
                     sqlx::query(s)
-                        .execute(&pool)
+                        .execute(pool)
                         .await
                         .map_err(|e| exec_err!(s, e))?;
                     executed += 1;

@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::State;
 
-use crate::error::AppResult;
-use crate::pool_registry::PoolHandle;
+use crate::engine::SqlPoolView;
+use crate::error::{AppError, AppResult};
 use crate::storage::{new_id, Diagram};
 use crate::AppState;
 
@@ -77,10 +77,13 @@ pub async fn introspect_diagram(
     schema: Option<String>,
 ) -> AppResult<DiagramIntrospection> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => introspect_postgres(&pool, schema.as_deref()).await,
-        PoolHandle::MySql(pool) => introspect_mysql(&pool).await,
-        PoolHandle::Sqlite(pool) => introspect_sqlite(&pool).await,
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => introspect_postgres(pool, schema.as_deref()).await,
+        Some(SqlPoolView::Mysql(pool)) => introspect_mysql(pool).await,
+        Some(SqlPoolView::Sqlite(pool)) => introspect_sqlite(pool).await,
+        None => Err(AppError::Other(
+            "introspect_diagram requires a SQL engine".into(),
+        )),
     }
 }
 
@@ -608,10 +611,13 @@ pub async fn list_foreign_keys(
     table: String,
 ) -> AppResult<Vec<DiagFk>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => list_fks_postgres(&pool, &schema, &table).await,
-        PoolHandle::MySql(pool) => list_fks_mysql(&pool, &table).await,
-        PoolHandle::Sqlite(pool) => list_fks_sqlite(&pool, &table).await,
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => list_fks_postgres(pool, &schema, &table).await,
+        Some(SqlPoolView::Mysql(pool)) => list_fks_mysql(pool, &table).await,
+        Some(SqlPoolView::Sqlite(pool)) => list_fks_sqlite(pool, &table).await,
+        None => Err(AppError::Other(
+            "list_foreign_keys requires a SQL engine".into(),
+        )),
     }
 }
 

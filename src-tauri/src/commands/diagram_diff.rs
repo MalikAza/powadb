@@ -7,8 +7,8 @@ use crate::commands::diagram::{
     introspect_mysql, introspect_postgres, introspect_sqlite, DiagFk, DiagTable,
     DiagramIntrospection,
 };
+use crate::engine::SqlPoolView;
 use crate::error::{AppError, AppResult};
-use crate::pool_registry::PoolHandle;
 use crate::storage::DbKind;
 use crate::AppState;
 
@@ -434,10 +434,11 @@ pub async fn diff_diagram(
     let doc: Doc = serde_json::from_str(&doc_json)
         .map_err(|e| AppError::Other(format!("invalid diagram doc: {e}")))?;
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    let live = match handle {
-        PoolHandle::Postgres(pool) => introspect_postgres(&pool, None).await?,
-        PoolHandle::MySql(pool) => introspect_mysql(&pool).await?,
-        PoolHandle::Sqlite(pool) => introspect_sqlite(&pool).await?,
+    let live = match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => introspect_postgres(pool, None).await?,
+        Some(SqlPoolView::Mysql(pool)) => introspect_mysql(pool).await?,
+        Some(SqlPoolView::Sqlite(pool)) => introspect_sqlite(pool).await?,
+        None => return Err(AppError::Other("diff_diagram requires a SQL engine".into())),
     };
     Ok(DiffResult {
         ops: compute_diff(&doc, &live),
@@ -451,10 +452,11 @@ pub async fn execute_ddl(
     sql: String,
 ) -> AppResult<()> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => execute_pg(&pool, &sql).await,
-        PoolHandle::MySql(pool) => execute_mysql(&pool, &sql).await,
-        PoolHandle::Sqlite(pool) => execute_sqlite(&pool, &sql).await,
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => execute_pg(pool, &sql).await,
+        Some(SqlPoolView::Mysql(pool)) => execute_mysql(pool, &sql).await,
+        Some(SqlPoolView::Sqlite(pool)) => execute_sqlite(pool, &sql).await,
+        None => Err(AppError::Other("execute_ddl requires a SQL engine".into())),
     }
 }
 

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { Capabilities } from "../ipc";
 import { ipc } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
 import { useTabs } from "./tabs";
@@ -17,6 +18,10 @@ type State = {
   /// Per-connection state machine driven by `connection-state-changed` events.
   /// Absence from the map == idle.
   connStates: Record<string, ConnState>;
+  /// Per-connection capability flags, fetched lazily once the pool is ready.
+  /// Absence from the map == not yet fetched; presence == we know what the
+  /// engine supports and can gate UI accordingly.
+  capabilities: Record<string, Capabilities>;
   loaded: boolean;
 };
 
@@ -39,6 +44,7 @@ export const useConnections = create<State & Actions>((set, get) => ({
   activeId: null,
   connectedIds: new Set(),
   connStates: {},
+  capabilities: {},
   loaded: false,
 
   async load() {
@@ -139,9 +145,26 @@ export const useConnections = create<State & Actions>((set, get) => ({
         if (!(id in s.connStates)) return s;
         const next = { ...s.connStates };
         delete next[id];
-        return { connStates: next };
+        // Drop capabilities too so a future reconnect re-fetches them.
+        const nextCaps = { ...s.capabilities };
+        delete nextCaps[id];
+        return { connStates: next, capabilities: nextCaps };
       }
       return { connStates: { ...s.connStates, [id]: state } };
     });
+    // When a pool becomes ready, fetch capabilities once so feature gating
+    // is in place before the UI tries to render engine-specific bits.
+    if (state.kind === "ready" && !(id in get().capabilities)) {
+      ipc
+        .getCapabilities(id)
+        .then((caps) => {
+          set((s) => ({ capabilities: { ...s.capabilities, [id]: caps } }));
+        })
+        .catch(() => {
+          // Capability fetch failures are non-fatal — the UI will fall back to
+          // attempting features and surfacing whatever error the backend
+          // returns. The next reconnect will retry.
+        });
+    }
   },
 }));

@@ -1,8 +1,8 @@
 use sqlx::Row;
 use tauri::State;
 
-use crate::error::AppResult;
-use crate::pool_registry::PoolHandle;
+use crate::engine::SqlPoolView;
+use crate::error::{AppError, AppResult};
 use crate::AppState;
 
 #[tauri::command]
@@ -42,33 +42,33 @@ pub async fn get_primary_key_columns(
         ORDER BY kcu.ordinal_position
     "#;
 
-    match handle {
-        PoolHandle::Postgres(pool) => {
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => {
             let rows = sqlx::query(sql)
                 .bind(&schema)
                 .bind(&table)
-                .fetch_all(&pool)
+                .fetch_all(pool)
                 .await?;
             Ok(rows
                 .into_iter()
                 .filter_map(|r| r.try_get::<String, _>("column_name").ok())
                 .collect())
         }
-        PoolHandle::MySql(pool) => {
+        Some(SqlPoolView::Mysql(pool)) => {
             let rows = sqlx::query(mysql_sql)
                 .bind(&schema)
                 .bind(&table)
-                .fetch_all(&pool)
+                .fetch_all(pool)
                 .await?;
             Ok(rows
                 .into_iter()
                 .filter_map(|r| r.try_get::<String, _>("column_name").ok())
                 .collect())
         }
-        PoolHandle::Sqlite(pool) => {
+        Some(SqlPoolView::Sqlite(pool)) => {
             let _ = schema;
             let pragma = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
-            let rows = sqlx::query(&pragma).fetch_all(&pool).await?;
+            let rows = sqlx::query(&pragma).fetch_all(pool).await?;
             let mut cols: Vec<(i64, String)> = rows
                 .into_iter()
                 .filter_map(|r| {
@@ -83,6 +83,9 @@ pub async fn get_primary_key_columns(
             cols.sort_by_key(|(pk, _)| *pk);
             Ok(cols.into_iter().map(|(_, n)| n).collect())
         }
+        None => Err(AppError::Other(
+            "get_primary_key_columns requires a SQL engine".into(),
+        )),
     }
 }
 
@@ -95,30 +98,31 @@ pub async fn execute_dml(
 ) -> AppResult<u64> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
 
-    match handle {
-        PoolHandle::Postgres(pool) => {
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => {
             let mut q = sqlx::query(&sql);
             for p in &params {
                 q = q.bind(p.as_deref());
             }
-            let r = q.execute(&pool).await?;
+            let r = q.execute(pool).await?;
             Ok(r.rows_affected())
         }
-        PoolHandle::MySql(pool) => {
+        Some(SqlPoolView::Mysql(pool)) => {
             let mut q = sqlx::query(&sql);
             for p in &params {
                 q = q.bind(p.as_deref());
             }
-            let r = q.execute(&pool).await?;
+            let r = q.execute(pool).await?;
             Ok(r.rows_affected())
         }
-        PoolHandle::Sqlite(pool) => {
+        Some(SqlPoolView::Sqlite(pool)) => {
             let mut q = sqlx::query(&sql);
             for p in &params {
                 q = q.bind(p.as_deref());
             }
-            let r = q.execute(&pool).await?;
+            let r = q.execute(pool).await?;
             Ok(r.rows_affected())
         }
+        None => Err(AppError::Other("execute_dml requires a SQL engine".into())),
     }
 }

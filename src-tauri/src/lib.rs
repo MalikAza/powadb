@@ -1,5 +1,6 @@
 mod commands;
 mod drivers;
+mod engine;
 mod error;
 mod job_registry;
 mod pool_registry;
@@ -221,6 +222,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::settings::open_external,
+            commands::capabilities::get_capabilities,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

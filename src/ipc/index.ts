@@ -17,6 +17,23 @@ export type SchemaMeta = {
   }[];
 };
 
+/// Capability flags returned by `get_capabilities`. Drives feature visibility
+/// in the UI — hide the Diagram tab for Mongo, hide CREATE DATABASE for
+/// SQLite, hide PostGIS handling outside Postgres, etc.
+export type QueryLanguage = "sql" | "mongo";
+
+export type Capabilities = {
+  supports_databases_list: boolean;
+  supports_database_create: boolean;
+  supports_schemas: boolean;
+  supports_foreign_keys: boolean;
+  supports_ddl_diff: boolean;
+  supports_diagram: boolean;
+  supports_geo: boolean;
+  supports_native_dump: boolean;
+  query_language: QueryLanguage;
+};
+
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
@@ -58,6 +75,9 @@ export const ipc = {
     invoke("switch_database", { connectionId, database }),
 
   prewarmConnection: (id: string): Promise<void> => invoke("prewarm_connection", { id }),
+
+  getCapabilities: (connectionId: string): Promise<Capabilities> =>
+    invoke("get_capabilities", { connectionId }),
 
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),

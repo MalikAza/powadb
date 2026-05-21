@@ -1,8 +1,8 @@
 use tauri::State;
 
 use crate::commands::connections::resolve_connection;
+use crate::engine::SqlPoolView;
 use crate::error::{AppError, AppResult};
-use crate::pool_registry::PoolHandle;
 use crate::storage::DbKind;
 use crate::AppState;
 
@@ -55,14 +55,19 @@ pub async fn create_database(
         "CREATE DATABASE {}",
         quote_identifier(conn.kind, name.trim())
     );
-    match handle {
-        PoolHandle::Postgres(pool) => {
-            sqlx::query(&stmt).execute(&pool).await?;
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => {
+            sqlx::query(&stmt).execute(pool).await?;
         }
-        PoolHandle::MySql(pool) => {
-            sqlx::query(&stmt).execute(&pool).await?;
+        Some(SqlPoolView::Mysql(pool)) => {
+            sqlx::query(&stmt).execute(pool).await?;
         }
-        PoolHandle::Sqlite(_) => unreachable!("sqlite handled above"),
+        Some(SqlPoolView::Sqlite(_)) => unreachable!("sqlite handled above"),
+        None => {
+            return Err(AppError::Other(
+                "create_database requires a SQL engine".into(),
+            ))
+        }
     }
     Ok(())
 }
@@ -88,14 +93,19 @@ pub async fn drop_database(
     }
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
     let stmt = format!("DROP DATABASE {}", quote_identifier(conn.kind, target));
-    match handle {
-        PoolHandle::Postgres(pool) => {
-            sqlx::query(&stmt).execute(&pool).await?;
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => {
+            sqlx::query(&stmt).execute(pool).await?;
         }
-        PoolHandle::MySql(pool) => {
-            sqlx::query(&stmt).execute(&pool).await?;
+        Some(SqlPoolView::Mysql(pool)) => {
+            sqlx::query(&stmt).execute(pool).await?;
         }
-        PoolHandle::Sqlite(_) => unreachable!("sqlite handled above"),
+        Some(SqlPoolView::Sqlite(_)) => unreachable!("sqlite handled above"),
+        None => {
+            return Err(AppError::Other(
+                "drop_database requires a SQL engine".into(),
+            ))
+        }
     }
     Ok(())
 }

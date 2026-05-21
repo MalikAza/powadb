@@ -4,9 +4,6 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use serde::Serialize;
-use sqlx::mysql::MySqlPool;
-use sqlx::postgres::PgPool;
-use sqlx::sqlite::SqlitePool;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{oneshot, Mutex, Notify};
 
@@ -14,6 +11,7 @@ use crate::commands::connections::resolve_connection;
 use crate::drivers::{
     mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult, ScriptResult,
 };
+use crate::engine::{EngineHandle, MysqlEngine, PostgresEngine, SqliteEngine};
 use crate::error::{AppError, AppResult};
 use crate::ssh::{self, SshConfig, SshTunnelHandle};
 use crate::storage::{DbKind, SavedConnection};
@@ -28,22 +26,8 @@ pub const CONN_STATE_EVENT: &str = "connection-state-changed";
 /// sits in `Connecting` forever.
 const CONNECT_WATCHDOG: Duration = Duration::from_secs(20);
 
-#[derive(Clone)]
-pub enum PoolHandle {
-    Postgres(PgPool),
-    MySql(MySqlPool),
-    Sqlite(SqlitePool),
-}
-
-impl PoolHandle {
-    pub fn kind(&self) -> DbKind {
-        match self {
-            PoolHandle::Postgres(_) => DbKind::Postgres,
-            PoolHandle::MySql(_) => DbKind::Mysql,
-            PoolHandle::Sqlite(_) => DbKind::Sqlite,
-        }
-    }
-}
+/// Backwards-compatible alias. New code should prefer `EngineHandle` directly.
+pub type PoolHandle = EngineHandle;
 
 enum Tunnel {
     Wg(WgTunnelHandle),
@@ -419,11 +403,7 @@ impl PoolRegistry {
             let mut pools = self.pools.lock().await;
             match pools.remove(connection_id) {
                 Some(entry) => {
-                    match entry.handle {
-                        PoolHandle::Postgres(p) => p.close().await,
-                        PoolHandle::MySql(p) => p.close().await,
-                        PoolHandle::Sqlite(p) => p.close().await,
-                    }
+                    entry.handle.close().await;
                     entry.tunnel
                 }
                 None => None,
@@ -467,11 +447,7 @@ impl PoolRegistry {
     pub async fn close(&self, connection_id: &str) {
         let removed = self.pools.lock().await.remove(connection_id);
         if let Some(entry) = removed {
-            match entry.handle {
-                PoolHandle::Postgres(p) => p.close().await,
-                PoolHandle::MySql(p) => p.close().await,
-                PoolHandle::Sqlite(p) => p.close().await,
-            }
+            entry.handle.close().await;
             drop(entry.tunnel);
             self.gc_tunnels().await;
             self.clear_state(connection_id).await;
@@ -504,11 +480,10 @@ async fn open_pool(
     password: Option<&str>,
     host: &str,
     port: u16,
-) -> AppResult<PoolHandle> {
+) -> AppResult<EngineHandle> {
     if matches!(conn.kind, DbKind::Sqlite) {
-        return Ok(PoolHandle::Sqlite(
-            sqlite_drv::connect(&conn.database).await?,
-        ));
+        let pool = sqlite_drv::connect(&conn.database).await?;
+        return Ok(Arc::new(SqliteEngine::new(pool)));
     }
     let url = build_url(
         &conn.kind,
@@ -519,11 +494,12 @@ async fn open_pool(
         &conn.database,
         conn.ssl,
     );
-    Ok(match conn.kind {
-        DbKind::Postgres => PoolHandle::Postgres(pg_drv::connect(&url).await?),
-        DbKind::Mysql => PoolHandle::MySql(mysql_drv::connect(&url).await?),
+    let handle: EngineHandle = match conn.kind {
+        DbKind::Postgres => Arc::new(PostgresEngine::new(pg_drv::connect(&url).await?)),
+        DbKind::Mysql => Arc::new(MysqlEngine::new(mysql_drv::connect(&url).await?)),
         DbKind::Sqlite => unreachable!("sqlite handled above"),
-    })
+    };
+    Ok(handle)
 }
 
 fn build_url(
@@ -578,19 +554,14 @@ fn urlencode(s: &str) -> String {
 
 pub async fn run_with_cancel(
     registry: &PoolRegistry,
-    handle: PoolHandle,
+    handle: EngineHandle,
     query_id: &str,
     sql: &str,
 ) -> AppResult<QueryResult> {
     let cancel_rx = registry.register_cancel(query_id).await;
 
-    let exec = async move {
-        match handle {
-            PoolHandle::Postgres(p) => pg_drv::execute(&p, sql).await,
-            PoolHandle::MySql(p) => mysql_drv::execute(&p, sql).await,
-            PoolHandle::Sqlite(p) => sqlite_drv::execute(&p, sql).await,
-        }
-    };
+    let sql = sql.to_string();
+    let exec = async move { handle.execute(&sql).await };
 
     let result = tokio::select! {
         r = exec => r,
@@ -603,19 +574,14 @@ pub async fn run_with_cancel(
 
 pub async fn run_script_with_cancel(
     registry: &PoolRegistry,
-    handle: PoolHandle,
+    handle: EngineHandle,
     query_id: &str,
     sql: &str,
 ) -> AppResult<ScriptResult> {
     let cancel_rx = registry.register_cancel(query_id).await;
 
-    let exec = async move {
-        match handle {
-            PoolHandle::Postgres(p) => pg_drv::execute_script(&p, sql).await,
-            PoolHandle::MySql(p) => mysql_drv::execute_script(&p, sql).await,
-            PoolHandle::Sqlite(p) => sqlite_drv::execute_script(&p, sql).await,
-        }
-    };
+    let sql = sql.to_string();
+    let exec = async move { handle.execute_script(&sql).await };
 
     let result = tokio::select! {
         r = exec => r,

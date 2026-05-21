@@ -91,7 +91,13 @@ export function SchemaTree() {
   });
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const supportsDbAdmin = conn?.kind === "postgres" || conn?.kind === "mysql";
+  // Prefer capability flags (populated once the pool is ready) over
+  // hard-coded kind checks so new engines (Mongo, …) work without touching
+  // this component. Fall back to the kind check until capabilities arrive.
+  const caps = useConnections((s) => (activeId ? s.capabilities[activeId] : undefined));
+  const supportsDbAdmin = caps
+    ? caps.supports_databases_list && caps.supports_database_create
+    : conn?.kind === "postgres" || conn?.kind === "mysql";
 
   async function refresh() {
     if (!activeId) return;
