@@ -379,6 +379,7 @@ function Step1Connection({
                 <SelectItem value="postgres">PostgreSQL</SelectItem>
                 <SelectItem value="mysql">MySQL / MariaDB</SelectItem>
                 <SelectItem value="sqlite">SQLite</SelectItem>
+                <SelectItem value="mongo">MongoDB</SelectItem>
               </SelectContent>
             </Select>
             <FormMessage />

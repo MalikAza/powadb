@@ -130,6 +130,65 @@ describe("useTabs", () => {
   });
 });
 
+describe("useTabs — openBrowseTab filter overrides", () => {
+  beforeEach(reset);
+
+  it("merges new filters into an existing browse tab and resets offset", () => {
+    const id = useTabs.getState().openBrowseTab("c1", "public", "users");
+    useTabs.getState().patchTab(id, { offset: 200 });
+    const reopened = useTabs.getState().openBrowseTab("c1", "public", "users", {
+      status: { kind: "compare", op: "=", value: "active" },
+    });
+    expect(reopened).toBe(id);
+    const tab = useTabs.getState().tabs.find((t) => t.id === id);
+    if (tab?.kind !== "browse") throw new Error("expected browse tab");
+    expect(tab.filters).toEqual({ status: { kind: "compare", op: "=", value: "active" } });
+    expect(tab.offset).toBe(0);
+  });
+
+  it("keeps the existing filters when reopening with no overrides", () => {
+    const id = useTabs.getState().openBrowseTab("c1", "public", "users", {
+      role: { kind: "compare", op: "=", value: "admin" },
+    });
+    useTabs.getState().openBrowseTab("c1", "public", "users");
+    const tab = useTabs.getState().tabs.find((t) => t.id === id);
+    if (tab?.kind !== "browse") throw new Error("expected browse tab");
+    expect(tab.filters).toEqual({ role: { kind: "compare", op: "=", value: "admin" } });
+  });
+});
+
+describe("useTabs — openDiagramTab", () => {
+  beforeEach(reset);
+
+  it("creates a single diagram tab per connection with default state", () => {
+    const id = useTabs.getState().openDiagramTab("c1");
+    const tab = useTabs.getState().tabs.find((t) => t.id === id);
+    if (tab?.kind !== "diagram") throw new Error("expected diagram tab");
+    expect(tab.connectionId).toBe("c1");
+    expect(tab.title).toBe("Diagram");
+    expect(tab.mode).toBe("modeler");
+    expect(tab.diagramId).toBeNull();
+    expect(tab.introspection).toBeNull();
+    expect(useTabs.getState().activeTabId).toBe(id);
+  });
+
+  it("reuses an existing diagram tab for the same connection", () => {
+    const id1 = useTabs.getState().openDiagramTab("c1");
+    useTabs.getState().newQueryTab("c1");
+    const id2 = useTabs.getState().openDiagramTab("c1");
+    expect(id2).toBe(id1);
+    expect(useTabs.getState().tabs.filter((t) => t.kind === "diagram")).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(id1);
+  });
+
+  it("creates separate diagram tabs per connection", () => {
+    const a = useTabs.getState().openDiagramTab("c1");
+    const b = useTabs.getState().openDiagramTab("c2");
+    expect(a).not.toBe(b);
+    expect(useTabs.getState().tabs.filter((t) => t.kind === "diagram")).toHaveLength(2);
+  });
+});
+
 describe("newQueryId", () => {
   it("returns a unique id on every call", () => {
     const ids = new Set([newQueryId(), newQueryId(), newQueryId()]);

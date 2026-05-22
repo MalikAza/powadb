@@ -2,8 +2,8 @@ use serde::Serialize;
 use sqlx::Row;
 use tauri::State;
 
+use crate::engine::SqlPoolView;
 use crate::error::{AppError, AppResult};
-use crate::pool_registry::PoolHandle;
 use crate::AppState;
 
 #[derive(Debug, Serialize)]
@@ -26,8 +26,8 @@ pub async fn geometry_to_geojson(
     ewkb_hex: String,
 ) -> AppResult<String> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    let pool = match handle {
-        PoolHandle::Postgres(p) => p,
+    let pool = match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(p)) => p.clone(),
         _ => {
             return Err(AppError::UnsupportedType(
                 "PostGIS geometry conversion is only supported on Postgres".into(),
@@ -55,8 +55,8 @@ pub async fn geometries_to_geojson(
     ewkb_hex_list: Vec<String>,
 ) -> AppResult<Vec<Option<String>>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    let pool = match handle {
-        PoolHandle::Postgres(p) => p,
+    let pool = match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(p)) => p.clone(),
         _ => {
             return Err(AppError::UnsupportedType(
                 "PostGIS geometry conversion is only supported on Postgres".into(),
@@ -107,8 +107,8 @@ pub async fn decode_geometries(
     ewkb_hex_list: Vec<String>,
 ) -> AppResult<Vec<Option<DecodedGeometry>>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    let pool = match handle {
-        PoolHandle::Postgres(p) => p,
+    let pool = match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(p)) => p.clone(),
         _ => {
             return Err(AppError::UnsupportedType(
                 "PostGIS geometry decoding is only supported on Postgres".into(),

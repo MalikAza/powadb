@@ -121,3 +121,35 @@ body.col-resizing {
   cursor: col-resize !important;
   user-select: none !important;
 }
+
+/*
+ * CodeMirror selection / search-match colors live here (not in the
+ * `EditorView.theme()` JS spec) because CodeMirror's internal default
+ * selection styling out-specificities our theme rules. `!important` here
+ * wins that fight.
+ *
+ * We blend `--foreground` with `--background` for a neutral selection
+ * (like VS Code, Sublime, etc. do) — this keeps the selection feeling
+ * "part of the theme" instead of dragging in the brand `--primary` color.
+ * Search matches keep the brand color since they're meant to stand out.
+ * Both fully follow the active theme — light, dark, and any custom theme
+ * that overrides `--foreground` / `--background` / `--primary`.
+ */
+.cm-editor .cm-selectionBackground,
+.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground,
+.cm-editor ::selection {
+  background-color: color-mix(in oklch, var(--foreground) 22%, var(--background) 78%) !important;
+}
+
+.cm-editor .cm-searchMatch {
+  background-color: color-mix(in oklch, var(--primary) 28%, var(--background) 72%) !important;
+  outline: 1px solid color-mix(in oklch, var(--primary) 60%, transparent) !important;
+}
+
+.cm-editor .cm-searchMatch.cm-searchMatch-selected {
+  background-color: color-mix(in oklch, var(--primary) 50%, var(--background) 50%) !important;
+}
+
+.cm-editor .cm-selectionMatch {
+  background-color: color-mix(in oklch, var(--foreground) 14%, var(--background) 86%) !important;
+}

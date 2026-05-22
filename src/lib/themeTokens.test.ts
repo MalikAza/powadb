@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   type CustomTheme,
+  colorsFromJson,
+  colorsToJson,
   DARK_PRESET,
   EXPORT_SCHEMA,
   fromExported,
   LIGHT_PRESET,
+  presetColors,
   THEME_TOKENS,
   ThemeImportError,
   toExported,
@@ -91,5 +94,69 @@ describe("fromExported validation", () => {
     };
     const bad = { ...exported, colors: { ...exported.colors, primary: 42 } };
     expect(() => fromExported(bad)).toThrow(/primary/);
+  });
+
+  it("rejects when radius is not a string", () => {
+    const bad = { ...toExported(makeTheme()), radius: 0.5 };
+    expect(() => fromExported(bad)).toThrow(/radius/i);
+  });
+
+  it("rejects when colors is missing entirely", () => {
+    const exported = toExported(makeTheme()) as unknown as Record<string, unknown>;
+    const { colors: _omit, ...rest } = exported;
+    expect(() => fromExported(rest)).toThrow(/colors/i);
+  });
+
+  it("rejects when a color token is an empty/whitespace string", () => {
+    const exported = toExported(makeTheme()) as unknown as {
+      colors: Record<string, unknown>;
+    };
+    const bad = { ...exported, colors: { ...exported.colors, primary: "   " } };
+    expect(() => fromExported(bad)).toThrow(/primary/);
+  });
+});
+
+describe("presetColors", () => {
+  it("returns a fresh copy of LIGHT_PRESET for 'light'", () => {
+    const c = presetColors("light");
+    expect(c).toEqual(LIGHT_PRESET);
+    expect(c).not.toBe(LIGHT_PRESET);
+  });
+
+  it("returns a fresh copy of DARK_PRESET for 'dark'", () => {
+    const c = presetColors("dark");
+    expect(c).toEqual(DARK_PRESET);
+    expect(c).not.toBe(DARK_PRESET);
+  });
+});
+
+describe("colorsToJson / colorsFromJson", () => {
+  it("round-trips colors via JSON", () => {
+    const json = colorsToJson(LIGHT_PRESET);
+    const parsed = colorsFromJson(json);
+    expect(parsed).toEqual(LIGHT_PRESET);
+  });
+
+  it("falls back to the light preset on invalid JSON", () => {
+    expect(colorsFromJson("not-json")).toEqual(LIGHT_PRESET);
+  });
+
+  it("falls back to the light preset when JSON is not an object", () => {
+    expect(colorsFromJson("42")).toEqual(LIGHT_PRESET);
+    expect(colorsFromJson("null")).toEqual(LIGHT_PRESET);
+  });
+
+  it("fills missing tokens with the light preset", () => {
+    const json = JSON.stringify({ primary: "oklch(0.5 0 0)" });
+    const parsed = colorsFromJson(json);
+    expect(parsed.primary).toBe("oklch(0.5 0 0)");
+    expect(parsed.background).toBe(LIGHT_PRESET.background);
+  });
+
+  it("ignores non-string and whitespace-only values", () => {
+    const json = JSON.stringify({ primary: 42, background: "   " });
+    const parsed = colorsFromJson(json);
+    expect(parsed.primary).toBe(LIGHT_PRESET.primary);
+    expect(parsed.background).toBe(LIGHT_PRESET.background);
   });
 });

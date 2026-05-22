@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tauri::State;
 
-use crate::error::AppResult;
-use crate::pool_registry::PoolHandle;
+use crate::engine::SqlPoolView;
+use crate::error::{AppError, AppResult};
 use crate::storage::{new_id, Diagram};
 use crate::AppState;
 
@@ -77,10 +77,13 @@ pub async fn introspect_diagram(
     schema: Option<String>,
 ) -> AppResult<DiagramIntrospection> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => introspect_postgres(&pool, schema.as_deref()).await,
-        PoolHandle::MySql(pool) => introspect_mysql(&pool).await,
-        PoolHandle::Sqlite(pool) => introspect_sqlite(&pool).await,
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => introspect_postgres(pool, schema.as_deref()).await,
+        Some(SqlPoolView::Mysql(pool)) => introspect_mysql(pool).await,
+        Some(SqlPoolView::Sqlite(pool)) => introspect_sqlite(pool).await,
+        None => Err(AppError::Other(
+            "introspect_diagram requires a SQL engine".into(),
+        )),
     }
 }
 
@@ -608,10 +611,13 @@ pub async fn list_foreign_keys(
     table: String,
 ) -> AppResult<Vec<DiagFk>> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    match handle {
-        PoolHandle::Postgres(pool) => list_fks_postgres(&pool, &schema, &table).await,
-        PoolHandle::MySql(pool) => list_fks_mysql(&pool, &table).await,
-        PoolHandle::Sqlite(pool) => list_fks_sqlite(&pool, &table).await,
+    match handle.as_sql_pool() {
+        Some(SqlPoolView::Postgres(pool)) => list_fks_postgres(pool, &schema, &table).await,
+        Some(SqlPoolView::Mysql(pool)) => list_fks_mysql(pool, &table).await,
+        Some(SqlPoolView::Sqlite(pool)) => list_fks_sqlite(pool, &table).await,
+        None => Err(AppError::Other(
+            "list_foreign_keys requires a SQL engine".into(),
+        )),
     }
 }
 
@@ -914,5 +920,105 @@ mod tests {
         let out = introspect_sqlite(&pool).await.unwrap();
         assert_eq!(out.tables.len(), 1);
         assert!(out.foreign_keys.is_empty());
+    }
+
+    fn fk_row(constraint: &str, from_col: &str, to_col: &str) -> FkRow {
+        FkRow {
+            constraint_schema: "public".into(),
+            constraint_name: constraint.into(),
+            from_schema: "public".into(),
+            from_table: "books".into(),
+            from_column: from_col.into(),
+            to_schema: "public".into(),
+            to_table: "authors".into(),
+            to_column: to_col.into(),
+            on_update: None,
+            on_delete: None,
+        }
+    }
+
+    #[test]
+    fn group_fk_rows_merges_composite_constraints() {
+        let rows = vec![
+            fk_row("fk_books_authors", "author_id_a", "id_a"),
+            fk_row("fk_books_authors", "author_id_b", "id_b"),
+        ];
+        let grouped = group_fk_rows(rows.into_iter());
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].id, "public.fk_books_authors");
+        assert_eq!(grouped[0].from_columns, vec!["author_id_a", "author_id_b"]);
+        assert_eq!(grouped[0].to_columns, vec!["id_a", "id_b"]);
+    }
+
+    #[test]
+    fn group_fk_rows_keeps_distinct_constraints_separate() {
+        let rows = vec![fk_row("fk_one", "a", "id"), fk_row("fk_two", "b", "id")];
+        let grouped = group_fk_rows(rows.into_iter());
+        assert_eq!(grouped.len(), 2);
+        let names: Vec<_> = grouped.iter().map(|f| f.id.as_str()).collect();
+        assert!(names.contains(&"public.fk_one"));
+        assert!(names.contains(&"public.fk_two"));
+    }
+
+    #[test]
+    fn group_fk_rows_preserves_on_update_and_on_delete() {
+        let rows = vec![FkRow {
+            constraint_schema: "s".into(),
+            constraint_name: "fk".into(),
+            from_schema: "s".into(),
+            from_table: "t".into(),
+            from_column: "x".into(),
+            to_schema: "s".into(),
+            to_table: "u".into(),
+            to_column: "y".into(),
+            on_update: Some("CASCADE".into()),
+            on_delete: Some("RESTRICT".into()),
+        }];
+        let grouped = group_fk_rows(rows.into_iter());
+        assert_eq!(grouped[0].on_update.as_deref(), Some("CASCADE"));
+        assert_eq!(grouped[0].on_delete.as_deref(), Some("RESTRICT"));
+    }
+
+    #[test]
+    fn upsert_table_reuses_existing_entry_when_schema_and_name_match() {
+        let mut tables: Vec<DiagTable> = Vec::new();
+        upsert_table(&mut tables, "public", "users")
+            .columns
+            .push(DiagColumn {
+                name: "id".into(),
+                data_type: "int".into(),
+                nullable: false,
+                is_pk: true,
+                default: None,
+                ordinal: 1,
+                char_max_len: None,
+                numeric_precision: None,
+                numeric_scale: None,
+            });
+        // Calling again with the same identity should not append a new table.
+        upsert_table(&mut tables, "public", "users")
+            .columns
+            .push(DiagColumn {
+                name: "email".into(),
+                data_type: "text".into(),
+                nullable: true,
+                is_pk: false,
+                default: None,
+                ordinal: 2,
+                char_max_len: None,
+                numeric_precision: None,
+                numeric_scale: None,
+            });
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].columns.len(), 2);
+    }
+
+    #[test]
+    fn upsert_table_appends_when_identity_differs() {
+        let mut tables: Vec<DiagTable> = Vec::new();
+        upsert_table(&mut tables, "public", "a");
+        upsert_table(&mut tables, "public", "b");
+        upsert_table(&mut tables, "other", "a");
+        assert_eq!(tables.len(), 3);
     }
 }

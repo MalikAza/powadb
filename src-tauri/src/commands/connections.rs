@@ -126,6 +126,41 @@ pub async fn list_active_connections(state: State<'_, AppState>) -> AppResult<Ve
     Ok(state.pools.active_ids().await)
 }
 
+/// Change the active database on a connection without tearing down its tunnel.
+/// Persists the new database name and swaps the sqlx pool through the existing
+/// SSH/WG path so a DB switch costs a single TCP connect, not a full handshake.
+#[tauri::command]
+pub async fn switch_database(
+    state: State<'_, AppState>,
+    connection_id: String,
+    database: String,
+) -> AppResult<()> {
+    let all = state.storage.list().await?;
+    let mut conn = all
+        .into_iter()
+        .find(|c| c.id == connection_id)
+        .ok_or_else(|| AppError::ConnectionNotFound(connection_id.clone()))?;
+    if conn.database == database {
+        return Ok(());
+    }
+    conn.database = database;
+    state.storage.upsert(&conn).await?;
+    state
+        .pools
+        .swap_pool_for_database(&state, &connection_id)
+        .await?;
+    Ok(())
+}
+
+/// Eagerly open a connection's tunnel + pool in the background so the user
+/// doesn't pay the handshake on first click. Returns immediately; the
+/// `connection-state-changed` event reports progress.
+#[tauri::command]
+pub async fn prewarm_connection(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let _ = state.pools.get_or_open(&state, &id).await?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_connection_password(
     state: State<'_, AppState>,

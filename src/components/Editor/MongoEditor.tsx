@@ -1,27 +1,29 @@
 import { acceptCompletion, autocompletion, completionStatus } from "@codemirror/autocomplete";
 import { indentWithTab } from "@codemirror/commands";
-import { MySQL, PostgreSQL, SQLite, sql } from "@codemirror/lang-sql";
+import { json } from "@codemirror/lang-json";
 import { highlightSelectionMatches, search } from "@codemirror/search";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useConnections } from "../../stores/connections";
-import { buildCmSchema, useSchema } from "../../stores/schema";
-import type { DbKind } from "../../types";
+import { useSchema } from "../../stores/schema";
 import {
   type CmRuntime,
   getCachedCmRuntime,
   loadCmRuntime,
   selectionAwareActiveLine,
 } from "./cmRuntime";
+import { buildMongoCompletionSource } from "./mongoCompletions";
 
 type Props = {
   value: string;
   onChange: (next: string) => void;
   onRun: () => void;
-  kind: DbKind;
 };
 
-export function SqlEditor({ value, onChange, onRun, kind }: Props) {
+const PLACEHOLDER =
+  '// mongosh-style — Cmd+Enter to run.\n// use myDatabase;\n// db.users.find({ active: true }).limit(25)\n// db.users.findOne({ _id: ObjectId("...") })\n// db.orders.aggregate([{ $match: {...} }, { $group: {...} }])';
+
+export function MongoEditor({ value, onChange, onRun }: Props) {
   const activeId = useConnections((s) => s.activeId);
   const schemas = useSchema((s) => (activeId ? s.byConnection[activeId] : undefined));
   const editorRef = useRef<ReactCodeMirrorRef | null>(null);
@@ -37,18 +39,13 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
     }
   }, [runtime]);
 
+  const completionSource = useMemo(() => buildMongoCompletionSource(schemas), [schemas]);
+
   const extensions = useMemo(() => {
     if (!runtime) return null;
     const { EditorView, keymap, placeholder, precHighest, theme } = runtime;
-    const dialect = kind === "mysql" ? MySQL : kind === "sqlite" ? SQLite : PostgreSQL;
-    const cmSchema = schemas ? buildCmSchema(schemas, kind) : undefined;
     return [
-      sql({
-        dialect,
-        upperCaseKeywords: true,
-        ...(cmSchema ? { schema: cmSchema.schema } : {}),
-        ...(cmSchema?.defaultSchema ? { defaultSchema: cmSchema.defaultSchema } : {}),
-      }),
+      json(),
       precHighest(
         keymap.of([
           {
@@ -74,18 +71,19 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
         closeOnBlur: true,
         defaultKeymap: true,
         icons: false,
+        override: [completionSource],
       }),
       search({ top: true }),
       highlightSelectionMatches(),
       selectionAwareActiveLine(runtime),
-      placeholder("-- Write your query, then Cmd+Enter to run"),
+      placeholder(PLACEHOLDER),
       theme.cmAppTheme,
       theme.cmHighlightStyle,
       EditorView.theme({
         "&": { height: "100%", fontSize: "13px" },
       }),
     ];
-  }, [kind, schemas, onRun, runtime]);
+  }, [onRun, runtime, completionSource]);
 
   if (!extensions) return null;
 
@@ -100,8 +98,7 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
       extensions={extensions}
       basicSetup={{
         lineNumbers: true,
-        // Disabled in favor of our `selectionAwareActiveLine` extension,
-        // which suppresses the line decoration during non-empty selections.
+        // Replaced by `selectionAwareActiveLine`; see SqlEditor for context.
         highlightActiveLine: false,
         highlightSelectionMatches: false,
         bracketMatching: true,

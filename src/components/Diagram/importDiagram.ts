@@ -14,6 +14,9 @@ const PARSER_DIALECT: Record<DbKind, string> = {
   postgres: "postgresql",
   mysql: "mysql",
   sqlite: "sqlite",
+  // Mongo has no SQL parsing; the diagram-import path is gated off via
+  // capabilities long before this map is consulted.
+  mongo: "postgresql",
 };
 
 let counter = 0;

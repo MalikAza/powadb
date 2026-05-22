@@ -17,6 +17,79 @@ export type SchemaMeta = {
   }[];
 };
 
+/// Capability flags returned by `get_capabilities`. Drives feature visibility
+/// in the UI — hide the Diagram tab for Mongo, hide CREATE DATABASE for
+/// SQLite, hide PostGIS handling outside Postgres, etc.
+export type QueryLanguage = "sql" | "mongo";
+
+export type Capabilities = {
+  supports_databases_list: boolean;
+  supports_database_create: boolean;
+  supports_database_drop: boolean;
+  supports_schemas: boolean;
+  supports_foreign_keys: boolean;
+  supports_ddl_diff: boolean;
+  supports_diagram: boolean;
+  supports_geo: boolean;
+  supports_native_dump: boolean;
+  query_language: QueryLanguage;
+};
+
+/// MongoDB operations the frontend can issue via `runEngineQuery`. Mirrors
+/// the Rust `MongoOp` enum (serde tag = "op", snake_case). For exploration
+/// we accept structured ops; a future `mongosh`-style DSL parser would emit
+/// these from `db.users.find({...}).limit(10)` etc.
+export type MongoOp =
+  | {
+      op: "find";
+      collection: string;
+      database?: string;
+      filter?: unknown;
+      projection?: unknown;
+      limit?: number;
+      skip?: number;
+      sort?: unknown;
+    }
+  | {
+      op: "find_one";
+      collection: string;
+      database?: string;
+      filter?: unknown;
+      projection?: unknown;
+    }
+  | { op: "aggregate"; collection: string; database?: string; pipeline: unknown[] }
+  | { op: "insert_one"; collection: string; database?: string; document: unknown }
+  | { op: "insert_many"; collection: string; database?: string; documents: unknown[] }
+  | {
+      op: "update_one";
+      collection: string;
+      database?: string;
+      filter: unknown;
+      update: unknown;
+    }
+  | {
+      op: "update_many";
+      collection: string;
+      database?: string;
+      filter: unknown;
+      update: unknown;
+    }
+  | { op: "delete_one"; collection: string; database?: string; filter: unknown }
+  | { op: "delete_many"; collection: string; database?: string; filter: unknown }
+  | { op: "run_command"; value: unknown };
+
+/// Engine-agnostic query input. SQL engines accept `{ kind: "sql", value: "<sql>" }`;
+/// Mongo accepts `{ kind: "mongo", value: MongoOp }`.
+export type EngineQuery = { kind: "sql"; value: string } | { kind: "mongo"; value: MongoOp };
+
+/// Engine-agnostic result. The variant the frontend sees depends on the
+/// engine: SQL → `tabular`, Mongo find/aggregate → `documents`, Mongo writes
+/// → `affected`.
+export type EngineResult =
+  | { kind: "tabular"; columns: unknown[]; rows: unknown[][]; elapsed_ms: number }
+  | { kind: "documents"; docs: unknown[]; elapsed_ms: number }
+  | { kind: "affected"; rows: number; elapsed_ms: number };
+
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
@@ -53,6 +126,24 @@ export const ipc = {
   disconnect: (id: string): Promise<void> => invoke("disconnect", { id }),
 
   listActiveConnections: (): Promise<string[]> => invoke("list_active_connections"),
+
+  switchDatabase: (connectionId: string, database: string): Promise<void> =>
+    invoke("switch_database", { connectionId, database }),
+
+  prewarmConnection: (id: string): Promise<void> => invoke("prewarm_connection", { id }),
+
+  getCapabilities: (connectionId: string): Promise<Capabilities> =>
+    invoke("get_capabilities", { connectionId }),
+
+  /// Engine-agnostic query path used for non-SQL engines (currently Mongo).
+  /// Takes a `queryId` so Cmd+. / `cancelQuery` can interrupt long-running
+  /// Mongo ops the same way it does SQL queries. The backend logs the op to
+  /// query history under a JSON one-liner representation.
+  runEngineQuery: (
+    connectionId: string,
+    queryId: string,
+    query: EngineQuery,
+  ): Promise<EngineResult> => invoke("run_engine_query", { connectionId, queryId, query }),
 
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),
@@ -184,6 +275,17 @@ export const ipc = {
     invoke("save_settings", { settings }),
 
   openExternal: (url: string): Promise<void> => invoke("open_external", { url }),
+};
+
+export type ConnState =
+  | { kind: "idle" }
+  | { kind: "connecting" }
+  | { kind: "ready" }
+  | { kind: "error"; message: string };
+
+export type ConnStateChangedEvent = {
+  connection_id: string;
+  state: ConnState;
 };
 
 export type StatementResult = {

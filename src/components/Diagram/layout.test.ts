@@ -48,4 +48,39 @@ describe("layoutDoc", () => {
     const yValues = new Set(out.tables.map((t) => t.position.y));
     expect(yValues.size).toBeGreaterThan(1);
   });
+
+  it("runs the elk path for larger graphs and assigns positions to every table", async () => {
+    const doc = makeDoc(6);
+    doc.edges = [
+      {
+        id: "e1",
+        name: null,
+        source: "t0",
+        target: "t1",
+        sourceColumns: ["id"],
+        targetColumns: ["id"],
+        onUpdate: null,
+        onDelete: null,
+      },
+      {
+        id: "e2",
+        name: null,
+        source: "t1",
+        target: "t2",
+        sourceColumns: ["id"],
+        targetColumns: ["id"],
+        onUpdate: null,
+        onDelete: null,
+      },
+    ];
+    const out = await layoutDoc(doc);
+    expect(out.tables).toHaveLength(6);
+    for (const t of out.tables) {
+      expect(typeof t.position.x).toBe("number");
+      expect(typeof t.position.y).toBe("number");
+    }
+    // ELK should produce distinct positions for connected nodes.
+    const positions = new Set(out.tables.map((t) => `${t.position.x},${t.position.y}`));
+    expect(positions.size).toBeGreaterThanOrEqual(2);
+  });
 });

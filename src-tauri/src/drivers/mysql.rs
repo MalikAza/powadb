@@ -10,7 +10,13 @@ use crate::sql_split::split_statements;
 
 pub async fn connect(url: &str) -> AppResult<MySqlPool> {
     let pool = MySqlPoolOptions::new()
-        .max_connections(5)
+        .max_connections(8)
+        // Keep one warm connection so the first query after a brief idle
+        // doesn't pay TCP setup again.
+        .min_connections(1)
+        // Bound the acquire wait: a dead tunnel shouldn't hang sqlx for its
+        // 30 s default.
+        .acquire_timeout(std::time::Duration::from_secs(15))
         // The server (and intermediate tunnels like SSH or WireGuard) sometimes
         // close a connection silently. `test_before_acquire` sends a cheap ping
         // before handing one out — that catches stale sockets so the user

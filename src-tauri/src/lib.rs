@@ -1,5 +1,6 @@
 mod commands;
 mod drivers;
+mod engine;
 mod error;
 mod job_registry;
 mod pool_registry;
@@ -162,12 +163,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::query::run_query,
             commands::query::run_script,
+            commands::query::run_engine_query,
             commands::query::cancel_query,
             commands::connections::list_connections,
             commands::connections::save_connection,
             commands::connections::delete_connection,
             commands::connections::disconnect,
             commands::connections::list_active_connections,
+            commands::connections::switch_database,
+            commands::connections::prewarm_connection,
             commands::connections::get_connection_password,
             commands::connections::get_connection_wg_config,
             commands::connections::get_connection_ssh_config,
@@ -219,6 +223,7 @@ pub fn run() {
             commands::settings::get_settings,
             commands::settings::save_settings,
             commands::settings::open_external,
+            commands::capabilities::get_capabilities,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

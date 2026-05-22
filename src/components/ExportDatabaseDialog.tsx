@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import type { DbKind } from "@/types";
 import {
   type DumpEngine,
   type DumpProgressEvent,
@@ -300,9 +301,10 @@ function ExportDatabaseDialogBody({
   );
 }
 
-function dumpToolName(kind: "postgres" | "mysql" | "sqlite"): string {
+function dumpToolName(kind: DbKind): string {
   if (kind === "postgres") return "pg_dump";
   if (kind === "mysql") return "mysqldump";
+  if (kind === "mongo") return "mongodump";
   return "sqlite3";
 }
 

@@ -50,6 +50,12 @@ import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import {
+  maybeObjectId,
+  mongoDocumentsToQueryResult,
+  mongoFiltersFromTab,
+  mongoSortFromTab,
+} from "../utils/mongo";
+import {
   type CompareOp,
   type Filter,
   filterToSql,
@@ -139,6 +145,32 @@ export function BrowseTabPane({ tab, conn }: Props) {
     const queryId = newQueryId();
     patchTab(tab.id, { loading: true, error: null });
     try {
+      if (conn.kind === "mongo") {
+        // Mongo branch: tab.schema is the database name, tab.table is the
+        // collection. The SQL filter UI doesn't translate yet — we send a
+        // bare find({}) with paging. Sorting is also SQL-only for now.
+        const er = await ipc.runEngineQuery(conn.id, queryId, {
+          kind: "mongo",
+          value: {
+            op: "find",
+            collection: tab.table,
+            database: tab.schema,
+            filter: mongoFiltersFromTab(tab),
+            sort: mongoSortFromTab(tab),
+            limit: tab.limit,
+            skip: tab.offset,
+          },
+        });
+        if (er.kind !== "documents") {
+          throw new Error(`Mongo find returned unexpected result kind: ${er.kind}`);
+        }
+        const result = mongoDocumentsToQueryResult(
+          er.docs as Record<string, unknown>[],
+          er.elapsed_ms,
+        );
+        patchTab(tab.id, { result, loading: false });
+        return;
+      }
       const cols = tab.result?.columns ?? [];
       const where = buildWhereClause(tab, conn, cols, byteaModes);
       const orderBy = tab.sortCol
@@ -158,26 +190,31 @@ export function BrowseTabPane({ tab, conn }: Props) {
 
   useEffect(() => {
     if (tab.pkCols !== null) return;
+    // Mongo has implicit _id as the primary key — no need to query the server.
+    if (conn.kind === "mongo") {
+      patchTab(tab.id, { pkCols: ["_id"] });
+      return;
+    }
     ipc
       .getPrimaryKeyColumns(conn.id, tab.schema, tab.table)
       .then((cols) => patchTab(tab.id, { pkCols: cols }))
       .catch(() => patchTab(tab.id, { pkCols: [] }));
-  }, [tab.id, tab.pkCols, conn.id, tab.schema, tab.table, patchTab]);
+  }, [tab.id, tab.pkCols, conn.id, conn.kind, tab.schema, tab.table, patchTab]);
 
   useEffect(() => {
     let cancelled = false;
-    ipc
-      .listForeignKeys(conn.id, tab.schema, tab.table)
-      .then((rows) => {
-        if (!cancelled) setFks(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setFks([]);
-      });
+    // Foreign keys don't exist in Mongo; resolve to an empty list without IPC.
+    const promise: Promise<DiagFk[]> =
+      conn.kind === "mongo"
+        ? Promise.resolve([])
+        : ipc.listForeignKeys(conn.id, tab.schema, tab.table).catch(() => []);
+    promise.then((next) => {
+      if (!cancelled) setFks(next);
+    });
     return () => {
       cancelled = true;
     };
-  }, [conn.id, tab.schema, tab.table]);
+  }, [conn.id, conn.kind, tab.schema, tab.table]);
 
   function setFilter(col: string, filter: Filter | null) {
     const next = { ...tab.filters };
@@ -901,6 +938,37 @@ function useBrowseMutations({
 
     const byteaMode = byteaColMode.get(col);
 
+    // Mongo branch — translate to UpdateMany with a single-doc match on the
+    // PK columns. Parses `value` as JSON when it looks like JSON (objects,
+    // arrays, numbers, bools, null) so the user can type structured updates;
+    // otherwise treats it as a plain string.
+    if (conn.kind === "mongo") {
+      try {
+        if (String(original ?? "") === value) {
+          setEditing(null);
+          return;
+        }
+        const parsed = parseMongoCellValue(value);
+        const filter = buildMongoPkFilter(tab.pkCols, oldRow, colIndexByName);
+        await ipc.runEngineQuery(conn.id, newQueryId(), {
+          kind: "mongo",
+          value: {
+            op: "update_many",
+            collection: tab.table,
+            database: tab.schema,
+            filter,
+            update: { $set: { [colName]: parsed } },
+          },
+        });
+        setEditing(null);
+        setOpError(null);
+        onRefresh();
+      } catch (e) {
+        setOpError(String(e));
+      }
+      return;
+    }
+
     try {
       let paramValue: string | null = value;
       let setExpr: string;
@@ -944,6 +1012,38 @@ function useBrowseMutations({
 
   async function commitInsert() {
     if (!insertRow) return;
+    // Mongo branch: build a document from the non-empty cells. _id may be
+    // omitted to let MongoDB auto-generate an ObjectId; if the user supplies
+    // a 24-hex string for _id we wrap it as `{$oid}` so it lands as an
+    // actual ObjectId rather than a string.
+    if (conn.kind === "mongo") {
+      try {
+        const doc: Record<string, unknown> = {};
+        cols.forEach((c, i) => {
+          const v = insertRow[i];
+          if (v === null || v === "") return;
+          doc[c.name] = c.name === "_id" ? maybeObjectId(v) : parseMongoCellValue(v);
+        });
+        if (Object.keys(doc).length === 0) {
+          throw new Error("All cells are empty — fill at least one column");
+        }
+        await ipc.runEngineQuery(conn.id, newQueryId(), {
+          kind: "mongo",
+          value: {
+            op: "insert_one",
+            collection: tab.table,
+            database: tab.schema,
+            document: doc,
+          },
+        });
+        setInsertRow(null);
+        setOpError(null);
+        onRefresh();
+      } catch (e) {
+        setOpError(String(e));
+      }
+      return;
+    }
     try {
       const colNames: string[] = [];
       const placeholders: string[] = [];
@@ -973,6 +1073,35 @@ function useBrowseMutations({
 
   async function deleteSelectedRows() {
     if (!canEdit || !tab.pkCols || !pkColIndexes || selected.size === 0) return;
+    if (conn.kind === "mongo") {
+      try {
+        const rowIdxs = Array.from(selected).sort((a, b) => a - b);
+        const filters: Record<string, unknown>[] = [];
+        for (const ri of rowIdxs) {
+          const row = rows[ri];
+          if (!row) continue;
+          filters.push(buildMongoPkFilter(tab.pkCols, row, colIndexByName));
+        }
+        if (filters.length === 0) return;
+        const filter = filters.length === 1 ? filters[0] : { $or: filters };
+        await ipc.runEngineQuery(conn.id, newQueryId(), {
+          kind: "mongo",
+          value: {
+            op: "delete_many",
+            collection: tab.table,
+            database: tab.schema,
+            filter,
+          },
+        });
+        setSelected(new Set());
+        setPendingBulkDelete(false);
+        setOpError(null);
+        onRefresh();
+      } catch (e) {
+        setOpError(String(e));
+      }
+      return;
+    }
     try {
       const rowIdxs = Array.from(selected).sort((a, b) => a - b);
       const placeholder = (i: number) => (conn.kind === "postgres" ? `$${i}` : "?");
@@ -1004,6 +1133,27 @@ function useBrowseMutations({
 
   async function deleteRow(rowIdx: number) {
     if (!canEdit || !tab.pkCols) return;
+    if (conn.kind === "mongo") {
+      try {
+        const oldRow = rows[rowIdx];
+        const filter = buildMongoPkFilter(tab.pkCols, oldRow, colIndexByName);
+        await ipc.runEngineQuery(conn.id, newQueryId(), {
+          kind: "mongo",
+          value: {
+            op: "delete_many",
+            collection: tab.table,
+            database: tab.schema,
+            filter,
+          },
+        });
+        setPendingDeleteRow(null);
+        setOpError(null);
+        onRefresh();
+      } catch (e) {
+        setOpError(String(e));
+      }
+      return;
+    }
     try {
       const oldRow = rows[rowIdx];
       const wherePieces: string[] = [];
@@ -1028,6 +1178,41 @@ function useBrowseMutations({
   }
 
   return { commitEdit, commitInsert, deleteSelectedRows, deleteRow };
+}
+
+/// Parse a Browse-cell text input into a Mongo-friendly value. Tries JSON
+/// first (so the user can type `42`, `true`, `null`, `{ "$oid": "..." }`,
+/// `["a","b"]`, etc.); falls back to the raw string. Empty input → `null`.
+function parseMongoCellValue(raw: string): unknown {
+  const v = raw;
+  if (v === "") return null;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  }
+}
+
+/// Build a `{ field: ... }` Mongo match document from a row's PK columns.
+/// `_id` values that look like 24-char hex strings are wrapped as `{$oid}`
+/// so they decode as actual `ObjectId`s on the backend.
+function buildMongoPkFilter(
+  pkCols: string[],
+  row: readonly unknown[],
+  colIndexByName: Map<string, number>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const pkCol of pkCols) {
+    const idx = colIndexByName.get(pkCol);
+    if (idx === undefined) throw new Error(`PK column ${pkCol} not in result`);
+    const v = row[idx];
+    if (pkCol === "_id" && typeof v === "string") {
+      out[pkCol] = maybeObjectId(v);
+    } else {
+      out[pkCol] = v;
+    }
+  }
+  return out;
 }
 
 function BrowseDialogs({

@@ -60,11 +60,27 @@ Backend → frontend events are emitted via `app.emit(...)`. Notable ones: `pool
 `src-tauri/src/lib.rs` builds the Tauri app and installs `AppState` (managed singleton). `AppState` holds four sub-systems:
 
 - **`storage: Storage`** — wraps a SQLite pool at `<app_data_dir>/powadb.db`. Persists connections (with optional plaintext passwords), folders, query history, snippets, and `AppSettings`. All schema migrations are inline `CREATE TABLE IF NOT EXISTS` in `Storage::open`.
-- **`pools: PoolRegistry`** — caches live `sqlx` Postgres/MySQL pools keyed by `connection_id`. `get_or_open` is the only entry point: it resolves saved credentials, opens a pool lazily, and emits `pools-changed`. Query cancellation is a `oneshot::channel` registered per `query_id` and selected against via `tokio::select!` in `run_with_cancel`.
+- **`pools: PoolRegistry`** — caches live engine handles keyed by `connection_id`. `get_or_open` is the only entry point: it resolves saved credentials, opens an engine lazily, and emits `pools-changed`. Query cancellation is a `oneshot::channel` registered per `query_id` and selected against via `tokio::select!` in `run_with_cancel`.
 - **`jobs: JobRegistry`** — `AtomicBool` cancel flags keyed by `job_id` for long-running export/import operations in `commands/dump.rs`.
-- **`settings: SettingsStore`** — `RwLock`-wrapped in-memory cache of `AppSettings` (paths to `pg_dump` / `mysqldump` / etc.), backed by `storage`.
+- **`settings: SettingsStore`** — `RwLock`-wrapped in-memory cache of `AppSettings` (paths to `pg_dump` / `mysqldump` / `mongodump` / etc.), backed by `storage`.
 
-Driver-specific SQL execution and value coercion lives in `src-tauri/src/drivers/{postgres,mysql}.rs` behind a `PoolHandle` enum. Anything that branches per `DbKind` belongs here — keep the command layer engine-agnostic where possible.
+### Engine abstraction
+
+Pools are wrapped in `Arc<dyn Engine>` (alias `EngineHandle`, defined in `src-tauri/src/engine/mod.rs`). Each backend lives in its own submodule:
+
+- `engine/postgres.rs`, `engine/mysql.rs`, `engine/sqlite.rs` — thin wrappers around the sqlx-based drivers in `src-tauri/src/drivers/{postgres,mysql,sqlite}.rs`.
+- `engine/mongo.rs` — `mongodb` crate, routes `EngineQuery::Mongo(MongoOp)` to Find / Aggregate / Insert / Update / Delete / RunCommand.
+
+The trait surface:
+
+- `kind() -> DbKind` and `capabilities() -> Capabilities` — what the engine supports (drives frontend feature gating via the `get_capabilities` IPC).
+- `execute(sql)` / `execute_script(sql)` — SQL-only legacy path.
+- `execute_query(EngineQuery) -> EngineResult` — engine-agnostic path. Default impl handles SQL; Mongo overrides for `MongoOp`. `EngineResult` is `Tabular | Documents | Affected`.
+- `close()` and `as_sql_pool() -> Option<SqlPoolView<'_>>` — the latter is an escape hatch for SQL-only command code that still reaches for the raw sqlx pool (introspection, DDL, dumps).
+
+For non-SQL engines, SQL-only commands return `AppError::Other("X requires a SQL engine")` via the `engine::require_sql_pool` helper. Capabilities-driven UI gating prevents the frontend from ever invoking those, so end users see "feature hidden" instead of an error.
+
+Add a new engine by implementing the `Engine` trait, exporting it from `engine/mod.rs`, adding a `DbKind` variant, and wiring `pool_registry::open_pool`. Most command files will then force you (via non-exhaustive `match DbKind { ... }`) to declare what the new engine does — usually `unreachable!()` for the SQL-DDL paths since `Capabilities` keeps the UI from triggering them.
 
 All command handlers return `AppResult<T>` (`error.rs`). `AppError` serializes to a string for the frontend, so the JS side sees `error.message`-style strings, not structured variants.
 
