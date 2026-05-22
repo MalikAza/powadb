@@ -128,4 +128,86 @@ describe("parseSqlImport (Postgres)", () => {
     expect(doc.edges).toHaveLength(0);
     expect(warnings.some((w) => /unknown table/i.test(w))).toBe(true);
   });
+
+  it("recognizes composite primary keys declared as a table constraint", async () => {
+    const sql = `
+      CREATE TABLE memberships (
+        user_id INTEGER NOT NULL,
+        group_id INTEGER NOT NULL,
+        PRIMARY KEY (user_id, group_id)
+      );
+    `;
+    const { doc } = await parseSqlImport(sql, "postgres");
+    const t = doc.tables.find((x) => x.name === "memberships");
+    const userPk = t?.columns.find((c) => c.name === "user_id")?.isPk;
+    const groupPk = t?.columns.find((c) => c.name === "group_id")?.isPk;
+    expect(userPk).toBe(true);
+    expect(groupPk).toBe(true);
+  });
+
+  it("warns for non-ADD ALTER statements", async () => {
+    const sql = `
+      CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER);
+      ALTER TABLE t DROP COLUMN n;
+    `;
+    const { warnings } = await parseSqlImport(sql, "postgres");
+    expect(warnings.some((w) => /ALTER on t/i.test(w))).toBe(true);
+  });
+
+  it("warns for non-CREATE-TABLE/non-ALTER-TABLE statements", async () => {
+    const sql = `
+      CREATE TABLE t (id INTEGER PRIMARY KEY);
+      INSERT INTO t (id) VALUES (1);
+    `;
+    const { warnings } = await parseSqlImport(sql, "postgres");
+    expect(warnings.some((w) => /only CREATE\/ALTER TABLE/i.test(w))).toBe(true);
+  });
+});
+
+describe("parseSqlImport (MySQL)", () => {
+  it("parses CREATE TABLE with PK + NOT NULL + DEFAULT and uses empty schema", async () => {
+    const sql = `
+      CREATE TABLE \`users\` (
+        \`id\` INT PRIMARY KEY,
+        \`name\` VARCHAR(255) NOT NULL DEFAULT 'anon'
+      );
+    `;
+    const { doc, warnings } = await parseSqlImport(sql, "mysql");
+    expect(warnings).toEqual([]);
+    expect(doc.engine).toBe("mysql");
+    const t = doc.tables.find((x) => x.name === "users");
+    expect(t).toBeDefined();
+    // MySQL has no default schema namespace in our model.
+    expect(t?.schema).toBe("");
+    const id = t?.columns.find((c) => c.name === "id");
+    expect(id?.isPk).toBe(true);
+    expect(id?.nullable).toBe(false);
+    const name = t?.columns.find((c) => c.name === "name");
+    expect(name?.nullable).toBe(false);
+    expect(name?.defaultValue).toBe("'anon'");
+  });
+
+  it("parses inline FK references on MySQL", async () => {
+    const sql = `
+      CREATE TABLE authors (id INT PRIMARY KEY);
+      CREATE TABLE books (
+        id INT PRIMARY KEY,
+        author_id INT,
+        FOREIGN KEY (author_id) REFERENCES authors(id) ON DELETE CASCADE
+      );
+    `;
+    const { doc, warnings } = await parseSqlImport(sql, "mysql");
+    expect(warnings).toEqual([]);
+    expect(doc.edges).toHaveLength(1);
+    expect(doc.edges[0].onDelete).toBe("CASCADE");
+  });
+});
+
+describe("parseSqlImport (SQLite)", () => {
+  it("uses 'main' as the default schema", async () => {
+    const sql = `CREATE TABLE t (id INTEGER PRIMARY KEY);`;
+    const { doc } = await parseSqlImport(sql, "sqlite");
+    expect(doc.tables[0].schema).toBe("main");
+    expect(doc.tables[0].id.startsWith("main.")).toBe(true);
+  });
 });
