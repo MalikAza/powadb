@@ -202,20 +202,15 @@ export function BrowseTabPane({ tab, conn }: Props) {
   }, [tab.id, tab.pkCols, conn.id, conn.kind, tab.schema, tab.table, patchTab]);
 
   useEffect(() => {
-    // Foreign keys don't exist in Mongo; skip the IPC entirely.
-    if (conn.kind === "mongo") {
-      setFks([]);
-      return;
-    }
     let cancelled = false;
-    ipc
-      .listForeignKeys(conn.id, tab.schema, tab.table)
-      .then((rows) => {
-        if (!cancelled) setFks(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setFks([]);
-      });
+    // Foreign keys don't exist in Mongo; resolve to an empty list without IPC.
+    const promise: Promise<DiagFk[]> =
+      conn.kind === "mongo"
+        ? Promise.resolve([])
+        : ipc.listForeignKeys(conn.id, tab.schema, tab.table).catch(() => []);
+    promise.then((next) => {
+      if (!cancelled) setFks(next);
+    });
     return () => {
       cancelled = true;
     };
