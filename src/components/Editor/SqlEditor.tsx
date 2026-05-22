@@ -25,7 +25,7 @@ export function SqlEditor({ value, onChange, onRun, kind }: Props) {
   const activeId = useConnections((s) => s.activeId);
   const schemas = useSchema((s) => (activeId ? s.byConnection[activeId] : undefined));
   const editorRef = useRef<ReactCodeMirrorRef | null>(null);
-  const [runtime, setRuntime] = useState<CmRuntime | null>(getCachedCmRuntime());
+  const [runtime, setRuntime] = useState<CmRuntime | null>(() => getCachedCmRuntime());
 
   useEffect(() => {
     editorRef.current?.view?.focus();
