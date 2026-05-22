@@ -117,7 +117,7 @@ export function mongoDocumentsToQueryResult(
   const names = ["_id", ...[...fieldTypes.keys()].filter((n) => n !== "_id").sort()];
   const columns: Column[] = names.map((name) => {
     const types = fieldTypes.get(name);
-    const type_name = !types || types.size === 0 ? "null" : [...types].sort().join(" | ");
+    const type_name = !types || types.size === 0 ? "null" : [...types].toSorted().join(" | ");
     return { name, type_name };
   });
   const rows = docs.map((d) => names.map((n) => (d?.[n] ?? null) as unknown));
