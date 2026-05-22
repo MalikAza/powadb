@@ -32,7 +32,15 @@ import {
   Upload,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type Dispatch,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -225,6 +233,66 @@ function applyTableSubmit(
   return nextDoc;
 }
 
+function useDiagramData() {
+  const [diagram, setDiagram] = useState<DiagramData>(INITIAL_DIAGRAM);
+  const setDoc = (next: DiagramDoc | null | ((cur: DiagramDoc | null) => DiagramDoc | null)) =>
+    setDiagram((prev) => ({
+      ...prev,
+      doc: typeof next === "function" ? next(prev.doc) : next,
+    }));
+  const setDiagramId = (v: string | null) => setDiagram((prev) => ({ ...prev, diagramId: v }));
+  const setDiagramName = (v: string) => setDiagram((prev) => ({ ...prev, diagramName: v }));
+  const setDirty = (v: boolean) => setDiagram((prev) => ({ ...prev, dirty: v }));
+  const setLoading = (v: boolean) => setDiagram((prev) => ({ ...prev, loading: v }));
+  const setError = (v: string | null) => setDiagram((prev) => ({ ...prev, error: v }));
+  return { diagram, setDoc, setDiagramId, setDiagramName, setDirty, setLoading, setError };
+}
+
+function useDiagramDialogs() {
+  const [modals, setModals] = useState<Modals>(INITIAL_MODALS);
+  const setTableDialog = (v: Modals["table"]) => setModals((prev) => ({ ...prev, table: v }));
+  const setSaveOpen = (v: boolean) => setModals((prev) => ({ ...prev, save: v }));
+  const setLoadOpen = (v: boolean) => setModals((prev) => ({ ...prev, load: v }));
+  const setScriptOpen = (v: boolean) => setModals((prev) => ({ ...prev, script: v }));
+  const setApplyOpen = (v: boolean) => setModals((prev) => ({ ...prev, apply: v }));
+  const setImportOpen = (v: boolean) => setModals((prev) => ({ ...prev, import: v }));
+
+  const [confirms, setConfirms] = useState<Confirms>({ edgeDelete: null, tableDelete: null });
+  const setConfirmEdgeDelete = (v: string | null) =>
+    setConfirms((prev) => ({ ...prev, edgeDelete: v }));
+  const setConfirmTableDelete = (v: string | null) =>
+    setConfirms((prev) => ({ ...prev, tableDelete: v }));
+
+  return {
+    modals,
+    setTableDialog,
+    setSaveOpen,
+    setLoadOpen,
+    setScriptOpen,
+    setApplyOpen,
+    setImportOpen,
+    confirms,
+    setConfirmEdgeDelete,
+    setConfirmTableDelete,
+  };
+}
+
+function useSearchHotkey(setSearchOpen: Dispatch<SetStateAction<boolean>>) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== "f") return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".cm-editor")) return;
+      e.preventDefault();
+      setSearchOpen((v) => !v);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setSearchOpen]);
+}
+
 export function DiagramTabPane(props: { tab: DiagramTab; conn: SavedConnection }) {
   return (
     <ReactFlowProvider>
@@ -238,31 +306,28 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   const newQueryTab = useTabs((s) => s.newQueryTab);
   const rf = useReactFlow();
 
-  const [diagram, setDiagram] = useState<DiagramData>(INITIAL_DIAGRAM);
+  const { diagram, setDoc, setDiagramId, setDiagramName, setDirty, setLoading, setError } =
+    useDiagramData();
   const { doc, diagramId, diagramName, dirty, loading, error } = diagram;
-  const setDoc = (next: DiagramDoc | null | ((cur: DiagramDoc | null) => DiagramDoc | null)) =>
-    setDiagram((prev) => ({
-      ...prev,
-      doc: typeof next === "function" ? next(prev.doc) : next,
-    }));
-  const setDiagramId = (v: string | null) => setDiagram((prev) => ({ ...prev, diagramId: v }));
-  const setDiagramName = (v: string) => setDiagram((prev) => ({ ...prev, diagramName: v }));
-  const setDirty = (v: boolean) => setDiagram((prev) => ({ ...prev, dirty: v }));
-  const setLoading = (v: boolean) => setDiagram((prev) => ({ ...prev, loading: v }));
-  const setError = (v: string | null) => setDiagram((prev) => ({ ...prev, error: v }));
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
-  const [modals, setModals] = useState<Modals>(INITIAL_MODALS);
+  const {
+    modals,
+    setTableDialog,
+    setSaveOpen,
+    setLoadOpen,
+    setScriptOpen,
+    setApplyOpen,
+    setImportOpen,
+    confirms,
+    setConfirmEdgeDelete,
+    setConfirmTableDelete,
+  } = useDiagramDialogs();
   const { table: tableDialog, save: saveOpen, load: loadOpen } = modals;
   const { script: scriptOpen, apply: applyOpen, import: importOpen } = modals;
-  const setTableDialog = (v: Modals["table"]) => setModals((prev) => ({ ...prev, table: v }));
-  const setSaveOpen = (v: boolean) => setModals((prev) => ({ ...prev, save: v }));
-  const setLoadOpen = (v: boolean) => setModals((prev) => ({ ...prev, load: v }));
-  const setScriptOpen = (v: boolean) => setModals((prev) => ({ ...prev, script: v }));
-  const setApplyOpen = (v: boolean) => setModals((prev) => ({ ...prev, apply: v }));
-  const setImportOpen = (v: boolean) => setModals((prev) => ({ ...prev, import: v }));
+  const { edgeDelete: confirmEdgeDelete, tableDelete: confirmTableDelete } = confirms;
 
   // Mode lives on the tab record (single source of truth); callbacks read it
   // via a ref so React Flow listeners don't churn on each mode change.
@@ -277,13 +342,7 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   }
 
   const [searchOpen, setSearchOpen] = useState(false);
-
-  const [confirms, setConfirms] = useState<Confirms>({ edgeDelete: null, tableDelete: null });
-  const { edgeDelete: confirmEdgeDelete, tableDelete: confirmTableDelete } = confirms;
-  const setConfirmEdgeDelete = (v: string | null) =>
-    setConfirms((prev) => ({ ...prev, edgeDelete: v }));
-  const setConfirmTableDelete = (v: string | null) =>
-    setConfirms((prev) => ({ ...prev, tableDelete: v }));
+  useSearchHotkey(setSearchOpen);
 
   const structuralKey = useMemo(
     () =>
@@ -446,20 +505,6 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
     },
     [rf],
   );
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const meta = e.metaKey || e.ctrlKey;
-      if (!meta || !e.shiftKey) return;
-      if (e.key.toLowerCase() !== "f") return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest(".cm-editor")) return;
-      e.preventDefault();
-      setSearchOpen((v) => !v);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
 
   return (
     <div className="relative flex h-full flex-1 flex-col">
