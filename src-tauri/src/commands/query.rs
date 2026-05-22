@@ -3,7 +3,7 @@ use tauri::State;
 use crate::drivers::{QueryResult, ScriptResult};
 use crate::engine::{EngineQuery, EngineResult};
 use crate::error::{AppError, AppResult};
-use crate::pool_registry::{run_script_with_cancel, run_with_cancel};
+use crate::pool_registry::{run_engine_with_cancel, run_script_with_cancel, run_with_cancel};
 use crate::AppState;
 
 #[tauri::command]
@@ -104,17 +104,67 @@ pub async fn cancel_query(state: State<'_, AppState>, query_id: String) -> AppRe
 /// `MongoOp` dispatch. Used by the frontend when `capabilities.query_language`
 /// isn't SQL — SQL connections keep using `run_query` for now (the migration
 /// is incremental).
+///
+/// History logging: the `query_history` table stores a single `sql` text
+/// column. For Mongo we serialize the `MongoOp` to a JSON one-liner so the
+/// history view shows a readable representation (the `parseMongoOp` helper
+/// on the frontend round-trips it back to a runnable form).
 #[tauri::command]
 pub async fn run_engine_query(
     state: State<'_, AppState>,
     connection_id: String,
+    query_id: String,
     query: EngineQuery,
 ) -> AppResult<EngineResult> {
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    let result = handle.execute_query(query).await;
-    // History logging for the engine-agnostic path is a TODO: the history
-    // schema is SQL-text-shaped right now (it stores a single `sql` column),
-    // so logging Mongo ops would require a schema migration. Skip for now —
-    // Phase-8 work.
+    let history_text = engine_query_history_text(&query);
+    let result = run_engine_with_cancel(&state.pools, handle, &query_id, query).await;
+
+    match &result {
+        Ok(r) => {
+            let (rows, elapsed) = match r {
+                EngineResult::Tabular(q) => (Some(q.rows.len() as i64), Some(q.elapsed_ms as i64)),
+                EngineResult::Documents { docs, elapsed_ms } => {
+                    (Some(docs.len() as i64), Some(*elapsed_ms as i64))
+                }
+                EngineResult::Affected { rows, elapsed_ms } => {
+                    (Some(*rows as i64), Some(*elapsed_ms as i64))
+                }
+            };
+            let _ = state
+                .storage
+                .log_history(&connection_id, &history_text, elapsed, rows, None)
+                .await;
+        }
+        Err(AppError::Canceled) => {
+            let _ = state
+                .storage
+                .log_history(&connection_id, &history_text, None, None, Some("canceled"))
+                .await;
+        }
+        Err(e) => {
+            let _ = state
+                .storage
+                .log_history(
+                    &connection_id,
+                    &history_text,
+                    None,
+                    None,
+                    Some(&e.to_string()),
+                )
+                .await;
+        }
+    }
+
     result
+}
+
+/// Render an `EngineQuery` as a single line suitable for the history view.
+/// SQL queries are stored verbatim; Mongo ops are JSON-serialized.
+fn engine_query_history_text(q: &EngineQuery) -> String {
+    match q {
+        EngineQuery::Sql(s) => s.clone(),
+        EngineQuery::Mongo(op) => serde_json::to_string(op)
+            .unwrap_or_else(|_| format!("<unserializable mongo op: {op:?}>")),
+    }
 }

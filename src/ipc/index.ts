@@ -25,6 +25,7 @@ export type QueryLanguage = "sql" | "mongo";
 export type Capabilities = {
   supports_databases_list: boolean;
   supports_database_create: boolean;
+  supports_database_drop: boolean;
   supports_schemas: boolean;
   supports_foreign_keys: boolean;
   supports_ddl_diff: boolean;
@@ -120,11 +121,14 @@ export const ipc = {
     invoke("get_capabilities", { connectionId }),
 
   /// Engine-agnostic query path used for non-SQL engines (currently Mongo).
-  /// SQL connections should keep using `runQuery` / `runScript` — those still
-  /// log to history correctly, while this path is logging-stubbed (Phase-8
-  /// follow-up).
-  runEngineQuery: (connectionId: string, query: EngineQuery): Promise<EngineResult> =>
-    invoke("run_engine_query", { connectionId, query }),
+  /// Takes a `queryId` so Cmd+. / `cancelQuery` can interrupt long-running
+  /// Mongo ops the same way it does SQL queries. The backend logs the op to
+  /// query history under a JSON one-liner representation.
+  runEngineQuery: (
+    connectionId: string,
+    queryId: string,
+    query: EngineQuery,
+  ): Promise<EngineResult> => invoke("run_engine_query", { connectionId, queryId, query }),
 
   introspectSchema: (connectionId: string): Promise<SchemaMeta[]> =>
     invoke("introspect_schema", { connectionId }),

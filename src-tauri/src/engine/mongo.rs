@@ -8,7 +8,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{doc, oid::ObjectId, Bson, DateTime as BsonDateTime, Document};
 use mongodb::options::{ClientOptions, FindOptions};
 use mongodb::Client;
 use serde_json::Value;
@@ -79,6 +79,8 @@ impl Engine for MongoEngine {
             // CREATE DATABASE is implicit in Mongo (write to it and it exists);
             // hide the UI affordance to avoid confusion.
             supports_database_create: false,
+            // …but dropping a database is a real, useful affordance.
+            supports_database_drop: true,
             supports_schemas: false,
             supports_foreign_keys: false,
             supports_ddl_diff: false,
@@ -263,14 +265,53 @@ fn value_to_doc(v: Value) -> AppResult<Document> {
     if v.is_null() {
         return Ok(Document::new());
     }
-    let bson =
-        mongodb::bson::to_bson(&v).map_err(|e| AppError::Other(format!("bson encode: {e}")))?;
-    match bson {
+    match value_to_bson(v)? {
         Bson::Document(d) => Ok(d),
         other => Err(AppError::Other(format!(
             "expected a JSON object, got {:?}",
             other.element_type()
         ))),
+    }
+}
+
+/// JSON → BSON with extJSON-shorthand recognition. The standard
+/// `mongodb::bson::to_bson` serializer doesn't introspect `{"$oid": "..."}` /
+/// `{"$date": "..."}` wrappers, so a frontend that sends `{ _id: { "$oid":
+/// "<hex>" } }` would otherwise round-trip through BSON as a sub-document
+/// with a literal `$oid` key — which Mongo treats as garbage and which never
+/// matches an actual `ObjectId` PK. We pre-walk the value to lift those
+/// well-known wrappers into their typed BSON forms before falling back to
+/// serde for the long tail.
+fn value_to_bson(v: Value) -> AppResult<Bson> {
+    match v {
+        Value::Object(map) => {
+            // Single-key { "$oid": "..." } → ObjectId
+            if map.len() == 1 {
+                if let Some(Value::String(s)) = map.get("$oid") {
+                    return ObjectId::parse_str(s)
+                        .map(Bson::ObjectId)
+                        .map_err(|e| AppError::Other(format!("invalid $oid: {e}")));
+                }
+                if let Some(Value::String(s)) = map.get("$date") {
+                    return BsonDateTime::parse_rfc3339_str(s)
+                        .map(Bson::DateTime)
+                        .map_err(|e| AppError::Other(format!("invalid $date: {e}")));
+                }
+            }
+            let mut doc = Document::new();
+            for (k, val) in map {
+                doc.insert(k, value_to_bson(val)?);
+            }
+            Ok(Bson::Document(doc))
+        }
+        Value::Array(arr) => arr
+            .into_iter()
+            .map(value_to_bson)
+            .collect::<AppResult<Vec<_>>>()
+            .map(Bson::Array),
+        other => {
+            mongodb::bson::to_bson(&other).map_err(|e| AppError::Other(format!("bson encode: {e}")))
+        }
     }
 }
 

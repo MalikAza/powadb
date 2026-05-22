@@ -95,8 +95,11 @@ export function SchemaTree() {
   // hard-coded kind checks so new engines (Mongo, …) work without touching
   // this component. Fall back to the kind check until capabilities arrive.
   const caps = useConnections((s) => (activeId ? s.capabilities[activeId] : undefined));
-  const supportsDbAdmin = caps
+  const supportsDbCreate = caps
     ? caps.supports_databases_list && caps.supports_database_create
+    : conn?.kind === "postgres" || conn?.kind === "mysql";
+  const supportsDbDrop = caps
+    ? caps.supports_databases_list && caps.supports_database_drop
     : conn?.kind === "postgres" || conn?.kind === "mysql";
 
   async function refresh() {
@@ -266,7 +269,8 @@ export function SchemaTree() {
         <DatabasesPanel
           databases={databases}
           activeDatabase={conn?.database}
-          supportsDbAdmin={supportsDbAdmin}
+          supportsDbCreate={supportsDbCreate}
+          supportsDbDrop={supportsDbDrop}
           dropBusy={dropDb.busy}
           onSwitch={switchDatabase}
           onRequestDrop={(db) => setDropDb((s) => ({ ...s, pending: db }))}
@@ -389,7 +393,8 @@ function cssEscape(s: string): string {
 type DatabasesPanelProps = {
   databases: string[];
   activeDatabase: string | undefined;
-  supportsDbAdmin: boolean;
+  supportsDbCreate: boolean;
+  supportsDbDrop: boolean;
   dropBusy: string | null;
   onSwitch: (db: string) => void;
   onRequestDrop: (db: string) => void;
@@ -399,7 +404,8 @@ type DatabasesPanelProps = {
 function DatabasesPanel({
   databases,
   activeDatabase,
-  supportsDbAdmin,
+  supportsDbCreate,
+  supportsDbDrop,
   dropBusy,
   onSwitch,
   onRequestDrop,
@@ -447,7 +453,7 @@ function DatabasesPanel({
           <span className="flex-1 text-left">Databases</span>
           <span className="text-[10px] normal-case">{databases.length}</span>
         </button>
-        {supportsDbAdmin && (
+        {supportsDbCreate && (
           <Button
             size="icon"
             variant="ghost"
@@ -462,7 +468,7 @@ function DatabasesPanel({
           </Button>
         )}
       </div>
-      {databasesOpen && createDb.open && supportsDbAdmin && (
+      {databasesOpen && createDb.open && supportsDbCreate && (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -523,7 +529,7 @@ function DatabasesPanel({
                 <Database className="size-3 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate">{db}</span>
               </button>
-              {supportsDbAdmin && !isActive && (
+              {supportsDbDrop && !isActive && (
                 <button
                   type="button"
                   onClick={() => onRequestDrop(db)}

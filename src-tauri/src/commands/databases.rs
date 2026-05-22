@@ -51,6 +51,11 @@ pub async fn create_database(
             "creating databases is not supported for SQLite".into(),
         ));
     }
+    if matches!(conn.kind, DbKind::Mongo) {
+        return Err(AppError::Other(
+            "MongoDB creates databases implicitly on first write".into(),
+        ));
+    }
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
     let stmt = format!(
         "CREATE DATABASE {}",
@@ -93,6 +98,16 @@ pub async fn drop_database(
         ));
     }
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    // Mongo branch goes through the typed `Client::database(name).drop()`.
+    if let Some(mongo) = handle.as_mongo() {
+        mongo
+            .client
+            .database(target)
+            .drop()
+            .await
+            .map_err(|e| AppError::Other(format!("mongo dropDatabase failed: {e}")))?;
+        return Ok(());
+    }
     let stmt = format!("DROP DATABASE {}", quote_identifier(conn.kind, target));
     match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(pool)) => {

@@ -66,6 +66,10 @@ pub struct Capabilities {
     pub supports_databases_list: bool,
     /// `CREATE DATABASE` is meaningful.
     pub supports_database_create: bool,
+    /// `DROP DATABASE` is meaningful. Split from `supports_database_create`
+    /// because Mongo can drop but doesn't have an explicit `CREATE DATABASE`
+    /// (databases come into being on first write).
+    pub supports_database_drop: bool,
     /// Engine has a real "schema" namespace under the database (Postgres only).
     /// MySQL conflates database and schema; SQLite is single-namespace; Mongo
     /// has database → collection with no schema layer.
@@ -92,6 +96,7 @@ impl Capabilities {
         Self {
             supports_databases_list: true,
             supports_database_create: true,
+            supports_database_drop: true,
             supports_schemas: false,
             supports_foreign_keys: true,
             supports_ddl_diff: true,
@@ -166,7 +171,7 @@ pub fn require_sql_pool<'a>(handle: &'a EngineHandle, op: &str) -> AppResult<Sql
 /// tagging doesn't work here because `Sql(String)` is a newtype around a
 /// primitive — serde's internal tag needs every variant's payload to be a
 /// struct or map-like type.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub enum EngineQuery {
     /// Raw SQL, single statement or multi-statement script.
@@ -177,7 +182,7 @@ pub enum EngineQuery {
     Mongo(Box<MongoOp>),
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum MongoOp {
     Find {

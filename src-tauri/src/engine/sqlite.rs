@@ -27,6 +27,7 @@ impl Engine for SqliteEngine {
             // SQLite is a single file: no databases to list, no CREATE DATABASE.
             supports_databases_list: false,
             supports_database_create: false,
+            supports_database_drop: false,
             ..Capabilities::sql_default()
         }
     }

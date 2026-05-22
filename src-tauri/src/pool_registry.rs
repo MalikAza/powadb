@@ -613,6 +613,29 @@ pub async fn run_with_cancel(
     result
 }
 
+/// Cancel-aware wrapper for the engine-agnostic query path. Same pattern as
+/// `run_with_cancel` but takes an `EngineQuery` and returns an `EngineResult`,
+/// so Mongo ops (and any future non-SQL engine) get Cmd+. cancellation for
+/// free.
+pub async fn run_engine_with_cancel(
+    registry: &PoolRegistry,
+    handle: EngineHandle,
+    query_id: &str,
+    query: crate::engine::EngineQuery,
+) -> AppResult<crate::engine::EngineResult> {
+    let cancel_rx = registry.register_cancel(query_id).await;
+
+    let exec = async move { handle.execute_query(query).await };
+
+    let result = tokio::select! {
+        r = exec => r,
+        _ = cancel_rx => Err(crate::error::AppError::Canceled),
+    };
+
+    registry.forget_cancel(query_id).await;
+    result
+}
+
 pub async fn run_script_with_cancel(
     registry: &PoolRegistry,
     handle: EngineHandle,
