@@ -921,4 +921,104 @@ mod tests {
         assert_eq!(out.tables.len(), 1);
         assert!(out.foreign_keys.is_empty());
     }
+
+    fn fk_row(constraint: &str, from_col: &str, to_col: &str) -> FkRow {
+        FkRow {
+            constraint_schema: "public".into(),
+            constraint_name: constraint.into(),
+            from_schema: "public".into(),
+            from_table: "books".into(),
+            from_column: from_col.into(),
+            to_schema: "public".into(),
+            to_table: "authors".into(),
+            to_column: to_col.into(),
+            on_update: None,
+            on_delete: None,
+        }
+    }
+
+    #[test]
+    fn group_fk_rows_merges_composite_constraints() {
+        let rows = vec![
+            fk_row("fk_books_authors", "author_id_a", "id_a"),
+            fk_row("fk_books_authors", "author_id_b", "id_b"),
+        ];
+        let grouped = group_fk_rows(rows.into_iter());
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].id, "public.fk_books_authors");
+        assert_eq!(grouped[0].from_columns, vec!["author_id_a", "author_id_b"]);
+        assert_eq!(grouped[0].to_columns, vec!["id_a", "id_b"]);
+    }
+
+    #[test]
+    fn group_fk_rows_keeps_distinct_constraints_separate() {
+        let rows = vec![fk_row("fk_one", "a", "id"), fk_row("fk_two", "b", "id")];
+        let grouped = group_fk_rows(rows.into_iter());
+        assert_eq!(grouped.len(), 2);
+        let names: Vec<_> = grouped.iter().map(|f| f.id.as_str()).collect();
+        assert!(names.contains(&"public.fk_one"));
+        assert!(names.contains(&"public.fk_two"));
+    }
+
+    #[test]
+    fn group_fk_rows_preserves_on_update_and_on_delete() {
+        let rows = vec![FkRow {
+            constraint_schema: "s".into(),
+            constraint_name: "fk".into(),
+            from_schema: "s".into(),
+            from_table: "t".into(),
+            from_column: "x".into(),
+            to_schema: "s".into(),
+            to_table: "u".into(),
+            to_column: "y".into(),
+            on_update: Some("CASCADE".into()),
+            on_delete: Some("RESTRICT".into()),
+        }];
+        let grouped = group_fk_rows(rows.into_iter());
+        assert_eq!(grouped[0].on_update.as_deref(), Some("CASCADE"));
+        assert_eq!(grouped[0].on_delete.as_deref(), Some("RESTRICT"));
+    }
+
+    #[test]
+    fn upsert_table_reuses_existing_entry_when_schema_and_name_match() {
+        let mut tables: Vec<DiagTable> = Vec::new();
+        upsert_table(&mut tables, "public", "users")
+            .columns
+            .push(DiagColumn {
+                name: "id".into(),
+                data_type: "int".into(),
+                nullable: false,
+                is_pk: true,
+                default: None,
+                ordinal: 1,
+                char_max_len: None,
+                numeric_precision: None,
+                numeric_scale: None,
+            });
+        // Calling again with the same identity should not append a new table.
+        upsert_table(&mut tables, "public", "users")
+            .columns
+            .push(DiagColumn {
+                name: "email".into(),
+                data_type: "text".into(),
+                nullable: true,
+                is_pk: false,
+                default: None,
+                ordinal: 2,
+                char_max_len: None,
+                numeric_precision: None,
+                numeric_scale: None,
+            });
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].columns.len(), 2);
+    }
+
+    #[test]
+    fn upsert_table_appends_when_identity_differs() {
+        let mut tables: Vec<DiagTable> = Vec::new();
+        upsert_table(&mut tables, "public", "a");
+        upsert_table(&mut tables, "public", "b");
+        upsert_table(&mut tables, "other", "a");
+        assert_eq!(tables.len(), 3);
+    }
 }
