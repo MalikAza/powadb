@@ -289,3 +289,191 @@ impl EngineResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn elapsed_ms_reads_from_each_variant() {
+        let tabular = EngineResult::Tabular(QueryResult {
+            columns: vec![],
+            rows: vec![],
+            elapsed_ms: 17,
+        });
+        let docs = EngineResult::Documents {
+            docs: vec![],
+            elapsed_ms: 42,
+        };
+        let affected = EngineResult::Affected {
+            rows: 3,
+            elapsed_ms: 99,
+        };
+        assert_eq!(tabular.elapsed_ms(), 17);
+        assert_eq!(docs.elapsed_ms(), 42);
+        assert_eq!(affected.elapsed_ms(), 99);
+    }
+
+    #[test]
+    fn engine_query_sql_round_trips_as_adjacently_tagged_json() {
+        let q = EngineQuery::Sql("SELECT 1".into());
+        let serialized = serde_json::to_value(&q).unwrap();
+        assert_eq!(serialized, json!({ "kind": "sql", "value": "SELECT 1" }));
+        let back: EngineQuery = serde_json::from_value(serialized).unwrap();
+        match back {
+            EngineQuery::Sql(s) => assert_eq!(s, "SELECT 1"),
+            _ => panic!("expected Sql variant"),
+        }
+    }
+
+    #[test]
+    fn engine_query_mongo_round_trips_as_adjacently_tagged_json() {
+        let op = MongoOp::Find {
+            collection: "users".into(),
+            database: Some("app".into()),
+            filter: json!({ "active": true }),
+            projection: None,
+            limit: Some(25),
+            skip: None,
+            sort: None,
+        };
+        let q = EngineQuery::Mongo(Box::new(op));
+        let serialized = serde_json::to_value(&q).unwrap();
+        assert_eq!(serialized["kind"], "mongo");
+        assert_eq!(serialized["value"]["op"], "find");
+        assert_eq!(serialized["value"]["collection"], "users");
+        assert_eq!(serialized["value"]["limit"], 25);
+        let back: EngineQuery = serde_json::from_value(serialized).unwrap();
+        match back {
+            EngineQuery::Mongo(boxed) => match *boxed {
+                MongoOp::Find {
+                    collection, limit, ..
+                } => {
+                    assert_eq!(collection, "users");
+                    assert_eq!(limit, Some(25));
+                }
+                _ => panic!("expected Find variant"),
+            },
+            _ => panic!("expected Mongo variant"),
+        }
+    }
+
+    #[test]
+    fn mongo_op_aggregate_round_trips() {
+        let op = MongoOp::Aggregate {
+            collection: "orders".into(),
+            database: None,
+            pipeline: json!([{"$match": {"status": "paid"}}]),
+        };
+        let v = serde_json::to_value(&op).unwrap();
+        assert_eq!(v["op"], "aggregate");
+        assert_eq!(v["collection"], "orders");
+        let back: MongoOp = serde_json::from_value(v).unwrap();
+        assert!(matches!(back, MongoOp::Aggregate { .. }));
+    }
+
+    #[test]
+    fn mongo_op_run_command_round_trips() {
+        let op = MongoOp::RunCommand {
+            value: json!({ "ping": 1 }),
+        };
+        let v = serde_json::to_value(&op).unwrap();
+        assert_eq!(v["op"], "run_command");
+        assert_eq!(v["value"], json!({ "ping": 1 }));
+        let back: MongoOp = serde_json::from_value(v).unwrap();
+        assert!(matches!(back, MongoOp::RunCommand { .. }));
+    }
+
+    #[test]
+    fn mongo_op_insert_one_round_trips() {
+        let op = MongoOp::InsertOne {
+            collection: "events".into(),
+            database: None,
+            document: json!({ "type": "click" }),
+        };
+        let v = serde_json::to_value(&op).unwrap();
+        assert_eq!(v["op"], "insert_one");
+        let back: MongoOp = serde_json::from_value(v).unwrap();
+        assert!(matches!(back, MongoOp::InsertOne { .. }));
+    }
+
+    #[test]
+    fn mongo_op_update_one_and_delete_one_round_trip() {
+        let upd = MongoOp::UpdateOne {
+            collection: "u".into(),
+            database: None,
+            filter: json!({ "_id": "x" }),
+            update: json!({ "$set": { "n": 1 } }),
+        };
+        let v = serde_json::to_value(&upd).unwrap();
+        assert_eq!(v["op"], "update_one");
+
+        let del = MongoOp::DeleteMany {
+            collection: "u".into(),
+            database: Some("app".into()),
+            filter: json!({}),
+        };
+        let v = serde_json::to_value(&del).unwrap();
+        assert_eq!(v["op"], "delete_many");
+        assert_eq!(v["database"], "app");
+    }
+
+    #[test]
+    fn capabilities_sql_default_enables_the_expected_features() {
+        let c = Capabilities::sql_default();
+        assert!(c.supports_databases_list);
+        assert!(c.supports_database_create);
+        assert!(c.supports_database_drop);
+        assert!(c.supports_foreign_keys);
+        assert!(c.supports_ddl_diff);
+        assert!(c.supports_diagram);
+        assert!(c.supports_native_dump);
+        assert!(!c.supports_schemas);
+        assert!(!c.supports_geo);
+        assert!(matches!(c.query_language, QueryLanguage::Sql));
+    }
+
+    /// Fake engine that returns `None` from `as_sql_pool`, used to exercise
+    /// the `require_sql_pool` error path without standing up a real driver.
+    struct NoPoolEngine;
+
+    #[async_trait]
+    impl Engine for NoPoolEngine {
+        fn kind(&self) -> DbKind {
+            DbKind::Mongo
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::sql_default()
+        }
+        async fn execute(&self, _sql: &str) -> AppResult<QueryResult> {
+            unreachable!()
+        }
+        async fn execute_script(&self, _sql: &str) -> AppResult<ScriptResult> {
+            unreachable!()
+        }
+        async fn close(&self) {}
+    }
+
+    #[test]
+    fn require_sql_pool_errors_for_non_sql_engines() {
+        let handle: EngineHandle = Arc::new(NoPoolEngine);
+        match require_sql_pool(&handle, "introspect") {
+            Ok(_) => panic!("expected an error from require_sql_pool on a non-SQL engine"),
+            Err(e) => {
+                let msg = format!("{e:?}");
+                assert!(msg.contains("introspect"));
+                assert!(msg.contains("SQL engine"));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn default_execute_query_rejects_mongo_on_sql_engines() {
+        let engine = NoPoolEngine;
+        let q = EngineQuery::Mongo(Box::new(MongoOp::RunCommand { value: json!({}) }));
+        let err = engine.execute_query(q).await.unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(msg.contains("cannot execute MongoDB"));
+    }
+}
