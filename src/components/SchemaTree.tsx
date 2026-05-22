@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { type Dispatch, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,8 @@ import { useUi } from "../stores/ui";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 type TableMeta = SchemaMeta["tables"][number];
+type Conn = ReturnType<typeof useConnections.getState>["connections"][number];
+type ConnState = { kind: "idle" | "connecting" | "ready" } | { kind: "error"; message: string };
 
 type FetchState = {
   status: "idle" | "loading" | "ready";
@@ -63,11 +65,193 @@ const initialFetchState: FetchState = {
   error: null,
 };
 
+function useDatabaseActions(
+  activeId: string | null,
+  conn: Conn | undefined,
+  dispatchFetch: Dispatch<FetchAction>,
+) {
+  const setDatabasesInStore = useSchema((s) => s.setDatabases);
+  const [dropDb, setDropDb] = useState<{ pending: string | null; busy: string | null }>({
+    pending: null,
+    busy: null,
+  });
+
+  useEffect(() => {
+    setDropDb({ pending: null, busy: null });
+  }, [activeId, conn?.database]);
+
+  async function refreshDatabases() {
+    if (!activeId) return;
+    try {
+      const dbs = await ipc.listDatabases(activeId);
+      dispatchFetch({ type: "setDatabases", databases: dbs });
+      setDatabasesInStore(activeId, dbs);
+    } catch (e) {
+      toast.error(`Failed to list databases: ${String(e)}`);
+    }
+  }
+
+  async function createDatabase(name: string) {
+    if (!activeId) return;
+    await ipc.createDatabase(activeId, name);
+    toast.success(`Database "${name}" created`);
+    await refreshDatabases();
+  }
+
+  async function dropDatabase(db: string) {
+    if (!activeId) return;
+    setDropDb((s) => ({ ...s, busy: db }));
+    try {
+      await ipc.dropDatabase(activeId, db);
+      toast.success(`Database "${db}" dropped`);
+      setDropDb({ pending: null, busy: null });
+      await refreshDatabases();
+    } catch (e) {
+      toast.error(`Failed to drop database: ${String(e)}`);
+      setDropDb((s) => ({ ...s, busy: null }));
+    }
+  }
+
+  async function switchDatabase(db: string) {
+    if (!conn || db === conn.database) return;
+    try {
+      // The dedicated `switch_database` command reuses the active SSH/WG
+      // tunnel and only rebuilds the sqlx pool, so the swap is sub-second
+      // instead of paying a full handshake.
+      await ipc.switchDatabase(conn.id, db);
+      useConnections.setState((s) => ({
+        connections: s.connections.map((c) => (c.id === conn.id ? { ...c, database: db } : c)),
+      }));
+      toast.success(`Switched to ${db}`);
+    } catch (e) {
+      toast.error(`Failed to switch: ${String(e)}`);
+    }
+  }
+
+  return { dropDb, setDropDb, createDatabase, dropDatabase, switchDatabase };
+}
+
+type SchemaToolbarProps = {
+  loading: boolean;
+  onRefresh: () => void;
+  onOpenDiagram: (() => void) | null;
+};
+
+function SchemaToolbar({ loading, onRefresh, onOpenDiagram }: SchemaToolbarProps) {
+  return (
+    <div className="mb-2 flex items-center justify-between gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Schema
+      </span>
+      <div className="flex items-center gap-0.5">
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-6"
+          onClick={() => onOpenDiagram?.()}
+          disabled={!onOpenDiagram}
+          title="Open diagram"
+        >
+          <Network className="size-3" />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-6"
+          onClick={onRefresh}
+          disabled={loading}
+        >
+          <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+type SchemaSearchInputProps = {
+  value: string;
+  onChange: (next: string) => void;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+};
+
+function SchemaSearchInput({ value, onChange, inputRef }: SchemaSearchInputProps) {
+  return (
+    <div className="relative mb-2">
+      <Search className="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search tables…"
+        className="h-7 pl-7 pr-7 text-[11px]"
+      />
+      {value && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+type ConnectionStatusViewProps = {
+  connState: ConnState;
+  conn: Conn | undefined;
+  hasSchemas: boolean;
+  error: string | null;
+  noMatch: boolean;
+  onRetry: () => void;
+};
+
+function ConnectionStatusView({
+  connState,
+  conn,
+  hasSchemas,
+  error,
+  noMatch,
+  onRetry,
+}: ConnectionStatusViewProps) {
+  if ((connState.kind === "connecting" || connState.kind === "idle") && !hasSchemas) {
+    const label = conn?.ssh
+      ? "Connecting via SSH…"
+      : conn?.wg
+        ? "Connecting via WireGuard…"
+        : "Connecting…";
+    return (
+      <p className="flex items-center gap-2 text-muted-foreground">
+        <RefreshCw className="size-3 animate-spin" />
+        <span>{label}</span>
+      </p>
+    );
+  }
+  if (connState.kind === "error") {
+    return (
+      <div className="space-y-1">
+        <p className="whitespace-pre-wrap text-destructive">{connState.message}</p>
+        <Button size="sm" variant="outline" className="h-6 text-[11px]" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  if (error && connState.kind === "ready") {
+    return <p className="whitespace-pre-wrap text-destructive">{error}</p>;
+  }
+  if (noMatch) return <p className="text-muted-foreground">No tables match.</p>;
+  return null;
+}
+
 export function SchemaTree() {
   const { activeId, connections } = useConnections();
   const connStates = useConnections((s) => s.connStates);
   const conn = connections.find((c) => c.id === activeId);
-  const connState = activeId ? (connStates[activeId] ?? { kind: "idle" }) : null;
+  const connState: ConnState = activeId
+    ? (connStates[activeId] ?? { kind: "idle" })
+    : { kind: "idle" };
   const openBrowseTab = useTabs((s) => s.openBrowseTab);
   const openDiagramTab = useTabs((s) => s.openDiagramTab);
   const setSchemaInStore = useSchema((s) => s.set);
@@ -80,16 +264,16 @@ export function SchemaTree() {
   const schemaSearchFocusToken = useUi((s) => s.schemaSearchFocusToken);
 
   const [fetch, dispatchFetch] = useReducer(fetchReducer, initialFetchState);
-  const schemas = fetch.schemas;
-  const databases = fetch.databases;
-  const error = fetch.error;
-  const loading = fetch.status === "loading";
+  const { schemas, databases, error, status } = fetch;
+  const loading = status === "loading";
   const [search, setSearch] = useState("");
-  const [dropDb, setDropDb] = useState<{ pending: string | null; busy: string | null }>({
-    pending: null,
-    busy: null,
-  });
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const { dropDb, setDropDb, createDatabase, dropDatabase, switchDatabase } = useDatabaseActions(
+    activeId,
+    conn,
+    dispatchFetch,
+  );
 
   // Prefer capability flags (populated once the pool is ready) over
   // hard-coded kind checks so new engines (Mongo, …) work without touching
@@ -138,14 +322,9 @@ export function SchemaTree() {
     });
   }
 
-  const resetAll = () => {
+  useEffect(() => {
     dispatchFetch({ type: "reset" });
     setSearch("");
-    setDropDb({ pending: null, busy: null });
-  };
-
-  useEffect(() => {
-    resetAll();
   }, [activeId, conn?.database]);
 
   // Kick the actual schema/db introspection only once the backend reports the
@@ -156,65 +335,14 @@ export function SchemaTree() {
   // re-open a pool the user just disconnected.
   useEffect(() => {
     if (!activeId) return;
-    if (connState?.kind === "ready") refresh();
-  }, [activeId, connState?.kind, conn?.database]);
-
-  async function refreshDatabases() {
-    if (!activeId) return;
-    try {
-      const dbs = await ipc.listDatabases(activeId);
-      dispatchFetch({ type: "setDatabases", databases: dbs });
-      setDatabasesInStore(activeId, dbs);
-    } catch (e) {
-      toast.error(`Failed to list databases: ${String(e)}`);
-    }
-  }
-
-  async function createDatabase(name: string) {
-    if (!activeId) return;
-    await ipc.createDatabase(activeId, name);
-    toast.success(`Database "${name}" created`);
-    await refreshDatabases();
-  }
-
-  async function dropDatabase(db: string) {
-    if (!activeId) return;
-    setDropDb((s) => ({ ...s, busy: db }));
-    try {
-      await ipc.dropDatabase(activeId, db);
-      toast.success(`Database "${db}" dropped`);
-      setDropDb({ pending: null, busy: null });
-      await refreshDatabases();
-    } catch (e) {
-      toast.error(`Failed to drop database: ${String(e)}`);
-      setDropDb((s) => ({ ...s, busy: null }));
-    }
-  }
+    if (connState.kind === "ready") refresh();
+  }, [activeId, connState.kind, conn?.database]);
 
   function browseTable(schema: string, table: string) {
     if (!activeId) return;
     openBrowseTab(activeId, schema, table);
   }
 
-  async function switchDatabase(db: string) {
-    if (!conn || db === conn.database) return;
-    try {
-      // The dedicated `switch_database` command reuses the active SSH/WG
-      // tunnel and only rebuilds the sqlx pool, so the swap is sub-second
-      // instead of paying a full handshake.
-      await ipc.switchDatabase(conn.id, db);
-      // Reflect the database change in the local store; the backend has
-      // already persisted it.
-      useConnections.setState((s) => ({
-        connections: s.connections.map((c) => (c.id === conn.id ? { ...c, database: db } : c)),
-      }));
-      toast.success(`Switched to ${db}`);
-    } catch (e) {
-      toast.error(`Failed to switch: ${String(e)}`);
-    }
-  }
-
-  // Filter schemas/tables by search query
   const filteredSchemas = useMemo(() => {
     if (!schemas) return null;
     const q = search.trim().toLowerCase();
@@ -278,84 +406,20 @@ export function SchemaTree() {
         />
       )}
 
-      <div className="mb-2 flex items-center justify-between gap-1">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Schema
-        </span>
-        <div className="flex items-center gap-0.5">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-6"
-            onClick={() => activeId && openDiagramTab(activeId)}
-            disabled={!activeId}
-            title="Open diagram"
-          >
-            <Network className="size-3" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-6"
-            onClick={refresh}
-            disabled={loading}
-          >
-            <RefreshCw className={loading ? "size-3 animate-spin" : "size-3"} />
-          </Button>
-        </div>
-      </div>
-
-      <div className="relative mb-2">
-        <Search className="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          ref={searchInputRef}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search tables…"
-          className="h-7 pl-7 pr-7 text-[11px]"
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => setSearch("")}
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <X className="size-3" />
-          </button>
-        )}
-      </div>
-
-      {(connState?.kind === "connecting" || connState?.kind === "idle") && !schemas && (
-        <p className="flex items-center gap-2 text-muted-foreground">
-          <RefreshCw className="size-3 animate-spin" />
-          <span>
-            {conn?.ssh
-              ? "Connecting via SSH…"
-              : conn?.wg
-                ? "Connecting via WireGuard…"
-                : "Connecting…"}
-          </span>
-        </p>
-      )}
-      {connState?.kind === "error" && (
-        <div className="space-y-1">
-          <p className="whitespace-pre-wrap text-destructive">{connState.message}</p>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-6 text-[11px]"
-            onClick={() => activeId && ipc.prewarmConnection(activeId).catch(() => {})}
-          >
-            Retry
-          </Button>
-        </div>
-      )}
-      {error && connState?.kind === "ready" && (
-        <p className="whitespace-pre-wrap text-destructive">{error}</p>
-      )}
-      {filteredSchemas?.length === 0 && search && (
-        <p className="text-muted-foreground">No tables match.</p>
-      )}
+      <SchemaToolbar
+        loading={loading}
+        onRefresh={refresh}
+        onOpenDiagram={() => openDiagramTab(activeId)}
+      />
+      <SchemaSearchInput value={search} onChange={setSearch} inputRef={searchInputRef} />
+      <ConnectionStatusView
+        connState={connState}
+        conn={conn}
+        hasSchemas={!!schemas}
+        error={error}
+        noMatch={filteredSchemas?.length === 0 && !!search}
+        onRetry={() => ipc.prewarmConnection(activeId).catch(() => {})}
+      />
 
       {filteredSchemas?.map((s) => (
         <SchemaRow
