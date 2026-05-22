@@ -1,3 +1,20 @@
+## [0.10.0] - 2026-05-22
+
+### Added
+- **MongoDB support** — first-class fourth engine alongside Postgres, MySQL and SQLite. Schema browsing, document display, CRUD, filters, sort, query cancellation and history all work end-to-end.
+- MongoDB query editor with two modes: a JSON form with context-aware completions, and a mongosh-style DSL (`db.collection.find({...}).sort({...}).limit(N)`).
+- `dropDatabase` for MongoDB connections from the schema tree.
+- Frontend feature gating driven by an engine `Capabilities` descriptor — UI controls that don't apply to the active engine are hidden instead of erroring.
+- Front-end coverage suite (Vitest) and unit tests for the SQL statement-handling helpers.
+
+### Changed
+- Engine layer refactored behind an `Engine` trait (`engine/{postgres,mysql,sqlite,mongo}.rs`) with a capabilities-driven architecture. SQL-only command paths route through `engine::require_sql_pool`; the frontend never invokes operations an engine doesn't support.
+- Tunnel-connection lifecycle reworked so SSH and WireGuard pools shut down cleanly.
+
+### Fixed
+- SSH / WireGuard tunneled connections not disconnecting correctly on close.
+- Query editor selection highlight color and cursor-line styling.
+
 ## [0.9.2] - 2026-05-21
 
 ### Added

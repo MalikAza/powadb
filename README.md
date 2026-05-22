@@ -4,7 +4,7 @@
 
 # PowaDB
 
-**A fast, modern desktop database client for PostgreSQL and MySQL.**
+**A fast, modern desktop database client for PostgreSQL, MySQL, SQLite and MongoDB.**
 
 Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust](https://www.rust-lang.org).
 
@@ -20,7 +20,8 @@ Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust
 
 ## Features
 
-- 🔌 **Multi-engine** — PostgreSQL, MySQL and SQLite via [`sqlx`](https://github.com/launchbadge/sqlx).
+- 🔌 **Multi-engine** — PostgreSQL, MySQL and SQLite via [`sqlx`](https://github.com/launchbadge/sqlx), plus MongoDB via the official Rust driver. UI features are gated per-engine by a `Capabilities` descriptor, so each engine only exposes what it actually supports.
+- 🍃 **MongoDB** — browse databases and collections, run queries in either a JSON form or a mongosh-style DSL (`db.collection.find({...}).sort({...}).limit(N)`) with context-aware completions, and edit documents inline.
 - 🗄️ **Multiple databases per connection** — switch the active database from the command palette or the schema tree; create and drop databases inline.
 - 🔐 **Tunneled connections** — connect through an **SSH** jump host or a **WireGuard** tunnel, with the tunnel managed transparently by the app.
 - ✍️ **SQL editor** — CodeMirror 6 with syntax highlighting and schema-aware autocompletion.
@@ -33,7 +34,7 @@ Built with [Tauri 2](https://tauri.app), [React 19](https://react.dev) and [Rust
 - 🧬 **Schema diagram** — visualize tables and relations on an interactive diagram and export it to image.
 - 🗺️ **Geometry / GIS visualization** — preview geometry columns on a real map (single cell, multi-row, or whole column), with a feature popover showing lat/long and row data on click.
 - 🧭 **EXPLAIN view** — visualize query plans.
-- 📦 **Dump &amp; restore** — export and import databases through `pg_dump` / `mysqldump` / `sqlite3` (configurable binary paths), with progress reporting and cancellation.
+- 📦 **Dump &amp; restore** — export and import databases through `pg_dump` / `mysqldump` / `sqlite3` / `mongodump` (configurable binary paths), with progress reporting and cancellation.
 - 📁 **Connection manager** — organize connections in folders, color-tag each one, export / import the whole set, optionally remember passwords.
 - 🕓 **History & snippets** — recall past queries and save reusable SQL.
 - ⌘ **Command palette** — quick navigation, database switching, connection close, all from the keyboard.
@@ -113,6 +114,7 @@ src/                       React app
   ipc/index.ts             Typed wrappers for every Tauri command
 src-tauri/src/
   commands/                Tauri command handlers (query, schema, dump, diagram, geo, …)
+  engine/                  Engine trait + per-backend impls (Postgres / MySQL / SQLite / MongoDB) and capabilities
   drivers/                 Postgres / MySQL / SQLite execution + value coercion
   ssh/                     SSH tunnel manager
   wireguard/               WireGuard tunnel manager
@@ -141,7 +143,7 @@ A few non-obvious conventions worth knowing before you patch:
 ## Tech stack
 
 - **Frontend** — React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI / shadcn, Zustand, React Hook Form + Zod, CodeMirror 6, TanStack Table + Virtual
-- **Backend** — Rust, Tauri 2, `sqlx` (Postgres / MySQL / SQLite), Tokio
+- **Backend** — Rust, Tauri 2, `sqlx` (Postgres / MySQL / SQLite), `mongodb` (MongoDB), Tokio
 - **Local storage** — SQLite at `<app_data_dir>/powadb.db` for connections, folders, query history, snippets, settings
 
 ## Releasing
