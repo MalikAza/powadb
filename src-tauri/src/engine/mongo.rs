@@ -426,3 +426,228 @@ fn bson_to_json(b: Bson) -> Value {
         | Bson::JavaScriptCodeWithScope(_) => Value::Null,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::{Binary, Decimal128, Regex as BsonRegex, Timestamp};
+    use serde_json::json;
+    use std::str::FromStr;
+
+    // value_to_bson ------------------------------------------------------
+
+    #[test]
+    fn value_to_bson_lifts_oid_wrapper() {
+        let hex = "507f1f77bcf86cd799439011";
+        let bson = value_to_bson(json!({ "$oid": hex })).unwrap();
+        match bson {
+            Bson::ObjectId(oid) => assert_eq!(oid.to_hex(), hex),
+            other => panic!("expected ObjectId, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn value_to_bson_rejects_invalid_oid() {
+        let err = value_to_bson(json!({ "$oid": "not-hex" })).unwrap_err();
+        assert!(err.to_string().contains("invalid $oid"), "got: {err}");
+    }
+
+    #[test]
+    fn value_to_bson_lifts_date_wrapper() {
+        let iso = "2026-05-22T12:34:56Z";
+        let bson = value_to_bson(json!({ "$date": iso })).unwrap();
+        assert!(
+            matches!(bson, Bson::DateTime(_)),
+            "expected DateTime, got {bson:?}"
+        );
+    }
+
+    #[test]
+    fn value_to_bson_rejects_invalid_date() {
+        let err = value_to_bson(json!({ "$date": "not-a-date" })).unwrap_err();
+        assert!(err.to_string().contains("invalid $date"), "got: {err}");
+    }
+
+    #[test]
+    fn value_to_bson_walks_nested_documents() {
+        let hex = "507f1f77bcf86cd799439011";
+        let bson = value_to_bson(json!({ "a": { "_id": { "$oid": hex } } })).unwrap();
+        let doc = match bson {
+            Bson::Document(d) => d,
+            other => panic!("expected document, got {other:?}"),
+        };
+        let inner = doc.get_document("a").unwrap();
+        match inner.get("_id").unwrap() {
+            Bson::ObjectId(oid) => assert_eq!(oid.to_hex(), hex),
+            other => panic!("expected nested ObjectId, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn value_to_bson_walks_arrays() {
+        let bson = value_to_bson(json!([1, "x", true, null])).unwrap();
+        let arr = match bson {
+            Bson::Array(a) => a,
+            other => panic!("expected array, got {other:?}"),
+        };
+        assert_eq!(arr.len(), 4);
+    }
+
+    #[test]
+    fn value_to_bson_passes_scalars_through_serde() {
+        // Sanity check that the non-object/array fallback still works.
+        let bson = value_to_bson(json!(42)).unwrap();
+        assert!(matches!(bson, Bson::Int32(_) | Bson::Int64(_)));
+        assert!(matches!(
+            value_to_bson(json!("x")).unwrap(),
+            Bson::String(_)
+        ));
+        assert!(matches!(
+            value_to_bson(json!(true)).unwrap(),
+            Bson::Boolean(true)
+        ));
+        assert!(matches!(value_to_bson(json!(null)).unwrap(), Bson::Null));
+    }
+
+    // value_to_doc -------------------------------------------------------
+
+    #[test]
+    fn value_to_doc_returns_empty_for_null() {
+        let d = value_to_doc(Value::Null).unwrap();
+        assert!(d.is_empty());
+    }
+
+    #[test]
+    fn value_to_doc_rejects_non_object() {
+        let err = value_to_doc(json!(42)).unwrap_err();
+        assert!(err.to_string().contains("expected a JSON object"));
+        let err = value_to_doc(json!([])).unwrap_err();
+        assert!(err.to_string().contains("expected a JSON object"));
+    }
+
+    #[test]
+    fn value_to_doc_accepts_object() {
+        let d = value_to_doc(json!({ "a": 1, "b": "x" })).unwrap();
+        assert_eq!(d.len(), 2);
+    }
+
+    // value_to_pipeline --------------------------------------------------
+
+    #[test]
+    fn value_to_pipeline_requires_array() {
+        let err = value_to_pipeline(json!({ "$match": {} })).unwrap_err();
+        assert!(err.to_string().contains("array of stage objects"));
+    }
+
+    #[test]
+    fn value_to_pipeline_accepts_empty_array() {
+        let pipeline = value_to_pipeline(json!([])).unwrap();
+        assert!(pipeline.is_empty());
+    }
+
+    #[test]
+    fn value_to_pipeline_converts_each_stage() {
+        let pipeline = value_to_pipeline(json!([
+            { "$match": { "active": true } },
+            { "$count": "n" },
+        ]))
+        .unwrap();
+        assert_eq!(pipeline.len(), 2);
+    }
+
+    // bson_to_json -------------------------------------------------------
+
+    #[test]
+    fn bson_to_json_renders_objectid_as_hex() {
+        let oid = ObjectId::parse_str("507f1f77bcf86cd799439011").unwrap();
+        assert_eq!(
+            bson_to_json(Bson::ObjectId(oid)),
+            Value::String("507f1f77bcf86cd799439011".into())
+        );
+    }
+
+    #[test]
+    fn bson_to_json_renders_numeric_variants() {
+        assert_eq!(bson_to_json(Bson::Int32(7)), json!(7));
+        assert_eq!(bson_to_json(Bson::Int64(8)), json!(8));
+        assert_eq!(bson_to_json(Bson::Double(1.5)), json!(1.5));
+        // Non-finite doubles can't be represented in JSON; we degrade to null.
+        assert_eq!(bson_to_json(Bson::Double(f64::NAN)), Value::Null);
+    }
+
+    #[test]
+    fn bson_to_json_handles_primitives() {
+        assert_eq!(bson_to_json(Bson::Boolean(true)), json!(true));
+        assert_eq!(bson_to_json(Bson::Null), Value::Null);
+        assert_eq!(bson_to_json(Bson::String("hi".into())), json!("hi"));
+    }
+
+    #[test]
+    fn bson_to_json_renders_datetime_as_rfc3339_string() {
+        let dt = BsonDateTime::parse_rfc3339_str("2026-05-22T12:34:56Z").unwrap();
+        let v = bson_to_json(Bson::DateTime(dt));
+        let s = v.as_str().unwrap();
+        // The driver may render as "...Z" or with an explicit "+00:00" offset
+        // — both are valid RFC3339, so accept either.
+        assert!(s.starts_with("2026-05-22T12:34:56"), "got: {s}");
+    }
+
+    #[test]
+    fn bson_to_json_describes_binary_by_length() {
+        let bin = Binary {
+            subtype: mongodb::bson::spec::BinarySubtype::Generic,
+            bytes: vec![0u8; 5],
+        };
+        assert_eq!(bson_to_json(Bson::Binary(bin)), json!("<5 bytes>"));
+    }
+
+    #[test]
+    fn bson_to_json_renders_decimal_and_regex_and_timestamp_as_strings() {
+        let dec = Decimal128::from_str("1.5").unwrap();
+        let v = bson_to_json(Bson::Decimal128(dec));
+        assert!(matches!(v, Value::String(_)));
+
+        let r = BsonRegex {
+            pattern: "^a".into(),
+            options: "i".into(),
+        };
+        assert_eq!(bson_to_json(Bson::RegularExpression(r)), json!("/^a/i"));
+
+        let ts = Timestamp {
+            time: 1,
+            increment: 2,
+        };
+        assert_eq!(bson_to_json(Bson::Timestamp(ts)), json!("Timestamp(1, 2)"));
+    }
+
+    #[test]
+    fn bson_to_json_maps_obscure_types_to_null() {
+        assert_eq!(bson_to_json(Bson::Undefined), Value::Null);
+        assert_eq!(bson_to_json(Bson::MaxKey), Value::Null);
+        assert_eq!(bson_to_json(Bson::MinKey), Value::Null);
+        assert_eq!(
+            bson_to_json(Bson::JavaScriptCode("function(){}".into())),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn bson_to_json_walks_arrays_and_documents() {
+        let mut inner = Document::new();
+        inner.insert("k", Bson::String("v".into()));
+        let mixed = Bson::Array(vec![
+            Bson::Int32(1),
+            Bson::String("x".into()),
+            Bson::Document(inner),
+        ]);
+        assert_eq!(bson_to_json(mixed), json!([1, "x", { "k": "v" }]));
+    }
+
+    #[test]
+    fn doc_to_value_renders_document_to_object() {
+        let mut d = Document::new();
+        d.insert("a", Bson::Int32(1));
+        d.insert("b", Bson::String("x".into()));
+        assert_eq!(doc_to_value(d), json!({ "a": 1, "b": "x" }));
+    }
+}
