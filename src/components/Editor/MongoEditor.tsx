@@ -21,7 +21,7 @@ type Props = {
 };
 
 const PLACEHOLDER =
-  '// MongoDB query as JSON, then Cmd+Enter to run.\n// {\n//   "op": "find",\n//   "collection": "users",\n//   "filter": {},\n//   "limit": 25\n// }';
+  '// mongosh-style — Cmd+Enter to run.\n// use myDatabase;\n// db.users.find({ active: true }).limit(25)\n// db.users.findOne({ _id: ObjectId("...") })\n// db.orders.aggregate([{ $match: {...} }, { $group: {...} }])';
 
 export function MongoEditor({ value, onChange, onRun }: Props) {
   const activeId = useConnections((s) => s.activeId);

@@ -166,6 +166,29 @@ impl Engine for MongoEngine {
                     elapsed_ms: start.elapsed().as_millis(),
                 })
             }
+            MongoOp::FindOne {
+                collection,
+                database,
+                filter,
+                projection,
+            } => {
+                let db = pick_db(&database);
+                let coll = db.collection::<Document>(&collection);
+                let opts = FindOptions::builder()
+                    .projection(projection.map(value_to_doc).transpose()?)
+                    .limit(1)
+                    .build();
+                let cursor = coll
+                    .find(value_to_doc(filter)?)
+                    .with_options(opts)
+                    .await
+                    .map_err(mongo_err)?;
+                let docs: Vec<Document> = cursor.try_collect().await.map_err(mongo_err)?;
+                Ok(EngineResult::Documents {
+                    docs: docs.into_iter().map(doc_to_value).collect(),
+                    elapsed_ms: start.elapsed().as_millis(),
+                })
+            }
             MongoOp::InsertOne {
                 collection,
                 database,
@@ -199,6 +222,23 @@ impl Engine for MongoEngine {
                     elapsed_ms: start.elapsed().as_millis(),
                 })
             }
+            MongoOp::UpdateOne {
+                collection,
+                database,
+                filter,
+                update,
+            } => {
+                let db = pick_db(&database);
+                let coll = db.collection::<Document>(&collection);
+                let res = coll
+                    .update_one(value_to_doc(filter)?, value_to_doc(update)?)
+                    .await
+                    .map_err(mongo_err)?;
+                Ok(EngineResult::Affected {
+                    rows: res.modified_count,
+                    elapsed_ms: start.elapsed().as_millis(),
+                })
+            }
             MongoOp::UpdateMany {
                 collection,
                 database,
@@ -213,6 +253,22 @@ impl Engine for MongoEngine {
                     .map_err(mongo_err)?;
                 Ok(EngineResult::Affected {
                     rows: res.modified_count,
+                    elapsed_ms: start.elapsed().as_millis(),
+                })
+            }
+            MongoOp::DeleteOne {
+                collection,
+                database,
+                filter,
+            } => {
+                let db = pick_db(&database);
+                let coll = db.collection::<Document>(&collection);
+                let res = coll
+                    .delete_one(value_to_doc(filter)?)
+                    .await
+                    .map_err(mongo_err)?;
+                Ok(EngineResult::Affected {
+                    rows: res.deleted_count,
                     elapsed_ms: start.elapsed().as_millis(),
                 })
             }

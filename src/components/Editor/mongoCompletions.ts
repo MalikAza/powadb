@@ -76,6 +76,44 @@ const OID_TEMPLATE: Completion[] = [
   { label: '{ "$oid": "..." }', type: "constant", detail: "ObjectId wrapper" },
 ];
 
+// DSL-mode catalogs -------------------------------------------------------
+
+const DSL_METHODS: Completion[] = [
+  { label: "find", type: "method", detail: "(filter?, projection?) → cursor" },
+  { label: "findOne", type: "method", detail: "(filter?, projection?) → doc" },
+  { label: "aggregate", type: "method", detail: "(pipeline) → cursor" },
+  { label: "insertOne", type: "method", detail: "(doc) → ack" },
+  { label: "insertMany", type: "method", detail: "([doc, …]) → ack" },
+  { label: "updateOne", type: "method", detail: "(filter, update) → ack" },
+  { label: "updateMany", type: "method", detail: "(filter, update) → ack" },
+  { label: "deleteOne", type: "method", detail: "(filter) → ack" },
+  { label: "deleteMany", type: "method", detail: "(filter) → ack" },
+];
+
+const DSL_CHAIN_METHODS: Completion[] = [
+  { label: "limit", type: "method", detail: "(n) — cap result count" },
+  { label: "skip", type: "method", detail: "(n) — offset" },
+  { label: "sort", type: "method", detail: "({ field: 1 | -1 })" },
+  { label: "project", type: "method", detail: "({ field: 1 | 0 })" },
+];
+
+const DSL_TOP_LEVEL: Completion[] = [
+  { label: "db", type: "namespace", detail: "current connection" },
+];
+
+const DSL_DB_HELPERS: Completion[] = [
+  { label: "runCommand", type: "method", detail: "(cmdDoc) — admin command" },
+];
+
+const DSL_CTORS: Completion[] = [
+  { label: "ObjectId", type: "function", detail: 'ObjectId("<24-hex>")' },
+  { label: "ISODate", type: "function", detail: 'ISODate("2026-01-01T00:00:00Z")' },
+  { label: "Date", type: "function", detail: "new Date(...) — ISO-8601 string" },
+  { label: "NumberLong", type: "function", detail: "NumberLong(n)" },
+  { label: "NumberInt", type: "function", detail: "NumberInt(n)" },
+  { label: "RegExp", type: "function", detail: "RegExp(pattern, flags)" },
+];
+
 // Context analysis --------------------------------------------------------
 
 /// What kind of completion the cursor should produce, based on the JSON
@@ -87,7 +125,12 @@ type CursorContext =
   | { kind: "collection_value" } // `"collection": "<here>"`
   | { kind: "database_value" } // `"database": "<here>"`
   | { kind: "key"; container: "top" | "nested" } // typing an object key
-  | { kind: "value" }; // generic value position
+  | { kind: "value" } // generic value position
+  // DSL-specific positions ------------------------------------------------
+  | { kind: "dsl_db_member" } // right after `db.` — collection names + `runCommand`
+  | { kind: "dsl_collection_method" } // after `db.users.` — find/insert/etc.
+  | { kind: "dsl_chain_method" } // after `db.users.find(...).` — limit/skip/sort
+  | { kind: "dsl_ctor" }; // bare ident in expression — ObjectId/ISODate/…
 
 // Each regex captures the partial token at the cursor so we know how far
 // back to anchor the completion replacement. Patterns end with `[^"]*$` to
@@ -98,9 +141,19 @@ const KEY_IN_QUOTES_RE = /(?:\{|,)\s*"([^"\n]*)$/;
 const BARE_KEY_RE = /(?:\{|,)\s*([\w$]*)$/;
 const VALUE_IN_QUOTES_RE = /:\s*"([^"\n]*)$/;
 
+// DSL position detectors --------------------------------------------------
+//
+// These run AFTER the string-quoted detectors below — string contexts always
+// win because they're inside literals where the DSL syntax doesn't apply.
+const DSL_AFTER_DB_RE = /(?:^|[\s(,;])db\.([\w$]*)$/;
+const DSL_AFTER_COLLECTION_RE = /(?:^|[\s(,;])db\.[\w$]+\.([\w$]*)$/;
+// A chain-method position is `).<partial>` — the closing paren of the
+// primary call is what tells us we're past the head method.
+const DSL_AFTER_CHAIN_RE = /\)\s*\.([\w$]*)$/;
+
 function detectContext(textBefore: string): (CursorContext & { prefixLen: number }) | null {
-  // String-value contexts have higher priority than key contexts: the user
-  // is mid-string, so we should suggest values, not new keys.
+  // String-value contexts have highest priority: the user is mid-string,
+  // so we should suggest values, not new keys / DSL identifiers.
   const sv = textBefore.match(STRING_VALUE_OF_KEY_RE);
   if (sv) {
     const prefixLen = sv[2].length;
@@ -115,6 +168,23 @@ function detectContext(textBefore: string): (CursorContext & { prefixLen: number
     const container = isTopLevel(textBefore) ? "top" : "nested";
     return { kind: "key", container, prefixLen: k[1].length };
   }
+
+  // DSL positions: these only fire OUTSIDE object literals (depth 0). When
+  // we're inside `{...}` the key/operator completions take precedence.
+  if (depth(textBefore) === 0) {
+    const chain = textBefore.match(DSL_AFTER_CHAIN_RE);
+    if (chain) return { kind: "dsl_chain_method", prefixLen: chain[1].length };
+    const coll = textBefore.match(DSL_AFTER_COLLECTION_RE);
+    if (coll) return { kind: "dsl_collection_method", prefixLen: coll[1].length };
+    const db = textBefore.match(DSL_AFTER_DB_RE);
+    if (db) return { kind: "dsl_db_member", prefixLen: db[1].length };
+  } else {
+    // Inside a value position (after `:` or inside an array), a bare ident
+    // is most likely a constructor call — `_id: Obj|`. We suggest helpers.
+    const ctor = textBefore.match(/[:[,(]\s*([A-Z][\w$]*)$/);
+    if (ctor) return { kind: "dsl_ctor", prefixLen: ctor[1].length };
+  }
+
   // Bare key position (no quote yet) — Ctrl-Space after `{` or `,`.
   const bk = textBefore.match(BARE_KEY_RE);
   if (bk) {
@@ -125,6 +195,35 @@ function detectContext(textBefore: string): (CursorContext & { prefixLen: number
   const v = textBefore.match(VALUE_IN_QUOTES_RE);
   if (v) return { kind: "value", prefixLen: v[1].length };
   return null;
+}
+
+/// Total unmatched `{`/`[` depth (string-aware). Used to decide whether the
+/// DSL identifier detectors should fire — they only apply at depth 0, since
+/// inside an object literal the relevant suggestions are operators/fields,
+/// not collection/method names.
+function depth(textBefore: string): number {
+  let d = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < textBefore.length; i++) {
+    const ch = textBefore[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{" || ch === "[") d++;
+    else if (ch === "}" || ch === "]") d--;
+  }
+  return d;
 }
 
 /// Decide whether the cursor sits at the top object level (where the
@@ -236,15 +335,38 @@ export function buildMongoCompletionSource(schemas: SchemaMeta[] | undefined) {
 
       case "value":
         // Generic value position — surface field names (useful in $or / $and
-        // operand objects) plus the ObjectId template snippet.
+        // operand objects), the ObjectId snippet, and DSL constructors so
+        // the user can type `ObjectId(...)` after a key.
         return {
           from,
-          options: dedupe([...fields, ...OID_TEMPLATE]),
+          options: dedupe([...fields, ...OID_TEMPLATE, ...DSL_CTORS]),
           validFor: /^[\w$]*$/,
         };
+
+      case "dsl_db_member": {
+        // After `db.` — collections (the common case) plus the lone
+        // top-level helper `db.runCommand(...)`.
+        return {
+          from,
+          options: dedupe([...collections, ...DSL_DB_HELPERS]),
+          validFor: /^[\w$]*$/,
+        };
+      }
+      case "dsl_collection_method":
+        return { from, options: DSL_METHODS, validFor: /^[\w$]*$/ };
+      case "dsl_chain_method":
+        return { from, options: DSL_CHAIN_METHODS, validFor: /^[\w$]*$/ };
+      case "dsl_ctor":
+        return { from, options: DSL_CTORS, validFor: /^[\w$]*$/ };
     }
   };
 }
+
+// The `db` top-level identifier is not surfaced as a completion (users type
+// it once at the start; CodeMirror's prefix matching means it would be
+// noisy to suggest). It's exported only so the catalog list is complete for
+// any future "starter snippet" feature.
+export { DSL_TOP_LEVEL };
 
 function dedupe(opts: Completion[]): Completion[] {
   const seen = new Set<string>();

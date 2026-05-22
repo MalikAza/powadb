@@ -211,6 +211,19 @@ pub enum MongoOp {
         /// JSON array of stages: `[{"$match": {...}}, {"$group": {...}}, ...]`.
         pipeline: Value,
     },
+    /// Like `Find` but stops at the first matching document and returns it
+    /// (or an empty set). Mirrors `db.coll.findOne(...)` — the DSL has it
+    /// and silently downgrading to `find().limit(1)` would lose the
+    /// "return one document or null" semantic the user expects.
+    FindOne {
+        collection: String,
+        #[serde(default)]
+        database: Option<String>,
+        #[serde(default)]
+        filter: Value,
+        #[serde(default)]
+        projection: Option<Value>,
+    },
     InsertOne {
         collection: String,
         #[serde(default)]
@@ -223,12 +236,25 @@ pub enum MongoOp {
         database: Option<String>,
         documents: Vec<Value>,
     },
+    UpdateOne {
+        collection: String,
+        #[serde(default)]
+        database: Option<String>,
+        filter: Value,
+        update: Value,
+    },
     UpdateMany {
         collection: String,
         #[serde(default)]
         database: Option<String>,
         filter: Value,
         update: Value,
+    },
+    DeleteOne {
+        collection: String,
+        #[serde(default)]
+        database: Option<String>,
+        filter: Value,
     },
     DeleteMany {
         collection: String,

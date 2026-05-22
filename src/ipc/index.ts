@@ -50,9 +50,23 @@ export type MongoOp =
       skip?: number;
       sort?: unknown;
     }
+  | {
+      op: "find_one";
+      collection: string;
+      database?: string;
+      filter?: unknown;
+      projection?: unknown;
+    }
   | { op: "aggregate"; collection: string; database?: string; pipeline: unknown[] }
   | { op: "insert_one"; collection: string; database?: string; document: unknown }
   | { op: "insert_many"; collection: string; database?: string; documents: unknown[] }
+  | {
+      op: "update_one";
+      collection: string;
+      database?: string;
+      filter: unknown;
+      update: unknown;
+    }
   | {
       op: "update_many";
       collection: string;
@@ -60,6 +74,7 @@ export type MongoOp =
       filter: unknown;
       update: unknown;
     }
+  | { op: "delete_one"; collection: string; database?: string; filter: unknown }
   | { op: "delete_many"; collection: string; database?: string; filter: unknown }
   | { op: "run_command"; value: unknown };
 
