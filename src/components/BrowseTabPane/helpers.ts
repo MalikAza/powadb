@@ -10,8 +10,10 @@ import { type Filter, filterToSql, isFilterComplete, quoteIdent } from "@/utils/
 
 export type GeomDecoded = DecodedGeometry & { coordsJson: string };
 
+export type EditingState = { row: number; col: number; value: string } | null;
+
 export type EditOps = {
-  editing: { row: number; col: number; value: string } | null;
+  editing: EditingState;
   insertRow: (string | null)[] | null;
   pendingDeleteRow: number | null;
   pendingBulkDelete: boolean;

@@ -11,15 +11,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useReducer,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,19 +35,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { type ByteaDisplayMode, parseByteaInput, stripHexPrefix } from "@/lib/bytea";
+import { type ByteaDisplayMode, parseByteaInput } from "@/lib/bytea";
 import { isByteaColumn, isGeoColumn } from "@/lib/columnTypes";
 import { cn } from "@/lib/utils";
 import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
 import { type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
-import {
-  maybeObjectId,
-  mongoDocumentsToQueryResult,
-  mongoFiltersFromTab,
-  mongoSortFromTab,
-} from "../utils/mongo";
+import { mongoDocumentsToQueryResult, mongoFiltersFromTab, mongoSortFromTab } from "../utils/mongo";
 import { type CompareOp, type Filter, quoteIdent, quoteTable } from "../utils/sql";
 import {
   buildFkFilters,
@@ -63,20 +50,22 @@ import {
   buildWhereClause,
   cellDisplayString,
   type Dialogs,
+  type EditingState,
   type EditOps,
   type GeomDecoded,
   geomKey,
   INITIAL_EDIT_OPS,
-  parseMongoCellValue,
   pkLabelFor,
 } from "./BrowseTabPane/helpers";
+import { useBrowseColumnResize } from "./BrowseTabPane/hooks/useBrowseColumnResize";
+import { useBrowseDerived } from "./BrowseTabPane/hooks/useBrowseDerived";
+import { useBrowseMutations } from "./BrowseTabPane/hooks/useBrowseMutations";
+import { useDecodedGeometries } from "./BrowseTabPane/hooks/useDecodedGeometries";
 import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FkCell } from "./FkCell";
 import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap/GeometryMapDialog";
 import { ColumnResizeHandle } from "./ResultsGrid/ColumnResizeHandle";
-import { measureColumnWidths } from "./ResultsGrid/measureColumnWidths";
-import { useColumnResize } from "./ResultsGrid/useColumnResize";
 
 type Props = {
   tab: BrowseTab;
@@ -536,509 +525,6 @@ function BrowseGrid({
   );
 }
 
-function useBrowseDerived({
-  cols,
-  fks,
-  pkCols,
-  kind,
-  connId,
-  schema,
-  table,
-  byteaModes,
-}: {
-  cols: Column[];
-  fks: DiagFk[];
-  pkCols: BrowseTab["pkCols"];
-  kind: DbKind;
-  connId: string;
-  schema: string;
-  table: string;
-  byteaModes: Record<string, ByteaDisplayMode>;
-}) {
-  const colIndexByName = useMemo(() => {
-    const m = new Map<string, number>();
-    for (let i = 0; i < cols.length; i++) m.set(cols[i].name, i);
-    return m;
-  }, [cols]);
-  const pkColIndexes = useMemo(() => {
-    if (!pkCols) return null;
-    const idxs: number[] = [];
-    for (const pk of pkCols) {
-      const i = colIndexByName.get(pk);
-      if (i === undefined) return null;
-      idxs.push(i);
-    }
-    return idxs;
-  }, [pkCols, colIndexByName]);
-  const fkByColumn = useMemo(() => {
-    const map = new Map<string, DiagFk>();
-    for (const fk of fks) {
-      for (const col of fk.from_columns) {
-        if (!map.has(col)) map.set(col, fk);
-      }
-    }
-    return map;
-  }, [fks]);
-  const byteaColMode = useMemo(() => {
-    const out = new Map<number, ByteaDisplayMode>();
-    cols.forEach((c, i) => {
-      if (!isByteaColumn(kind, c)) return;
-      out.set(i, byteaModes[columnDisplayKey(connId, schema, table, c.name)] ?? "hex");
-    });
-    return out;
-  }, [cols, kind, connId, schema, table, byteaModes]);
-  return { colIndexByName, pkColIndexes, fkByColumn, byteaColMode };
-}
-
-function useDecodedGeometries(
-  connectionId: string,
-  kind: DbKind,
-  result: QueryResult,
-): Map<string, GeomDecoded> {
-  const [decoded, dispatch] = useReducer(
-    (_s: Map<string, GeomDecoded>, next: Map<string, GeomDecoded>) => next,
-    new Map<string, GeomDecoded>(),
-  );
-  useEffect(() => {
-    const cols = result.columns;
-    const targets: Array<{ row: number; col: number; hex: string }> = [];
-    if (kind === "postgres") {
-      cols.forEach((c, colIdx) => {
-        if (!isGeoColumn(kind, c)) return;
-        result.rows.forEach((row, rowIdx) => {
-          const v = row[colIdx];
-          if (typeof v === "string" && v !== "") {
-            targets.push({ row: rowIdx, col: colIdx, hex: v });
-          }
-        });
-      });
-    }
-    if (targets.length === 0) {
-      dispatch(new Map());
-      return;
-    }
-    let cancelled = false;
-    ipc
-      .decodeGeometries(
-        connectionId,
-        targets.map((t) => t.hex),
-      )
-      .then((entries) => {
-        if (cancelled) return;
-        const next = new Map<string, GeomDecoded>();
-        entries.forEach((entry, i) => {
-          if (!entry) return;
-          const { row, col } = targets[i];
-          let coordsJson = "";
-          try {
-            const obj = JSON.parse(entry.geojson) as { coordinates?: unknown };
-            coordsJson = JSON.stringify(obj.coordinates ?? null);
-          } catch {
-            coordsJson = entry.geojson;
-          }
-          next.set(geomKey(row, col), { ...entry, coordsJson });
-        });
-        dispatch(next);
-      })
-      .catch(() => {
-        if (!cancelled) dispatch(new Map());
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [result, connectionId, kind]);
-  return decoded;
-}
-
-function useBrowseColumnResize(
-  connectionId: string,
-  schema: string,
-  table: string,
-  cols: Column[],
-  rows: readonly (readonly unknown[])[],
-) {
-  const columnWidthsStore = useColumnDisplay((s) => s.columnWidths);
-  const setColumnWidth = useColumnDisplay((s) => s.setColumnWidth);
-  const clearColumnWidth = useColumnDisplay((s) => s.clearColumnWidth);
-
-  const autoColumnWidths = useMemo(() => measureColumnWidths(cols, rows), [cols, rows]);
-
-  const initialColumnWidths = useMemo(() => {
-    return cols.map((c, i) => {
-      const k = columnDisplayKey(connectionId, schema, table, c.name);
-      const stored = columnWidthsStore[k];
-      return typeof stored === "number" ? stored : autoColumnWidths[i];
-    });
-  }, [cols, connectionId, schema, table, columnWidthsStore, autoColumnWidths]);
-
-  const colRefs = useRef<(HTMLTableColElement | null)[]>([]);
-  const liveWidthsRef = useRef<number[]>(initialColumnWidths);
-
-  const {
-    widths: columnWidths,
-    startResize,
-    resetWidth,
-  } = useColumnResize(initialColumnWidths, {
-    onCommit: (idx, width) => {
-      const c = cols[idx];
-      if (!c) return;
-      setColumnWidth(columnDisplayKey(connectionId, schema, table, c.name), width);
-    },
-    onLiveResize: (idx, width) => {
-      liveWidthsRef.current[idx] = width;
-      const col = colRefs.current[idx];
-      if (col) col.style.width = `${width}px`;
-    },
-    resetWidths: autoColumnWidths,
-    onReset: (idx) => {
-      const c = cols[idx];
-      if (!c) return;
-      clearColumnWidth(columnDisplayKey(connectionId, schema, table, c.name));
-    },
-  });
-
-  useEffect(() => {
-    liveWidthsRef.current = columnWidths.slice();
-  }, [columnWidths]);
-
-  return { colRefs, columnWidths, startResize, resetWidth };
-}
-
-function useBrowseMutations({
-  tab,
-  conn,
-  cols,
-  rows,
-  canEdit,
-  editing,
-  insertRow,
-  selected,
-  pkColIndexes,
-  colIndexByName,
-  byteaColMode,
-  setEditing,
-  setInsertRow,
-  setSelected,
-  setPendingDeleteRow,
-  setPendingBulkDelete,
-  setOpError,
-  onRefresh,
-}: {
-  tab: BrowseTab;
-  conn: SavedConnection;
-  cols: Column[];
-  rows: readonly (readonly unknown[])[];
-  canEdit: boolean;
-  editing: EditingState;
-  insertRow: (string | null)[] | null;
-  selected: Set<number>;
-  pkColIndexes: number[] | null;
-  colIndexByName: Map<string, number>;
-  byteaColMode: Map<number, ByteaDisplayMode>;
-  setEditing: (next: EditingState) => void;
-  setInsertRow: (next: (string | null)[] | null) => void;
-  setSelected: (next: Set<number>) => void;
-  setPendingDeleteRow: (next: number | null) => void;
-  setPendingBulkDelete: (next: boolean) => void;
-  setOpError: (next: string | null) => void;
-  onRefresh: () => void;
-}) {
-  async function runUpdate(setClause: string, firstParam: string | null) {
-    if (!tab.pkCols || !editing) throw new Error("no primary key");
-    const { row } = editing;
-    const oldRow = rows[row];
-    const wherePieces: string[] = [];
-    const params: (string | null)[] = [firstParam];
-    let pIdx = 2;
-    for (const pkCol of tab.pkCols) {
-      const idx = colIndexByName.get(pkCol);
-      if (idx === undefined) throw new Error(`PK column ${pkCol} not in result`);
-      const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
-      wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
-      params.push(stringifyValue(oldRow[idx]));
-      pIdx++;
-    }
-    const sql = `UPDATE ${quoteTable(tab.schema, tab.table, conn.kind)} SET ${setClause} WHERE ${wherePieces.join(" AND ")}`;
-    await ipc.executeDml(conn.id, sql, params);
-  }
-
-  async function commitEdit() {
-    if (!editing || !canEdit || !tab.pkCols) {
-      setEditing(null);
-      return;
-    }
-    const { row, col, value } = editing;
-    const colDef = cols[col];
-    const colName = colDef.name;
-    const oldRow = rows[row];
-    const original = oldRow[col];
-
-    const byteaMode = byteaColMode.get(col);
-
-    // Mongo branch — translate to UpdateMany with a single-doc match on the
-    // PK columns. Parses `value` as JSON when it looks like JSON (objects,
-    // arrays, numbers, bools, null) so the user can type structured updates;
-    // otherwise treats it as a plain string.
-    if (conn.kind === "mongo") {
-      try {
-        if (String(original ?? "") === value) {
-          setEditing(null);
-          return;
-        }
-        const parsed = parseMongoCellValue(value);
-        const filter = buildMongoPkFilter(tab.pkCols, oldRow, colIndexByName);
-        await ipc.runEngineQuery(conn.id, newQueryId(), {
-          kind: "mongo",
-          value: {
-            op: "update_many",
-            collection: tab.table,
-            database: tab.schema,
-            filter,
-            update: { $set: { [colName]: parsed } },
-          },
-        });
-        setEditing(null);
-        setOpError(null);
-        onRefresh();
-      } catch (e) {
-        setOpError(String(e));
-      }
-      return;
-    }
-
-    try {
-      let paramValue: string | null = value;
-      let setExpr: string;
-
-      const ph1 = conn.kind === "postgres" ? "$1" : "?";
-
-      if (byteaMode && byteaMode !== "hex" && conn.kind === "postgres") {
-        const parsed = parseByteaInput(value, byteaMode);
-        if (parsed === null) {
-          throw new Error(`Invalid ${byteaMode.toUpperCase()} value`);
-        }
-        const oldHex = typeof original === "string" ? stripHexPrefix(original).toUpperCase() : "";
-        if (parsed === oldHex) {
-          setEditing(null);
-          return;
-        }
-        paramValue = parsed;
-        setExpr = `${quoteIdent(colName, conn.kind)} = decode(${ph1}, 'hex')::bytea`;
-        await runUpdate(setExpr, paramValue);
-        setEditing(null);
-        setOpError(null);
-        onRefresh();
-        return;
-      }
-
-      const newVal = value === "" && original === null ? "" : value;
-      if (String(original ?? "") === newVal) {
-        setEditing(null);
-        return;
-      }
-      const setPlaceholder = castPlaceholder(ph1, colDef.type_name, conn.kind);
-      setExpr = `${quoteIdent(colName, conn.kind)} = ${setPlaceholder}`;
-      await runUpdate(setExpr, paramValue);
-      setEditing(null);
-      setOpError(null);
-      onRefresh();
-    } catch (e) {
-      setOpError(String(e));
-    }
-  }
-
-  async function commitInsert() {
-    if (!insertRow) return;
-    // Mongo branch: build a document from the non-empty cells. _id may be
-    // omitted to let MongoDB auto-generate an ObjectId; if the user supplies
-    // a 24-hex string for _id we wrap it as `{$oid}` so it lands as an
-    // actual ObjectId rather than a string.
-    if (conn.kind === "mongo") {
-      try {
-        const doc: Record<string, unknown> = {};
-        cols.forEach((c, i) => {
-          const v = insertRow[i];
-          if (v === null || v === "") return;
-          doc[c.name] = c.name === "_id" ? maybeObjectId(v) : parseMongoCellValue(v);
-        });
-        if (Object.keys(doc).length === 0) {
-          throw new Error("All cells are empty — fill at least one column");
-        }
-        await ipc.runEngineQuery(conn.id, newQueryId(), {
-          kind: "mongo",
-          value: {
-            op: "insert_one",
-            collection: tab.table,
-            database: tab.schema,
-            document: doc,
-          },
-        });
-        setInsertRow(null);
-        setOpError(null);
-        onRefresh();
-      } catch (e) {
-        setOpError(String(e));
-      }
-      return;
-    }
-    try {
-      const colNames: string[] = [];
-      const placeholders: string[] = [];
-      const params: (string | null)[] = [];
-      let pIdx = 1;
-      cols.forEach((c, i) => {
-        const v = insertRow[i];
-        if (v === null || v === "") return;
-        colNames.push(quoteIdent(c.name, conn.kind));
-        const ph = conn.kind === "postgres" ? `$${pIdx}` : "?";
-        placeholders.push(castPlaceholder(ph, c.type_name, conn.kind));
-        params.push(v);
-        pIdx++;
-      });
-      if (colNames.length === 0) {
-        throw new Error("All cells are empty — fill at least one column");
-      }
-      const sql = `INSERT INTO ${quoteTable(tab.schema, tab.table, conn.kind)} (${colNames.join(", ")}) VALUES (${placeholders.join(", ")})`;
-      await ipc.executeDml(conn.id, sql, params);
-      setInsertRow(null);
-      setOpError(null);
-      onRefresh();
-    } catch (e) {
-      setOpError(String(e));
-    }
-  }
-
-  async function deleteSelectedRows() {
-    if (!canEdit || !tab.pkCols || !pkColIndexes || selected.size === 0) return;
-    if (conn.kind === "mongo") {
-      try {
-        const rowIdxs = Array.from(selected).sort((a, b) => a - b);
-        const filters: Record<string, unknown>[] = [];
-        for (const ri of rowIdxs) {
-          const row = rows[ri];
-          if (!row) continue;
-          filters.push(buildMongoPkFilter(tab.pkCols, row, colIndexByName));
-        }
-        if (filters.length === 0) return;
-        const filter = filters.length === 1 ? filters[0] : { $or: filters };
-        await ipc.runEngineQuery(conn.id, newQueryId(), {
-          kind: "mongo",
-          value: {
-            op: "delete_many",
-            collection: tab.table,
-            database: tab.schema,
-            filter,
-          },
-        });
-        setSelected(new Set());
-        setPendingBulkDelete(false);
-        setOpError(null);
-        onRefresh();
-      } catch (e) {
-        setOpError(String(e));
-      }
-      return;
-    }
-    try {
-      const rowIdxs = Array.from(selected).sort((a, b) => a - b);
-      const placeholder = (i: number) => (conn.kind === "postgres" ? `$${i}` : "?");
-      const orPieces: string[] = [];
-      const params: (string | null)[] = [];
-      let pIdx = 1;
-      for (const ri of rowIdxs) {
-        const row = rows[ri];
-        if (!row) continue;
-        const andPieces: string[] = [];
-        tab.pkCols.forEach((pk, k) => {
-          andPieces.push(pkEq(pk, placeholder(pIdx), conn.kind));
-          params.push(stringifyValue(row[pkColIndexes[k]]));
-          pIdx++;
-        });
-        orPieces.push(`(${andPieces.join(" AND ")})`);
-      }
-      if (orPieces.length === 0) return;
-      const sql = `DELETE FROM ${quoteTable(tab.schema, tab.table, conn.kind)} WHERE ${orPieces.join(" OR ")}`;
-      await ipc.executeDml(conn.id, sql, params);
-      setSelected(new Set());
-      setPendingBulkDelete(false);
-      setOpError(null);
-      onRefresh();
-    } catch (e) {
-      setOpError(String(e));
-    }
-  }
-
-  async function deleteRow(rowIdx: number) {
-    if (!canEdit || !tab.pkCols) return;
-    if (conn.kind === "mongo") {
-      try {
-        const oldRow = rows[rowIdx];
-        const filter = buildMongoPkFilter(tab.pkCols, oldRow, colIndexByName);
-        await ipc.runEngineQuery(conn.id, newQueryId(), {
-          kind: "mongo",
-          value: {
-            op: "delete_many",
-            collection: tab.table,
-            database: tab.schema,
-            filter,
-          },
-        });
-        setPendingDeleteRow(null);
-        setOpError(null);
-        onRefresh();
-      } catch (e) {
-        setOpError(String(e));
-      }
-      return;
-    }
-    try {
-      const oldRow = rows[rowIdx];
-      const wherePieces: string[] = [];
-      const params: (string | null)[] = [];
-      let pIdx = 1;
-      for (const pkCol of tab.pkCols) {
-        const idx = colIndexByName.get(pkCol);
-        if (idx === undefined) throw new Error(`PK column ${pkCol} not in result`);
-        const placeholder = conn.kind === "postgres" ? `$${pIdx}` : "?";
-        wherePieces.push(pkEq(pkCol, placeholder, conn.kind));
-        params.push(stringifyValue(oldRow[idx]));
-        pIdx++;
-      }
-      const sql = `DELETE FROM ${quoteTable(tab.schema, tab.table, conn.kind)} WHERE ${wherePieces.join(" AND ")}`;
-      await ipc.executeDml(conn.id, sql, params);
-      setPendingDeleteRow(null);
-      setOpError(null);
-      onRefresh();
-    } catch (e) {
-      setOpError(String(e));
-    }
-  }
-
-  return { commitEdit, commitInsert, deleteSelectedRows, deleteRow };
-}
-
-/// Build a `{ field: ... }` Mongo match document from a row's PK columns.
-/// `_id` values that look like 24-char hex strings are wrapped as `{$oid}`
-/// so they decode as actual `ObjectId`s on the backend.
-function buildMongoPkFilter(
-  pkCols: string[],
-  row: readonly unknown[],
-  colIndexByName: Map<string, number>,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const pkCol of pkCols) {
-    const idx = colIndexByName.get(pkCol);
-    if (idx === undefined) throw new Error(`PK column ${pkCol} not in result`);
-    const v = row[idx];
-    if (pkCol === "_id" && typeof v === "string") {
-      out[pkCol] = maybeObjectId(v);
-    } else {
-      out[pkCol] = v;
-    }
-  }
-  return out;
-}
-
 function BrowseDialogs({
   connectionId,
   pendingDeleteRow,
@@ -1112,8 +598,6 @@ function BrowseDialogs({
     </>
   );
 }
-
-type EditingState = { row: number; col: number; value: string } | null;
 
 function BrowseHeaderRow({
   cols,
@@ -1686,40 +1170,6 @@ function CellEditor({
       className="h-7 rounded-none border-0 bg-primary/20 px-3 text-[11px] focus-visible:ring-1 focus-visible:ring-primary"
     />
   );
-}
-
-function stringifyValue(v: unknown): string | null {
-  if (v === null || v === undefined) return null;
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
-}
-
-// Postgres rejects `int_col = $1` when $1 is bound as text (no implicit cast).
-// We always send DML params as strings, so cast the column to text on PG to make
-// equality work for any column type. MySQL doesn't need this — it coerces freely.
-function pkEq(col: string, placeholder: string, kind: DbKind): string {
-  const ident = quoteIdent(col, kind);
-  return kind === "postgres" ? `${ident}::text = ${placeholder}` : `${ident} = ${placeholder}`;
-}
-
-// Mirror of pkEq for the assignment side: PG won't implicitly cast text → timestamp,
-// int4, uuid, etc. The sqlx type_info name (TIMESTAMP, INT4, TIMESTAMPTZ, …) is also
-// a valid PG typname for `::cast`, so lowercasing it produces the right cast.
-function castPlaceholder(placeholder: string, typeName: string | undefined, kind: DbKind): string {
-  if (kind !== "postgres" || !typeName) return placeholder;
-  const t = typeName.toUpperCase();
-  if (
-    t === "TEXT" ||
-    t === "VARCHAR" ||
-    t === "CHAR" ||
-    t === "BPCHAR" ||
-    t === "NAME" ||
-    t === "CITEXT" ||
-    t === "UNKNOWN"
-  ) {
-    return placeholder;
-  }
-  return `${placeholder}::${typeName.toLowerCase()}`;
 }
 
 type FilterOp =
