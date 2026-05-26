@@ -44,6 +44,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { type ByteaDisplayMode, formatBytea, parseByteaInput, stripHexPrefix } from "@/lib/bytea";
+import { isByteaColumn, isGeoColumn } from "@/lib/columnTypes";
 import { cn } from "@/lib/utils";
 import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
 import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
@@ -70,18 +71,6 @@ import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap/Geometry
 import { ColumnResizeHandle } from "./ResultsGrid/ColumnResizeHandle";
 import { measureColumnWidths } from "./ResultsGrid/measureColumnWidths";
 import { useColumnResize } from "./ResultsGrid/useColumnResize";
-
-const GEO_TYPES = new Set(["geometry", "geography"]);
-
-function isGeoColumn(kind: DbKind, c: Column): boolean {
-  return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
-}
-
-function isByteaColumn(kind: DbKind, c: Column): boolean {
-  // BYTEA is Postgres-only here — the MySQL `BLOB` family doesn't share the
-  // `\xHEX` wire shape and would need its own decoder.
-  return kind === "postgres" && c.type_name.toUpperCase() === "BYTEA";
-}
 
 type GeomDecoded = DecodedGeometry & { coordsJson: string };
 

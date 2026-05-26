@@ -18,6 +18,13 @@ use crate::error::{AppError, AppResult};
 use crate::storage::{AppSettings, DbKind, SavedConnection};
 use crate::AppState;
 
+/// Rows per multi-row `INSERT INTO ... VALUES (...), (...)` statement emitted by
+/// the native dumper. Trades memory pressure (per-chunk string + bind buffer)
+/// against round-trip overhead. 500 keeps a single chunk well under common
+/// `max_allowed_packet` / proto limits while still amortising the per-statement
+/// cost; tune here if you hit OOM on very wide tables.
+const DUMP_CHUNK_SIZE: usize = 500;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -1004,9 +1011,8 @@ async fn dump_table_data(
         DbKind::Mongo => unreachable!("dump_table_data only runs for SQL engines"),
     };
 
-    let chunk_size = 500usize;
     let mut rows_done: u64 = 0;
-    for chunk in result.rows.chunks(chunk_size) {
+    for chunk in result.rows.chunks(DUMP_CHUNK_SIZE) {
         if cancel.load(Ordering::SeqCst) {
             return Err(AppError::Canceled);
         }

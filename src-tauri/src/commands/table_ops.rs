@@ -1,8 +1,10 @@
 use sqlx::Row;
 use tauri::State;
 
+use crate::commands::ddl_util::{quote_ident, validate_ident_chars};
 use crate::engine::SqlPoolView;
 use crate::error::{AppError, AppResult};
+use crate::storage::DbKind;
 use crate::AppState;
 
 #[tauri::command]
@@ -67,7 +69,8 @@ pub async fn get_primary_key_columns(
         }
         Some(SqlPoolView::Sqlite(pool)) => {
             let _ = schema;
-            let pragma = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
+            validate_ident_chars(&table)?;
+            let pragma = format!("PRAGMA table_info({})", quote_ident(&table, DbKind::Sqlite));
             let rows = sqlx::query(&pragma).fetch_all(pool).await?;
             let mut cols: Vec<(i64, String)> = rows
                 .into_iter()

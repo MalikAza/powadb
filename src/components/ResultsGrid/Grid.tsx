@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/context-menu";
 import { onActivateKey } from "@/lib/a11y";
 import { type ByteaDisplayMode, formatBytea } from "@/lib/bytea";
+import { isByteaColumn, isGeoColumn } from "@/lib/columnTypes";
 import { cn } from "@/lib/utils";
 import type { DiagFk } from "../../ipc";
 import type { Column, DbKind, QueryResult } from "../../types";
@@ -49,16 +50,6 @@ type Props = {
   byteaModes?: Record<string, ByteaDisplayMode>;
   onByteaModeChange?: (colName: string, mode: ByteaDisplayMode) => void;
 };
-
-const GEO_TYPES = new Set(["geometry", "geography"]);
-
-function isGeoColumn(kind: DbKind, c: Column): boolean {
-  return kind === "postgres" && GEO_TYPES.has(c.type_name.toLowerCase());
-}
-
-function isByteaColumn(kind: DbKind, c: Column): boolean {
-  return kind === "postgres" && c.type_name.toUpperCase() === "BYTEA";
-}
 
 function buildRowData(
   columns: Column[],

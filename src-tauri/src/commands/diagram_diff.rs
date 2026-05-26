@@ -16,11 +16,9 @@ use crate::AppState;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DocColumn {
-    // The frontend carries the stable column id through the JSON; the diff
-    // engine doesn't need it (it matches by original_name/name) so allow dead.
-    #[allow(dead_code)]
-    #[serde(default)]
-    pub id: Option<String>,
+    // The frontend carries a stable column `id` through the JSON; the diff
+    // engine matches by `original_name`/`name` and ignores it, so it's not
+    // deserialized here. Serde will silently drop the extra field.
     pub name: String,
     #[serde(default, rename = "originalName")]
     pub original_name: Option<String>,
@@ -920,7 +918,6 @@ mod tests {
         pk: bool,
     ) -> DocColumn {
         DocColumn {
-            id: None,
             name: name.into(),
             original_name: original.map(str::to_string),
             data_type: ty.into(),

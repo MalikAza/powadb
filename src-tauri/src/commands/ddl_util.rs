@@ -1,4 +1,21 @@
+use crate::error::{AppError, AppResult};
 use crate::storage::DbKind;
+
+/// Reject identifiers containing NULs or other control characters before we
+/// embed them in DDL. These can never appear in a legitimate Postgres/MySQL/
+/// SQLite identifier (per their lexers) and they're the main way an
+/// adversarial input could prematurely terminate or hijack a quoted string.
+pub fn validate_ident_chars(name: &str) -> AppResult<()> {
+    if name.is_empty() {
+        return Err(AppError::Other("identifier is empty".into()));
+    }
+    if name.chars().any(|c| c == '\0' || c.is_control()) {
+        return Err(AppError::Other(
+            "identifier contains control characters".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// Quote an identifier (table/column/constraint name) for the given engine,
 /// escaping any embedded quote characters per engine convention.
@@ -68,5 +85,29 @@ mod tests {
     #[test]
     fn quote_table_sqlite_ignores_schema() {
         assert_eq!(quote_table("main", "users", DbKind::Sqlite), "\"users\"");
+    }
+
+    #[test]
+    fn validate_ident_chars_accepts_normal_names() {
+        assert!(validate_ident_chars("users").is_ok());
+        assert!(validate_ident_chars("we\"ird").is_ok());
+        assert!(validate_ident_chars("schema.with_dot").is_ok());
+    }
+
+    #[test]
+    fn validate_ident_chars_rejects_empty() {
+        assert!(validate_ident_chars("").is_err());
+    }
+
+    #[test]
+    fn validate_ident_chars_rejects_nul() {
+        assert!(validate_ident_chars("users\0evil").is_err());
+    }
+
+    #[test]
+    fn validate_ident_chars_rejects_control_chars() {
+        assert!(validate_ident_chars("users\nDROP TABLE x").is_err());
+        assert!(validate_ident_chars("users\r").is_err());
+        assert!(validate_ident_chars("users\t").is_err());
     }
 }
