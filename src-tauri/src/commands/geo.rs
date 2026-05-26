@@ -29,8 +29,9 @@ pub async fn geometry_to_geojson(
     let pool = match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(p)) => p.clone(),
         _ => {
-            return Err(AppError::UnsupportedType(
-                "PostGIS geometry conversion is only supported on Postgres".into(),
+            return Err(AppError::unsupported(
+                "PostGIS geometry conversion",
+                handle.kind().as_str(),
             ));
         }
     };
@@ -58,8 +59,9 @@ pub async fn geometries_to_geojson(
     let pool = match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(p)) => p.clone(),
         _ => {
-            return Err(AppError::UnsupportedType(
-                "PostGIS geometry conversion is only supported on Postgres".into(),
+            return Err(AppError::unsupported(
+                "PostGIS geometry conversion",
+                handle.kind().as_str(),
             ));
         }
     };
@@ -110,8 +112,9 @@ pub async fn decode_geometries(
     let pool = match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(p)) => p.clone(),
         _ => {
-            return Err(AppError::UnsupportedType(
-                "PostGIS geometry decoding is only supported on Postgres".into(),
+            return Err(AppError::unsupported(
+                "PostGIS geometry decoding",
+                handle.kind().as_str(),
             ));
         }
     };

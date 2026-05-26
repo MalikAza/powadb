@@ -85,8 +85,50 @@ pub enum AppError {
     )]
     SshHostKeyMismatch { expected: String, actual: String },
 
+    /// The requested operation isn't supported by the engine the caller has
+    /// open (e.g. asking Mongo for a `CREATE DATABASE`). The frontend gates
+    /// most of these via `Capabilities`; this variant exists for the rare
+    /// path that slips through. `engine` is the lowercase `DbKind` name.
+    #[error("{feature} is not supported on {engine}")]
+    Unsupported { feature: String, engine: String },
+
+    /// Something about the catalog or introspection result we read was
+    /// missing or shaped unexpectedly. Distinct from `Sqlx` (the query
+    /// itself failed) and `BadInput` (the caller sent us bad data).
+    #[error("schema: {0}")]
+    Schema(String),
+
+    /// User- or IPC-supplied input failed validation before we ever
+    /// touched the database. `field` names the offending parameter so the
+    /// frontend can highlight it.
+    #[error("invalid {field}: {reason}")]
+    BadInput { field: String, reason: String },
+
     #[error("{0}")]
     Other(String),
+}
+
+impl AppError {
+    /// `AppError::Unsupported` with `Into<String>` ergonomics at call sites.
+    pub fn unsupported(feature: impl Into<String>, engine: impl Into<String>) -> Self {
+        Self::Unsupported {
+            feature: feature.into(),
+            engine: engine.into(),
+        }
+    }
+
+    /// `AppError::Schema` shorthand.
+    pub fn schema(msg: impl Into<String>) -> Self {
+        Self::Schema(msg.into())
+    }
+
+    /// `AppError::BadInput` shorthand.
+    pub fn bad_input(field: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self::BadInput {
+            field: field.into(),
+            reason: reason.into(),
+        }
+    }
 }
 
 impl Serialize for AppError {
@@ -171,5 +213,23 @@ mod tests {
         }
         let s = inner().unwrap_err().to_string();
         assert!(s.starts_with("io error:"), "got {s}");
+    }
+
+    #[test]
+    fn unsupported_renders_feature_and_engine() {
+        let e = AppError::unsupported("create_database", "mongo");
+        assert_eq!(e.to_string(), "create_database is not supported on mongo");
+    }
+
+    #[test]
+    fn schema_and_bad_input_render() {
+        assert_eq!(
+            AppError::schema("missing column_name on row 4").to_string(),
+            "schema: missing column_name on row 4"
+        );
+        assert_eq!(
+            AppError::bad_input("default_value", "contains semicolon").to_string(),
+            "invalid default_value: contains semicolon"
+        );
     }
 }

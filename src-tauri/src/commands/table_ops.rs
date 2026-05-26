@@ -86,8 +86,9 @@ pub async fn get_primary_key_columns(
             cols.sort_by_key(|(pk, _)| *pk);
             Ok(cols.into_iter().map(|(_, n)| n).collect())
         }
-        None => Err(AppError::Other(
-            "get_primary_key_columns requires a SQL engine".into(),
+        None => Err(AppError::unsupported(
+            "get_primary_key_columns",
+            handle.kind().as_str(),
         )),
     }
 }
@@ -126,6 +127,6 @@ pub async fn execute_dml(
             let r = q.execute(pool).await?;
             Ok(r.rows_affected())
         }
-        None => Err(AppError::Other("execute_dml requires a SQL engine".into())),
+        None => Err(AppError::unsupported("execute_dml", handle.kind().as_str())),
     }
 }

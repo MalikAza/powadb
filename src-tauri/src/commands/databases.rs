@@ -9,21 +9,24 @@ use crate::AppState;
 fn validate_db_name(name: &str) -> AppResult<()> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(AppError::Other("database name is empty".into()));
+        return Err(AppError::bad_input("name", "database name is empty"));
     }
     if trimmed.len() > 63 {
-        return Err(AppError::Other(
-            "database name exceeds 63 characters".into(),
+        return Err(AppError::bad_input(
+            "name",
+            "database name exceeds 63 characters",
         ));
     }
     if trimmed.chars().any(|c| c.is_control()) {
-        return Err(AppError::Other(
-            "database name may not contain control characters".into(),
+        return Err(AppError::bad_input(
+            "name",
+            "database name may not contain control characters",
         ));
     }
     if trimmed.contains('"') || trimmed.contains('`') {
-        return Err(AppError::Other(
-            "database name may not contain quote characters".into(),
+        return Err(AppError::bad_input(
+            "name",
+            "database name may not contain quote characters",
         ));
     }
     Ok(())
@@ -47,14 +50,10 @@ pub async fn create_database(
     validate_db_name(&name)?;
     let (conn, _, _, _) = resolve_connection(&state, &connection_id).await?;
     if matches!(conn.kind, DbKind::Sqlite) {
-        return Err(AppError::Other(
-            "creating databases is not supported for SQLite".into(),
-        ));
+        return Err(AppError::unsupported("create_database", "sqlite"));
     }
     if matches!(conn.kind, DbKind::Mongo) {
-        return Err(AppError::Other(
-            "MongoDB creates databases implicitly on first write".into(),
-        ));
+        return Err(AppError::unsupported("create_database", "mongo"));
     }
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
     let stmt = format!(
@@ -70,8 +69,9 @@ pub async fn create_database(
         }
         Some(SqlPoolView::Sqlite(_)) => unreachable!("sqlite handled above"),
         None => {
-            return Err(AppError::Other(
-                "create_database requires a SQL engine".into(),
+            return Err(AppError::unsupported(
+                "create_database",
+                handle.kind().as_str(),
             ))
         }
     }
@@ -87,14 +87,13 @@ pub async fn drop_database(
     validate_db_name(&name)?;
     let (conn, _, _, _) = resolve_connection(&state, &connection_id).await?;
     if matches!(conn.kind, DbKind::Sqlite) {
-        return Err(AppError::Other(
-            "dropping databases is not supported for SQLite".into(),
-        ));
+        return Err(AppError::unsupported("drop_database", "sqlite"));
     }
     let target = name.trim();
     if target == conn.database {
-        return Err(AppError::Other(
-            "cannot drop the database the connection is currently using".into(),
+        return Err(AppError::bad_input(
+            "name",
+            "cannot drop the database the connection is currently using",
         ));
     }
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
@@ -118,8 +117,9 @@ pub async fn drop_database(
         }
         Some(SqlPoolView::Sqlite(_)) => unreachable!("sqlite handled above"),
         None => {
-            return Err(AppError::Other(
-                "drop_database requires a SQL engine".into(),
+            return Err(AppError::unsupported(
+                "drop_database",
+                handle.kind().as_str(),
             ))
         }
     }

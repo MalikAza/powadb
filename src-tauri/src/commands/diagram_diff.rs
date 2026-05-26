@@ -430,13 +430,18 @@ pub async fn diff_diagram(
     doc_json: String,
 ) -> AppResult<DiffResult> {
     let doc: Doc = serde_json::from_str(&doc_json)
-        .map_err(|e| AppError::Other(format!("invalid diagram doc: {e}")))?;
+        .map_err(|e| AppError::bad_input("diagram doc", e.to_string()))?;
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
     let live = match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(pool)) => introspect_postgres(pool, None).await?,
         Some(SqlPoolView::Mysql(pool)) => introspect_mysql(pool).await?,
         Some(SqlPoolView::Sqlite(pool)) => introspect_sqlite(pool).await?,
-        None => return Err(AppError::Other("diff_diagram requires a SQL engine".into())),
+        None => {
+            return Err(AppError::unsupported(
+                "diff_diagram",
+                handle.kind().as_str(),
+            ))
+        }
     };
     Ok(DiffResult {
         ops: compute_diff(&doc, &live),
@@ -454,7 +459,7 @@ pub async fn execute_ddl(
         Some(SqlPoolView::Postgres(pool)) => execute_pg(pool, &sql).await,
         Some(SqlPoolView::Mysql(pool)) => execute_mysql(pool, &sql).await,
         Some(SqlPoolView::Sqlite(pool)) => execute_sqlite(pool, &sql).await,
-        None => Err(AppError::Other("execute_ddl requires a SQL engine".into())),
+        None => Err(AppError::unsupported("execute_ddl", handle.kind().as_str())),
     }
 }
 
@@ -659,7 +664,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 quote_ident(from, kind),
                 quote_ident(to, kind),
             )]),
-            DbKind::Mongo => unreachable!("Mongo has no DDL"),
+            DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
         },
         DiffOp::AddColumn {
             schema,
@@ -721,10 +726,11 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 quote_ident(column, kind),
                 new_type.trim(),
             )]),
-            DbKind::Sqlite => Err(AppError::Other(format!(
-                "SQLite cannot ALTER COLUMN TYPE on \"{table}\".\"{column}\"; rebuild the table manually for now"
-            ))),
-            DbKind::Mongo => unreachable!("Mongo has no DDL"),
+            DbKind::Sqlite => Err(AppError::unsupported(
+                format!("ALTER COLUMN TYPE on \"{table}\".\"{column}\" (rebuild the table manually for now)"),
+                "sqlite",
+            )),
+            DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
         },
         DiffOp::AlterColumnNullable {
             schema,
@@ -738,14 +744,20 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 quote_ident(column, kind),
                 if *nullable { "DROP" } else { "SET" },
             )]),
-            DbKind::Mysql => Err(AppError::Other(format!(
-                "MySQL requires the full column definition to change nullability; \
-                 alter the column type in the editor and re-apply (column {column})"
-            ))),
-            DbKind::Sqlite => Err(AppError::Other(format!(
-                "SQLite cannot change nullability on \"{table}\".\"{column}\" without a table rebuild"
-            ))),
-            DbKind::Mongo => unreachable!("Mongo has no DDL"),
+            DbKind::Mysql => Err(AppError::unsupported(
+                format!(
+                    "isolated NULL/NOT NULL change on column {column} \
+                     (MySQL requires the full column definition — alter the type in the editor and re-apply)"
+                ),
+                "mysql",
+            )),
+            DbKind::Sqlite => Err(AppError::unsupported(
+                format!(
+                    "nullability change on \"{table}\".\"{column}\" (rebuild the table manually for now)"
+                ),
+                "sqlite",
+            )),
+            DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
         },
         DiffOp::AlterColumnDefault {
             schema,
@@ -779,10 +791,13 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                     quote_ident(column, kind),
                 ),
             }]),
-            DbKind::Sqlite => Err(AppError::Other(format!(
-                "SQLite cannot change DEFAULT on \"{table}\".\"{column}\" without a table rebuild"
-            ))),
-            DbKind::Mongo => unreachable!("Mongo has no DDL"),
+            DbKind::Sqlite => Err(AppError::unsupported(
+                format!(
+                    "DEFAULT change on \"{table}\".\"{column}\" (rebuild the table manually for now)"
+                ),
+                "sqlite",
+            )),
+            DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
         },
         DiffOp::AddFk {
             schema,
@@ -796,10 +811,9 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
             on_delete,
         } => {
             if matches!(kind, DbKind::Sqlite) {
-                return Err(AppError::Other(
-                    "SQLite can't ADD FOREIGN KEY on an existing table; create the FK via a \
-                     table rebuild or set it inline at CREATE TABLE time"
-                        .into(),
+                return Err(AppError::unsupported(
+                    "ADD FOREIGN KEY on an existing table (use inline FK at CREATE TABLE time or rebuild)",
+                    "sqlite",
                 ));
             }
             let constraint = constraint_name
@@ -840,11 +854,11 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 quote_table(schema, table, kind),
                 quote_ident(constraint_name, kind),
             )]),
-            DbKind::Sqlite => Err(AppError::Other(
-                "SQLite can't DROP FOREIGN KEY on an existing table; rebuild the table manually"
-                    .into(),
+            DbKind::Sqlite => Err(AppError::unsupported(
+                "DROP FOREIGN KEY on an existing table (rebuild the table manually)",
+                "sqlite",
             )),
-            DbKind::Mongo => unreachable!("Mongo has no DDL"),
+            DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
         },
     }
 }

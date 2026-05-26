@@ -522,7 +522,12 @@ fn parse_hstore(bytes: &[u8]) -> Option<Value> {
         return None;
     }
     let mut p = 4usize;
-    let mut o = serde_json::Map::with_capacity(count as usize);
+    // Cap the capacity hint at what the buffer could possibly hold (each entry
+    // is at least 8 bytes: 4-byte key_len + 4-byte val_len). Without this an
+    // adversarial server could ship `count = i32::MAX` and we'd ask the
+    // allocator for ~2 GB before the loop validates anything.
+    let capacity = (count as usize).min(bytes.len() / 8);
+    let mut o = serde_json::Map::with_capacity(capacity);
     for _ in 0..count {
         if p + 4 > bytes.len() {
             return None;
@@ -1135,6 +1140,15 @@ mod tests {
         b.extend_from_slice(b"k");
         b.extend_from_slice(&1i32.to_be_bytes());
         b.extend_from_slice(b"v");
+        assert!(parse_hstore(&b).is_none());
+    }
+
+    #[test]
+    fn hstore_ignores_inflated_count() {
+        // An adversarial server claims i32::MAX entries but only ships the
+        // 4-byte header. The decoder must not pre-allocate gigabytes; the
+        // bounds check inside the loop is what protects us.
+        let b = i32::MAX.to_be_bytes();
         assert!(parse_hstore(&b).is_none());
     }
 

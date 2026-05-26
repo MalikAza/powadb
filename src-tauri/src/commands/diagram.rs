@@ -81,8 +81,9 @@ pub async fn introspect_diagram(
         Some(SqlPoolView::Postgres(pool)) => introspect_postgres(pool, schema.as_deref()).await,
         Some(SqlPoolView::Mysql(pool)) => introspect_mysql(pool).await,
         Some(SqlPoolView::Sqlite(pool)) => introspect_sqlite(pool).await,
-        None => Err(AppError::Other(
-            "introspect_diagram requires a SQL engine".into(),
+        None => Err(AppError::unsupported(
+            "introspect_diagram",
+            handle.kind().as_str(),
         )),
     }
 }
@@ -615,8 +616,9 @@ pub async fn list_foreign_keys(
         Some(SqlPoolView::Postgres(pool)) => list_fks_postgres(pool, &schema, &table).await,
         Some(SqlPoolView::Mysql(pool)) => list_fks_mysql(pool, &table).await,
         Some(SqlPoolView::Sqlite(pool)) => list_fks_sqlite(pool, &table).await,
-        None => Err(AppError::Other(
-            "list_foreign_keys requires a SQL engine".into(),
+        None => Err(AppError::unsupported(
+            "list_foreign_keys",
+            handle.kind().as_str(),
         )),
     }
 }
