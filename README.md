@@ -60,6 +60,60 @@ The app is **not** signed with an Apple Developer ID, so Gatekeeper will quarant
 
 Subsequent in-app updates don't trigger this prompt again — the Tauri updater downloads outside of Gatekeeper's web-download path.
 
+## Upgrading from 0.10
+
+The next release reworks how PowaDB stores secrets and how its local SQLite store is migrated. Two things you should know before you upgrade:
+
+### 1. Saved passwords move to the OS keychain
+
+Connection passwords are no longer stored in plaintext inside `powadb.db`. On first launch after upgrading, PowaDB walks every saved connection that still has a plaintext password and lifts it into the platform credential store:
+
+| Platform | Backend |
+| :--- | :--- |
+| macOS | Keychain (service `com.aza.powadb`) |
+| Windows | Credential Manager |
+| Linux | libsecret / secret-service |
+
+**On macOS,** the first time the app reads any saved password (typically the first time you click a connection after upgrading), the OS shows a Keychain prompt asking whether to allow `PowaDB` to access `com.aza.powadb`. **Click "Always Allow."** If you only click "Allow," you'll get the same prompt on every subsequent connect.
+
+If you ever want to inspect or revoke the stored credentials, open **Keychain Access** and search for `com.aza.powadb` — each saved connection appears as an entry with account `connection-<uuid>`.
+
+#### Fallback (CI / headless Linux / locked Keychain)
+
+If the keychain backend isn't reachable, PowaDB falls back to the legacy `password` column in `powadb.db` and prints a loud warning to stderr. The app keeps working, but credentials are again stored in plaintext — see the warning for guidance on installing a keychain backend.
+
+### 2. Pre-migration backup of `powadb.db`
+
+The first time a newly-installed version opens your `powadb.db`, **PowaDB copies the file to `powadb.db.backup-pre-<version>`** alongside it — before any schema or password migration runs. One backup is created per version you upgrade *to*; subsequent launches on the same version are no-ops.
+
+If a release ever breaks your local store, you can roll back: install the older PowaDB binary, replace `powadb.db` with the backup, and you're back to the pre-upgrade state.
+
+#### Where the files live
+
+| OS | Path |
+| :--- | :--- |
+| macOS | `~/Library/Application Support/com.aza.powadb/powadb.db` (and `…/powadb.db.backup-pre-<version>`) |
+| Linux | `~/.local/share/com.aza.powadb/powadb.db` |
+| Windows | `%APPDATA%\com.aza.powadb\powadb.db` |
+
+#### Rolling back
+
+1. **Quit** PowaDB.
+2. Move the current `powadb.db` aside (don't delete it — you may want it for diagnostics):
+   ```bash
+   mv ~/Library/Application\ Support/com.aza.powadb/powadb.db \
+      ~/Library/Application\ Support/com.aza.powadb/powadb.db.broken
+   ```
+3. Copy the backup back into place:
+   ```bash
+   cp ~/Library/Application\ Support/com.aza.powadb/powadb.db.backup-pre-<version> \
+      ~/Library/Application\ Support/com.aza.powadb/powadb.db
+   ```
+4. Reinstall the previous PowaDB version from the [Releases](https://github.com/MalikAza/powadb/releases) page.
+5. **Optional cleanup:** if the upgrade had already migrated passwords into your keychain, those entries stay behind. Open **Keychain Access**, search `com.aza.powadb`, and delete any `connection-<uuid>` entries you don't want lingering.
+
+The backup files are safe to delete once you're confident the upgrade is stable — they're just a one-time safety net.
+
 ## Build from source
 
 ### Prerequisites

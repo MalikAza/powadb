@@ -84,6 +84,16 @@ impl Storage {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        // One-shot snapshot of the existing DB *before* this binary's
+        // migrations touch it, so a user can roll back to the previous
+        // PowaDB version without losing their saved connections / snippets
+        // / diagrams. The backup is keyed by the running app version, so a
+        // single upgrade chain produces one file and subsequent launches
+        // on the same version are no-ops. See README → "Upgrading".
+        if let Err(e) = backup_before_migrations(&path) {
+            eprintln!("storage: pre-migration backup failed: {e}");
+        }
+
         let opts = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true);
@@ -694,6 +704,40 @@ pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Take a one-time snapshot of `powadb.db` before this build's migrations
+/// run, so a user can downgrade to the previous PowaDB version and keep
+/// their saved connections / snippets / diagrams.
+///
+/// The backup file is named `powadb.db.backup-pre-{CARGO_PKG_VERSION}` and
+/// sits next to the DB. We skip if the source file doesn't exist (fresh
+/// install) and skip if the destination already exists (already migrated
+/// once on this version).
+///
+/// Errors are returned to the caller but treated as non-fatal there — a
+/// failed backup must not prevent the app from opening.
+fn backup_before_migrations(path: &std::path::Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let backup_name = format!(
+        "{}.backup-pre-{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("powadb.db"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    let backup_path = path.with_file_name(backup_name);
+    if backup_path.exists() {
+        return Ok(());
+    }
+    std::fs::copy(path, &backup_path)?;
+    eprintln!(
+        "storage: snapshotted DB to {} before running migrations (safe to delete once you're confident the upgrade is healthy)",
+        backup_path.display()
+    );
+    Ok(())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default)]
@@ -806,6 +850,39 @@ mod tests {
         // Opening again on the same file must succeed (CREATE TABLE IF NOT EXISTS).
         let s2 = Storage::open(path).await.unwrap();
         assert!(s2.list().await.unwrap().is_empty());
+    }
+
+    #[test]
+    fn backup_skips_when_source_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.db");
+        // No source file → no-op, no backup created.
+        backup_before_migrations(&path).unwrap();
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(entries.is_empty(), "got {entries:?}");
+    }
+
+    #[test]
+    fn backup_creates_snapshot_with_version_suffix_once() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.db");
+        std::fs::write(&path, b"original-bytes").unwrap();
+
+        backup_before_migrations(&path).unwrap();
+        let expected =
+            path.with_file_name(format!("test.db.backup-pre-{}", env!("CARGO_PKG_VERSION")));
+        assert!(expected.exists(), "backup not created at {expected:?}");
+        assert_eq!(std::fs::read(&expected).unwrap(), b"original-bytes");
+
+        // Second pass with the source mutated: backup should NOT be
+        // overwritten — the contract is "snapshot the state we found on
+        // first upgrade", not "always mirror the current file".
+        std::fs::write(&path, b"mutated-bytes").unwrap();
+        backup_before_migrations(&path).unwrap();
+        assert_eq!(std::fs::read(&expected).unwrap(), b"original-bytes");
     }
 
     #[tokio::test]
