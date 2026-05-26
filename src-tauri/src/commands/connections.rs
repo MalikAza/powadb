@@ -266,3 +266,79 @@ pub async fn resolve_connection(
     let ssh = state.storage.get_ssh_config(connection_id).await?;
     Ok((conn, pw, wg, ssh))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn read_text_file_returns_contents_under_the_limit() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("wg.conf");
+        tokio::fs::write(&path, "[Interface]\nPrivateKey = …\n")
+            .await
+            .unwrap();
+        let out = read_text_file(path.to_string_lossy().to_string())
+            .await
+            .unwrap();
+        assert!(out.starts_with("[Interface]"));
+    }
+
+    #[tokio::test]
+    async fn read_text_file_refuses_files_over_one_mib() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("huge.bin");
+        tokio::fs::write(&path, vec![0u8; 1024 * 1024 + 1])
+            .await
+            .unwrap();
+        let err = read_text_file(path.to_string_lossy().to_string())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("1 MiB"), "got {err}");
+    }
+
+    #[tokio::test]
+    async fn read_text_file_errors_on_missing_path() {
+        let err = read_text_file("/nonexistent/path/that/does/not/exist.txt".into())
+            .await
+            .unwrap_err();
+        // The error message must carry the path the caller asked for so the
+        // frontend toast can be meaningful.
+        assert!(err.to_string().contains("/nonexistent/"), "got {err}");
+    }
+
+    #[tokio::test]
+    async fn write_text_file_creates_parent_dirs() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("nested").join("a").join("b.txt");
+        write_text_file(path.to_string_lossy().to_string(), "hello".into())
+            .await
+            .unwrap();
+        let back = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(back, "hello");
+    }
+
+    #[tokio::test]
+    async fn write_binary_file_decodes_base64_then_writes() {
+        // "PowaDB" — 6 bytes, base64 is "UG93YURC".
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("out.bin");
+        write_binary_file(path.to_string_lossy().to_string(), "UG93YURC".into())
+            .await
+            .unwrap();
+        let back = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(back, b"PowaDB");
+    }
+
+    #[tokio::test]
+    async fn write_binary_file_rejects_invalid_base64() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("bad.bin");
+        let err = write_binary_file(path.to_string_lossy().to_string(), "not!base64!".into())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("base64"), "got {err}");
+        assert!(!path.exists(), "no file should be created on a bad payload");
+    }
+}

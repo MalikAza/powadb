@@ -19,15 +19,23 @@ pub async fn save_settings(
     Ok(settings)
 }
 
+/// Refuse anything that isn't a plain http/https URL. This is the guard
+/// that keeps `open_external` from being abused to launch arbitrary local
+/// handlers (`file://`, `vscode://`, custom URI schemes registered by other
+/// apps, …) when the IPC layer is reached from a compromised frontend.
+fn validate_external_url(url: &str) -> AppResult<()> {
+    if url.starts_with("https://") || url.starts_with("http://") {
+        Ok(())
+    } else {
+        Err(AppError::Other(format!(
+            "refusing to open non-http url: {url}"
+        )))
+    }
+}
+
 #[tauri::command]
 pub async fn open_external(url: String) -> AppResult<()> {
-    // Only allow http(s) URLs — refuse anything else so this can't be abused
-    // to launch arbitrary local handlers.
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(AppError::Other(format!(
-            "refusing to open non-http url: {url}"
-        )));
-    }
+    validate_external_url(&url)?;
 
     #[cfg(target_os = "macos")]
     let mut cmd = std::process::Command::new("open");
@@ -44,4 +52,35 @@ pub async fn open_external(url: String) -> AppResult<()> {
         .spawn()
         .map_err(|e| AppError::Other(format!("failed to open url: {e}")))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_url_accepts_http_and_https() {
+        assert!(validate_external_url("http://example.com").is_ok());
+        assert!(validate_external_url("https://example.com/path?q=1").is_ok());
+    }
+
+    #[test]
+    fn validate_url_rejects_non_http_schemes() {
+        for bad in [
+            "file:///etc/passwd",
+            "vscode://open?uri=...",
+            "javascript:alert(1)",
+            "data:text/html,<script>1</script>",
+            "ssh://user@host",
+            "",
+            "  http://leading-whitespace.com",
+            "example.com", // no scheme at all
+        ] {
+            let err = validate_external_url(bad).unwrap_err();
+            assert!(
+                err.to_string().contains(bad) || bad.is_empty(),
+                "expected the url in the error for {bad:?}, got {err}"
+            );
+        }
+    }
 }

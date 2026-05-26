@@ -243,3 +243,49 @@ fn engine_query_history_text(q: &EngineQuery) -> String {
             .unwrap_or_else(|_| format!("<unserializable mongo op: {op:?}>")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::MongoOp;
+    use serde_json::json;
+
+    #[test]
+    fn history_text_passes_sql_through_verbatim() {
+        let q = EngineQuery::Sql("SELECT 1 -- comment".into());
+        assert_eq!(engine_query_history_text(&q), "SELECT 1 -- comment");
+    }
+
+    #[test]
+    fn history_text_serializes_mongo_op_as_json() {
+        let q = EngineQuery::Mongo(Box::new(MongoOp::Find {
+            collection: "users".into(),
+            database: None,
+            filter: json!({ "active": true }),
+            projection: None,
+            limit: Some(10),
+            skip: None,
+            sort: None,
+        }));
+        let text = engine_query_history_text(&q);
+        // Must round-trip back to a MongoOp so the history view's
+        // "re-run" affordance keeps working.
+        let back: MongoOp = serde_json::from_str(&text).unwrap();
+        assert!(matches!(back, MongoOp::Find { .. }));
+        assert!(text.contains("\"users\""));
+        assert!(text.contains("\"active\""));
+    }
+
+    #[test]
+    fn history_text_for_run_command_is_a_one_liner() {
+        let q = EngineQuery::Mongo(Box::new(MongoOp::RunCommand {
+            value: json!({ "ping": 1 }),
+        }));
+        let text = engine_query_history_text(&q);
+        assert!(
+            !text.contains('\n'),
+            "history text must stay on one line: {text}"
+        );
+        assert!(text.contains("\"ping\""));
+    }
+}

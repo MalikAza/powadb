@@ -69,22 +69,7 @@ pub async fn get_primary_key_columns(
         }
         Some(SqlPoolView::Sqlite(pool)) => {
             let _ = schema;
-            validate_ident_chars(&table)?;
-            let pragma = format!("PRAGMA table_info({})", quote_ident(&table, DbKind::Sqlite));
-            let rows = sqlx::query(&pragma).fetch_all(pool).await?;
-            let mut cols: Vec<(i64, String)> = rows
-                .into_iter()
-                .filter_map(|r| {
-                    let pk: i64 = r.try_get("pk").ok()?;
-                    if pk == 0 {
-                        return None;
-                    }
-                    let name: String = r.try_get("name").ok()?;
-                    Some((pk, name))
-                })
-                .collect();
-            cols.sort_by_key(|(pk, _)| *pk);
-            Ok(cols.into_iter().map(|(_, n)| n).collect())
+            pk_columns_sqlite(pool, &table).await
         }
         None => Err(AppError::unsupported(
             "get_primary_key_columns",
@@ -128,5 +113,120 @@ pub async fn execute_dml(
             Ok(r.rows_affected())
         }
         None => Err(AppError::unsupported("execute_dml", handle.kind().as_str())),
+    }
+}
+
+/// SQLite-specific implementation of `get_primary_key_columns`. Lives here as
+/// a free function so it can be exercised directly against an in-memory pool
+/// in tests, without the Tauri `State` extractor that the command requires.
+async fn pk_columns_sqlite(pool: &sqlx::SqlitePool, table: &str) -> AppResult<Vec<String>> {
+    validate_ident_chars(table)?;
+    let pragma = format!("PRAGMA table_info({})", quote_ident(table, DbKind::Sqlite));
+    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    let mut cols: Vec<(i64, String)> = rows
+        .into_iter()
+        .filter_map(|r| {
+            let pk: i64 = r.try_get("pk").ok()?;
+            if pk == 0 {
+                return None;
+            }
+            let name: String = r.try_get("name").ok()?;
+            Some((pk, name))
+        })
+        .collect();
+    cols.sort_by_key(|(pk, _)| *pk);
+    Ok(cols.into_iter().map(|(_, n)| n).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn fixture() -> sqlx::SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE authors (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE order_items (
+                order_id INTEGER NOT NULL,
+                line_no  INTEGER NOT NULL,
+                sku      TEXT NOT NULL,
+                PRIMARY KEY (order_id, line_no)
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE TABLE no_pk (x TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn returns_single_pk_column() {
+        let pool = fixture().await;
+        let pks = pk_columns_sqlite(&pool, "authors").await.unwrap();
+        assert_eq!(pks, vec!["id".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn returns_composite_pk_in_definition_order() {
+        let pool = fixture().await;
+        let pks = pk_columns_sqlite(&pool, "order_items").await.unwrap();
+        assert_eq!(pks, vec!["order_id".to_string(), "line_no".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn returns_empty_vec_for_table_without_pk() {
+        let pool = fixture().await;
+        let pks = pk_columns_sqlite(&pool, "no_pk").await.unwrap();
+        assert!(pks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_table_name_with_control_chars() {
+        let pool = fixture().await;
+        let err = pk_columns_sqlite(&pool, "authors\0; DROP TABLE authors")
+            .await
+            .unwrap_err();
+        // Validation must trip before any PRAGMA is built, so the table
+        // is left intact.
+        assert!(err.to_string().contains("control"), "got {err}");
+        assert!(
+            !pk_columns_sqlite(&pool, "authors")
+                .await
+                .unwrap()
+                .is_empty(),
+            "authors table must still exist after rejected lookup"
+        );
+    }
+
+    #[tokio::test]
+    async fn quotes_unusual_table_names() {
+        let pool = fixture().await;
+        sqlx::query("CREATE TABLE \"weird\"\"name\" (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let pks = pk_columns_sqlite(&pool, "weird\"name").await.unwrap();
+        assert_eq!(pks, vec!["id".to_string()]);
     }
 }
