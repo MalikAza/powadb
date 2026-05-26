@@ -43,6 +43,7 @@ import {
   geomKey,
   INITIAL_EDIT_OPS,
   pkLabelFor,
+  rowKey,
 } from "./helpers";
 import { useBrowseColumnResize } from "./hooks/useBrowseColumnResize";
 import { useBrowseDerived } from "./hooks/useBrowseDerived";
@@ -264,7 +265,7 @@ export function BrowseGrid({
             )}
             {result.rows.map((row, rowIdx) => (
               <BrowseBodyRow
-                key={rowIdx}
+                key={rowKey(pkColIndexes, row, rowIdx)}
                 row={row}
                 rowIdx={rowIdx}
                 cols={cols}
@@ -433,7 +434,10 @@ function BrowseHeaderRow({
           />
         )}
       </th>
-      <th className="border-b border-r border-border px-2 py-1.5 text-left"></th>
+      <th
+        aria-label="Row actions"
+        className="border-b border-r border-border px-2 py-1.5 text-left"
+      ></th>
       {cols.map((c, colIdx) => {
         const isGeo = isGeoColumn(kind, c);
         const isBytea = isByteaColumn(kind, c);
@@ -570,8 +574,8 @@ function BrowseFilterRow({
 }) {
   return (
     <tr>
-      <th className="border-b border-r border-border p-1"></th>
-      <th className="border-b border-r border-border p-1"></th>
+      <th aria-label="Select filter" className="border-b border-r border-border p-1"></th>
+      <th aria-label="Actions filter" className="border-b border-r border-border p-1"></th>
       {cols.map((c, colIdx) => {
         const mode = byteaColMode.get(colIdx);
         const byteaMode = mode && mode !== "hex" ? mode : null;
@@ -657,7 +661,7 @@ function BrowseInsertRow({
 }) {
   return (
     <tr className="bg-primary/10">
-      <td className="border-b border-r border-border px-1 py-0.5"></td>
+      <td aria-label="Insert row" className="border-b border-r border-border px-1 py-0.5"></td>
       <td className="border-b border-r border-border px-1 py-0.5">
         <div className="flex gap-0.5">
           <Button size="icon" variant="ghost" className="size-5" onClick={onCommit} title="Save">
@@ -817,7 +821,7 @@ function BrowseBodyRow({
         const startEdit = () => onStartEdit(colIdx, shown ?? "");
         return (
           <td
-            key={colIdx}
+            key={col.name}
             className="border-b border-r border-border p-0"
             onDoubleClick={() => {
               if (!canEdit) return;

@@ -62,6 +62,15 @@ export function pkLabelFor(
   return pkColIndexes.map((idx) => `${cols[idx].name} = ${formatPkValue(row[idx])}`).join(", ");
 }
 
+export function rowKey(
+  pkColIndexes: number[] | null,
+  row: readonly unknown[],
+  fallbackIdx: number,
+): string {
+  if (!pkColIndexes || pkColIndexes.length === 0) return `i:${fallbackIdx}`;
+  return `pk:${pkColIndexes.map((idx) => String(row[idx])).join("|")}`;
+}
+
 export function buildWhereClause(
   tab: BrowseTab,
   conn: SavedConnection,
