@@ -43,11 +43,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { type ByteaDisplayMode, formatBytea, parseByteaInput, stripHexPrefix } from "@/lib/bytea";
+import { type ByteaDisplayMode, parseByteaInput, stripHexPrefix } from "@/lib/bytea";
 import { isByteaColumn, isGeoColumn } from "@/lib/columnTypes";
 import { cn } from "@/lib/utils";
 import { columnDisplayKey, useColumnDisplay } from "@/stores/columnDisplay";
-import { type DecodedGeometry, type DiagFk, ipc } from "../ipc";
+import { type DiagFk, ipc } from "../ipc";
 import { type BrowseTab, newQueryId, useTabs } from "../stores/tabs";
 import type { Column, DbKind, QueryResult, SavedConnection } from "../types";
 import {
@@ -56,14 +56,20 @@ import {
   mongoFiltersFromTab,
   mongoSortFromTab,
 } from "../utils/mongo";
+import { type CompareOp, type Filter, quoteIdent, quoteTable } from "../utils/sql";
 import {
-  type CompareOp,
-  type Filter,
-  filterToSql,
-  isFilterComplete,
-  quoteIdent,
-  quoteTable,
-} from "../utils/sql";
+  buildFkFilters,
+  buildRowData,
+  buildWhereClause,
+  cellDisplayString,
+  type Dialogs,
+  type EditOps,
+  type GeomDecoded,
+  geomKey,
+  INITIAL_EDIT_OPS,
+  parseMongoCellValue,
+  pkLabelFor,
+} from "./BrowseTabPane/helpers";
 import { type CellPreview, CellPreviewDialog } from "./CellPreviewDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FkCell } from "./FkCell";
@@ -71,54 +77,6 @@ import { GeometryMapDialog, type GeometryMapInput } from "./GeometryMap/Geometry
 import { ColumnResizeHandle } from "./ResultsGrid/ColumnResizeHandle";
 import { measureColumnWidths } from "./ResultsGrid/measureColumnWidths";
 import { useColumnResize } from "./ResultsGrid/useColumnResize";
-
-type GeomDecoded = DecodedGeometry & { coordsJson: string };
-
-function geomKey(row: number, col: number): string {
-  return `${row}:${col}`;
-}
-
-function buildRowData(
-  columns: Column[],
-  row: readonly unknown[],
-  excluded: Set<number>,
-): Array<[string, unknown]> {
-  const out: Array<[string, unknown]> = [];
-  columns.forEach((c, i) => {
-    if (excluded.has(i)) return;
-    out.push([c.name, row[i]]);
-  });
-  return out;
-}
-
-function formatPkValue(v: unknown): string {
-  if (v === null || v === undefined) return "NULL";
-  if (typeof v === "string") return `'${v.replace(/'/g, "''")}'`;
-  return String(v);
-}
-
-function pkLabelFor(pkColIndexes: number[] | null, cols: Column[], row: unknown[]): string | null {
-  if (!pkColIndexes || pkColIndexes.length === 0) return null;
-  return pkColIndexes.map((idx) => `${cols[idx].name} = ${formatPkValue(row[idx])}`).join(", ");
-}
-
-type EditOps = {
-  editing: { row: number; col: number; value: string } | null;
-  insertRow: (string | null)[] | null;
-  pendingDeleteRow: number | null;
-  pendingBulkDelete: boolean;
-  opError: string | null;
-};
-
-const INITIAL_EDIT_OPS: EditOps = {
-  editing: null,
-  insertRow: null,
-  pendingDeleteRow: null,
-  pendingBulkDelete: false,
-  opError: null,
-};
-
-type Dialogs = { map: GeometryMapInput | null; cellPreview: CellPreview | null };
 
 type Props = {
   tab: BrowseTab;
@@ -245,79 +203,6 @@ export function BrowseTabPane({ tab, conn }: Props) {
       )}
     </div>
   );
-}
-
-function buildWhereClause(
-  tab: BrowseTab,
-  conn: SavedConnection,
-  cols: Column[],
-  byteaModes: Record<string, ByteaDisplayMode>,
-): string {
-  const colsByName = new Map(cols.map((c) => [c.name, c]));
-  const parts: string[] = [];
-  for (const [colName, filter] of Object.entries(tab.filters)) {
-    const c = colsByName.get(colName);
-    const isBytea = c ? isByteaColumn(conn.kind, c) : false;
-    const byteaMode = isBytea
-      ? (byteaModes[columnDisplayKey(conn.id, tab.schema, tab.table, colName)] ?? "hex")
-      : null;
-    if (byteaMode && byteaMode !== "hex") {
-      const sql = byteaFilterToSql(colName, filter, conn.kind, byteaMode);
-      if (sql) parts.push(sql);
-      continue;
-    }
-    if (isFilterComplete(filter)) parts.push(filterToSql(colName, filter, conn.kind));
-  }
-  if (parts.length === 0) return "";
-  return ` WHERE ${parts.join(" AND ")}`;
-}
-
-// BYTEA columns rendered as ULID/UUID need their filter values decoded back to
-// hex before going into SQL — otherwise the user typing a ULID would be compared
-// as a text string against the raw bytes and never match.
-function byteaFilterToSql(
-  colName: string,
-  filter: Filter,
-  kind: DbKind,
-  mode: ByteaDisplayMode,
-): string | null {
-  if (kind !== "postgres") return null;
-  const colQ = quoteIdent(colName, kind);
-  const toLit = (v: string): string | null => {
-    const hex = parseByteaInput(v, mode);
-    return hex === null ? null : `'\\x${hex}'::bytea`;
-  };
-  switch (filter.kind) {
-    case "is_null":
-      return `${colQ} IS NULL`;
-    case "is_not_null":
-      return `${colQ} IS NOT NULL`;
-    case "compare": {
-      const lit = toLit(filter.value);
-      return lit ? `${colQ} ${filter.op} ${lit}` : null;
-    }
-    case "like": {
-      // ULID/UUID substrings don't map to BYTEA substrings — require a fully
-      // valid value and treat "contains" as equality.
-      const lit = toLit(filter.value);
-      return lit ? `${colQ} = ${lit}` : null;
-    }
-    case "between": {
-      const a = toLit(filter.v1);
-      const b = toLit(filter.v2);
-      return a && b ? `${colQ} BETWEEN ${a} AND ${b}` : null;
-    }
-    case "in": {
-      const lits: string[] = [];
-      for (const v of filter.values) {
-        const lit = toLit(v);
-        if (!lit) return null;
-        lits.push(lit);
-      }
-      if (lits.length === 0) return null;
-      return `${colQ} IN (${lits.join(", ")})`;
-    }
-  }
 }
 
 function BrowseHeader({
@@ -703,43 +588,6 @@ function useBrowseDerived({
     return out;
   }, [cols, kind, connId, schema, table, byteaModes]);
   return { colIndexByName, pkColIndexes, fkByColumn, byteaColMode };
-}
-
-function cellDisplayString(
-  raw: unknown,
-  decoded: GeomDecoded | undefined,
-  mode: ByteaDisplayMode | undefined,
-): string | null {
-  if (raw === null || raw === undefined) return null;
-  if (decoded) return decoded.coordsJson;
-  if (mode && mode !== "hex" && typeof raw === "string") {
-    const formatted = formatBytea(raw, mode);
-    if (formatted !== null) return formatted;
-  }
-  if (typeof raw === "object") return JSON.stringify(raw);
-  return String(raw);
-}
-
-function buildFkFilters(
-  fk: DiagFk,
-  row: readonly unknown[],
-  cols: Column[],
-): Record<string, Filter> | null {
-  const filters: Record<string, Filter> = {};
-  fk.from_columns.forEach((fromCol, i) => {
-    const idx = cols.findIndex((c) => c.name === fromCol);
-    if (idx === -1) return;
-    const v = row[idx];
-    if (v === null || v === undefined) return;
-    const toCol = fk.to_columns[i];
-    if (!toCol) return;
-    filters[toCol] = {
-      kind: "compare",
-      op: "=",
-      value: typeof v === "object" ? JSON.stringify(v) : String(v),
-    };
-  });
-  return Object.keys(filters).length > 0 ? filters : null;
 }
 
 function useDecodedGeometries(
@@ -1167,19 +1015,6 @@ function useBrowseMutations({
   }
 
   return { commitEdit, commitInsert, deleteSelectedRows, deleteRow };
-}
-
-/// Parse a Browse-cell text input into a Mongo-friendly value. Tries JSON
-/// first (so the user can type `42`, `true`, `null`, `{ "$oid": "..." }`,
-/// `["a","b"]`, etc.); falls back to the raw string. Empty input → `null`.
-function parseMongoCellValue(raw: string): unknown {
-  const v = raw;
-  if (v === "") return null;
-  try {
-    return JSON.parse(v);
-  } catch {
-    return v;
-  }
 }
 
 /// Build a `{ field: ... }` Mongo match document from a row's PK columns.
