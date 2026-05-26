@@ -4,6 +4,7 @@ mod engine;
 mod error;
 mod job_registry;
 mod pool_registry;
+mod secret_store;
 mod sql_split;
 mod ssh;
 mod storage;
@@ -20,6 +21,7 @@ pub struct AppState {
     pub pools: pool_registry::PoolRegistry,
     pub jobs: job_registry::JobRegistry,
     pub settings: storage::SettingsStore,
+    pub secrets: secret_store::SecretStore,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -44,11 +46,22 @@ pub fn run() {
             let db_path = data_dir.join("powadb.db");
             let storage = tauri::async_runtime::block_on(storage::Storage::open(db_path))?;
             let settings = tauri::async_runtime::block_on(storage.load_settings())?;
+            let secrets = secret_store::SecretStore::new();
+            // Pre-existing installs have plaintext passwords in the
+            // `connections.password` column. Lift each one into the OS
+            // keychain on first launch; errors are logged but don't abort
+            // startup (we still want the app to open, even degraded).
+            if let Err(e) =
+                tauri::async_runtime::block_on(secrets.migrate_legacy_plaintext(&storage))
+            {
+                eprintln!("secret_store: legacy migration failed: {e}");
+            }
             app.manage(AppState {
                 storage,
                 pools: pool_registry::PoolRegistry::default(),
                 jobs: job_registry::JobRegistry::default(),
                 settings: storage::SettingsStore::new(settings),
+                secrets,
             });
             app.state::<AppState>()
                 .pools

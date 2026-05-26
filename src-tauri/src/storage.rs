@@ -576,7 +576,11 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_password(&self, id: &str) -> AppResult<Option<String>> {
+    /// Read the legacy plaintext password column. New code should go
+    /// through `SecretStore::get_password` instead, which prefers the OS
+    /// keychain; this method is the fallback the secret store uses for
+    /// legacy rows that haven't been migrated yet.
+    pub async fn get_legacy_password(&self, id: &str) -> AppResult<Option<String>> {
         let row = sqlx::query("SELECT password FROM connections WHERE id = ?1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -584,13 +588,36 @@ impl Storage {
         Ok(row.and_then(|r| r.try_get::<Option<String>, _>("password").ok().flatten()))
     }
 
-    pub async fn set_password(&self, id: &str, password: Option<&str>) -> AppResult<()> {
+    /// Write or clear the legacy plaintext password column. New code
+    /// should go through `SecretStore::set_password`; this is the
+    /// fallback the secret store falls back to when the OS keychain is
+    /// unavailable, and the way the migration NULLs rows it has lifted
+    /// into the keychain.
+    pub async fn set_legacy_password(&self, id: &str, password: Option<&str>) -> AppResult<()> {
         sqlx::query("UPDATE connections SET password = ?1 WHERE id = ?2")
             .bind(password)
             .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Enumerate every connection row that still has a non-NULL plaintext
+    /// password column, for the one-time keychain migration on startup.
+    pub async fn list_legacy_passwords(&self) -> AppResult<Vec<(String, String)>> {
+        let rows = sqlx::query(
+            "SELECT id, password FROM connections WHERE password IS NOT NULL AND password <> ''",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let id: String = r.try_get("id").ok()?;
+                let pw: String = r.try_get("password").ok()?;
+                Some((id, pw))
+            })
+            .collect())
     }
 
     pub async fn get_wg_config(&self, id: &str) -> AppResult<Option<String>> {
@@ -833,20 +860,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn password_round_trip() {
+    async fn legacy_password_round_trip() {
         let (_d, s) = fresh_storage().await;
         s.upsert(&sample_conn("a")).await.unwrap();
-        assert_eq!(s.get_password("a").await.unwrap(), None);
-        s.set_password("a", Some("secret")).await.unwrap();
-        assert_eq!(s.get_password("a").await.unwrap(), Some("secret".into()));
-        s.set_password("a", None).await.unwrap();
-        assert_eq!(s.get_password("a").await.unwrap(), None);
+        assert_eq!(s.get_legacy_password("a").await.unwrap(), None);
+        s.set_legacy_password("a", Some("secret")).await.unwrap();
+        assert_eq!(
+            s.get_legacy_password("a").await.unwrap(),
+            Some("secret".into())
+        );
+        s.set_legacy_password("a", None).await.unwrap();
+        assert_eq!(s.get_legacy_password("a").await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn get_password_for_missing_connection_is_none() {
+    async fn get_legacy_password_for_missing_connection_is_none() {
         let (_d, s) = fresh_storage().await;
-        assert_eq!(s.get_password("missing").await.unwrap(), None);
+        assert_eq!(s.get_legacy_password("missing").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn list_legacy_passwords_returns_only_non_null_rows() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        s.upsert(&sample_conn("b")).await.unwrap();
+        s.upsert(&sample_conn("c")).await.unwrap();
+        s.set_legacy_password("a", Some("pa")).await.unwrap();
+        s.set_legacy_password("c", Some("pc")).await.unwrap();
+        let mut found = s.list_legacy_passwords().await.unwrap();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![("a".into(), "pa".into()), ("c".into(), "pc".into())]
+        );
     }
 
     #[tokio::test]

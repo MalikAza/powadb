@@ -79,11 +79,15 @@ pub async fn save_connection(
     };
     state.storage.upsert(&conn).await?;
     if let Some(pw) = input.password {
-        if pw.is_empty() {
-            state.storage.set_password(&id, None).await?;
+        let value = if pw.is_empty() {
+            None
         } else {
-            state.storage.set_password(&id, Some(&pw)).await?;
-        }
+            Some(pw.as_str())
+        };
+        state
+            .secrets
+            .set_password(&state.storage, &id, value)
+            .await?;
     }
     if !input.wg_enabled {
         // Disabling WG clears the stored config so we don't leak it.
@@ -111,6 +115,9 @@ pub async fn save_connection(
 #[tauri::command]
 pub async fn delete_connection(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.pools.close(&id).await;
+    // Forget the keychain entry before deleting the row so we don't leave a
+    // dangling credential under the same id if someone reuses it later.
+    state.secrets.delete_password(&state.storage, &id).await?;
     state.storage.delete(&id).await?;
     Ok(())
 }
@@ -166,7 +173,7 @@ pub async fn get_connection_password(
     state: State<'_, AppState>,
     id: String,
 ) -> AppResult<Option<String>> {
-    state.storage.get_password(&id).await
+    state.secrets.get_password(&state.storage, &id).await
 }
 
 #[tauri::command]
@@ -251,7 +258,10 @@ pub async fn resolve_connection(
         .into_iter()
         .find(|c| c.id == connection_id)
         .ok_or_else(|| AppError::ConnectionNotFound(connection_id.to_string()))?;
-    let pw = state.storage.get_password(connection_id).await?;
+    let pw = state
+        .secrets
+        .get_password(&state.storage, connection_id)
+        .await?;
     let wg = state.storage.get_wg_config(connection_id).await?;
     let ssh = state.storage.get_ssh_config(connection_id).await?;
     Ok((conn, pw, wg, ssh))
