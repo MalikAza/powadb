@@ -3,6 +3,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { Toaster } from "sonner";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { on as onAppEvent } from "@/lib/events";
 import { ConnectionList } from "./components/ConnectionList";
 import { QueryView } from "./components/QueryView";
 import { Sidebar } from "./components/Sidebar";
@@ -11,6 +12,7 @@ import { UpdateChecker } from "./components/UpdateChecker";
 import type { ConnStateChangedEvent } from "./ipc";
 import { useConnections } from "./stores/connections";
 import { usePanelLayouts } from "./stores/panelLayouts";
+import { useTabs } from "./stores/tabs";
 import { useApplyTheme, useResolvedTheme, useTheme } from "./stores/theme";
 import { useUi } from "./stores/ui";
 import { useRestoreAndPersistWindowState } from "./stores/windowState";
@@ -86,6 +88,16 @@ function App() {
     return () => {
       unlisten.then((fn) => fn());
     };
+  }, []);
+
+  // Close any tabs belonging to a connection that was just disconnected.
+  // The connections store fires the event in `disconnect()` rather than
+  // calling into useTabs directly so the two stores stay decoupled — see
+  // `src/lib/events.ts` for the bus.
+  useEffect(() => {
+    return onAppEvent("connection-disconnected", (id) => {
+      useTabs.getState().closeTabsForConnection(id);
+    });
   }, []);
 
   useEffect(() => {

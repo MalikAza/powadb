@@ -1,8 +1,8 @@
 import { create } from "zustand";
+import { emit } from "@/lib/events";
 import type { Capabilities } from "../ipc";
 import { ipc } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
-import { useTabs } from "./tabs";
 
 export type ConnState =
   | { kind: "idle" }
@@ -84,7 +84,10 @@ export const useConnections = create<State & Actions>((set, get) => ({
 
   async disconnect(id) {
     await ipc.disconnect(id);
-    useTabs.getState().closeTabsForConnection(id);
+    // Broadcast so any subscriber (tabs store, future analytics, …) can react
+    // without this store importing them. The tabs subscriber lives in
+    // App.tsx where both stores are mounted; see `events.ts`.
+    emit("connection-disconnected", id);
     if (get().activeId === id) set({ activeId: null });
     await get().refreshConnected();
   },

@@ -17,12 +17,8 @@ vi.mock("../ipc", () => ({
   ipc: ipcMock,
 }));
 
-const closeTabsForConnection = vi.fn();
-vi.mock("./tabs", () => ({
-  useTabs: { getState: () => ({ closeTabsForConnection }) },
-}));
-
 const { useConnections } = await import("./connections");
+const { on, _resetForTests } = await import("../lib/events");
 
 function makeConn(over: Partial<SavedConnection> = {}): SavedConnection {
   return {
@@ -55,7 +51,7 @@ beforeEach(() => {
   });
   for (const fn of Object.values(ipcMock)) fn.mockReset();
   ipcMock.prewarmConnection.mockResolvedValue(undefined);
-  closeTabsForConnection.mockReset();
+  _resetForTests();
 });
 
 describe("useConnections", () => {
@@ -127,17 +123,22 @@ describe("useConnections", () => {
     expect(useConnections.getState().connectedIds).toEqual(new Set(["a", "b"]));
   });
 
-  it("disconnect() closes tabs, clears matching activeId, and refreshes", async () => {
+  it("disconnect() emits connection-disconnected, clears matching activeId, and refreshes", async () => {
     useConnections.setState({ activeId: "c1" });
     ipcMock.disconnect.mockResolvedValue(undefined);
     ipcMock.listActiveConnections.mockResolvedValue([]);
 
+    const seen: string[] = [];
+    const off = on("connection-disconnected", (id) => seen.push(id));
+
     await useConnections.getState().disconnect("c1");
 
     expect(ipcMock.disconnect).toHaveBeenCalledWith("c1");
-    expect(closeTabsForConnection).toHaveBeenCalledWith("c1");
+    expect(seen).toEqual(["c1"]);
     expect(useConnections.getState().activeId).toBeNull();
     expect(useConnections.getState().connectedIds).toEqual(new Set());
+
+    off();
   });
 
   it("disconnect() preserves activeId when a different connection disconnects", async () => {

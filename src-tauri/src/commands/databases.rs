@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::commands::connections::resolve_connection;
+use crate::commands::ddl_util::quote_ident;
 use crate::engine::SqlPoolView;
 use crate::error::{AppError, AppResult};
 use crate::storage::DbKind;
@@ -32,15 +33,6 @@ fn validate_db_name(name: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn quote_identifier(kind: DbKind, name: &str) -> String {
-    match kind {
-        DbKind::Postgres => format!("\"{}\"", name.replace('"', "\"\"")),
-        DbKind::Mysql => format!("`{}`", name.replace('`', "``")),
-        DbKind::Sqlite => name.to_string(),
-        DbKind::Mongo => unreachable!("Mongo doesn't use SQL identifier quoting"),
-    }
-}
-
 #[tauri::command]
 pub async fn create_database(
     state: State<'_, AppState>,
@@ -56,10 +48,7 @@ pub async fn create_database(
         return Err(AppError::unsupported("create_database", "mongo"));
     }
     let handle = state.pools.get_or_open(&state, &connection_id).await?;
-    let stmt = format!(
-        "CREATE DATABASE {}",
-        quote_identifier(conn.kind, name.trim())
-    );
+    let stmt = format!("CREATE DATABASE {}", quote_ident(name.trim(), conn.kind));
     match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(pool)) => {
             sqlx::query(&stmt).execute(pool).await?;
@@ -107,7 +96,7 @@ pub async fn drop_database(
             .map_err(|e| AppError::Other(format!("mongo dropDatabase failed: {e}")))?;
         return Ok(());
     }
-    let stmt = format!("DROP DATABASE {}", quote_identifier(conn.kind, target));
+    let stmt = format!("DROP DATABASE {}", quote_ident(target, conn.kind));
     match handle.as_sql_pool() {
         Some(SqlPoolView::Postgres(pool)) => {
             sqlx::query(&stmt).execute(pool).await?;
@@ -168,9 +157,7 @@ mod tests {
         assert!(validate_db_name(&s63).is_ok());
     }
 
-    #[test]
-    fn quote_identifier_escapes_per_kind() {
-        assert_eq!(quote_identifier(DbKind::Postgres, "my_db"), "\"my_db\"");
-        assert_eq!(quote_identifier(DbKind::Mysql, "my_db"), "`my_db`");
-    }
+    // The CREATE / DROP DATABASE statements now route identifier quoting
+    // through `ddl_util::quote_ident`, which is already covered by tests
+    // in that module.
 }
