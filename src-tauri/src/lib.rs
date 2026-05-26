@@ -7,6 +7,7 @@ mod pool_registry;
 mod sql_split;
 mod ssh;
 mod storage;
+mod storage_migrations;
 mod wireguard;
 
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
