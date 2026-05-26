@@ -634,6 +634,31 @@ async fn wait_with_cancel(
     }
 }
 
+/// Race a future against the dump's cancel flag. The flag is polled every
+/// 200ms — same cadence as `wait_with_cancel` — so a Cancel click never
+/// waits more than that even if the underlying future is mid-fetch.
+///
+/// This exists for the long-running `SELECT *` at the top of
+/// `dump_table_data`: before this helper, the user could click Cancel
+/// while the driver was streaming a multi-million-row scan and we'd
+/// happily run the full query before checking the flag at the next chunk
+/// boundary.
+async fn race_cancel<F, T>(fut: F, cancel: Arc<AtomicBool>) -> AppResult<T>
+where
+    F: std::future::Future<Output = AppResult<T>>,
+{
+    tokio::pin!(fut);
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AppError::Canceled);
+        }
+        match tokio::time::timeout(std::time::Duration::from_millis(200), &mut fut).await {
+            Ok(res) => return res,
+            Err(_) => continue,
+        }
+    }
+}
+
 // ─── Native engine: export ────────────────────────────────────────────────────
 
 async fn export_native(
@@ -984,10 +1009,32 @@ async fn dump_table_data(
     let sql_my = format!("SELECT * FROM `{}`", t.table);
     let sql_lite = format!("SELECT * FROM \"{}\"", t.table.replace('"', "\"\""));
 
+    // Race the SELECT against the dump's cancel flag. Driver `execute`
+    // calls are async and yield while waiting on the wire, so this lets
+    // the user Cancel a multi-million-row scan without sitting through
+    // the whole fetch first.
     let result = match require_sql_pool(handle, "dump_table_data")? {
-        SqlPoolView::Postgres(pool) => pg_drv::execute(pool, &sql_pg).await?,
-        SqlPoolView::Mysql(pool) => mysql_drv::execute(pool, &sql_my).await?,
-        SqlPoolView::Sqlite(pool) => sqlite_drv::execute(pool, &sql_lite).await?,
+        SqlPoolView::Postgres(pool) => {
+            race_cancel(
+                async { pg_drv::execute(pool, &sql_pg).await },
+                cancel.clone(),
+            )
+            .await?
+        }
+        SqlPoolView::Mysql(pool) => {
+            race_cancel(
+                async { mysql_drv::execute(pool, &sql_my).await },
+                cancel.clone(),
+            )
+            .await?
+        }
+        SqlPoolView::Sqlite(pool) => {
+            race_cancel(
+                async { sqlite_drv::execute(pool, &sql_lite).await },
+                cancel.clone(),
+            )
+            .await?
+        }
     };
 
     let kind = handle.kind();
@@ -1702,5 +1749,37 @@ mod tests {
     #[test]
     fn default_true_returns_true() {
         assert!(default_true());
+    }
+
+    // ─── race_cancel ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn race_cancel_returns_inner_result_when_flag_stays_false() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let out = race_cancel(async { Ok::<i32, AppError>(42) }, cancel)
+            .await
+            .unwrap();
+        assert_eq!(out, 42);
+    }
+
+    #[tokio::test]
+    async fn race_cancel_returns_canceled_when_flag_flips_during_work() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_clone = cancel.clone();
+        // Spawn the cancel-flag flip; the inner future sleeps long enough
+        // that the 200ms poll inside race_cancel sees the flag first.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_clone.store(true, Ordering::SeqCst);
+        });
+        let result: AppResult<i32> = race_cancel(
+            async {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                Ok(0)
+            },
+            cancel,
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Canceled)));
     }
 }
