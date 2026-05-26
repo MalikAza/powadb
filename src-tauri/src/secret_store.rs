@@ -23,6 +23,12 @@ use tokio::task::spawn_blocking;
 use crate::error::{AppError, AppResult};
 use crate::storage::Storage;
 
+/// Keychain service name. Debug builds use a `-dev` suffix so an in-progress
+/// dev session can't read or mutate the credentials stored by the installed
+/// production app. Mirrors the dev/prod split in `storage::db_filename`.
+#[cfg(debug_assertions)]
+const SERVICE: &str = "com.aza.powadb-dev";
+#[cfg(not(debug_assertions))]
 const SERVICE: &str = "com.aza.powadb";
 
 fn account_for(connection_id: &str) -> String {

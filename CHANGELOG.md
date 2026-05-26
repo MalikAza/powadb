@@ -26,6 +26,7 @@
 
 ### Internal
 
+- **Dev/prod state split.** Debug builds (`npm run tauri:dev`) now read `powadb-dev.db` and use Keychain service `com.aza.powadb-dev`; release builds keep `powadb.db` and `com.aza.powadb`. The dev DB is seeded from the prod one on first launch so contributors don't start with an empty store. See [README → Build from source](README.md#dev-and-prod-run-side-by-side).
 - Duplicate `isGeoColumn` / `isByteaColumn` helpers extracted from `BrowseTabPane.tsx` and `ResultsGrid/Grid.tsx` into a shared `src/lib/columnTypes.ts`.
 - Dump chunk size lifted from a magic `500usize` to a named `DUMP_CHUNK_SIZE` constant with a one-line rationale.
 - `commands/diagram_diff.rs`'s five `unreachable!("Mongo has no DDL")` panics are now typed `Unsupported` errors; `commands/geo.rs` `UnsupportedType` misuse converted to `Unsupported` with the engine kind.

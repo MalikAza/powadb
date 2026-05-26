@@ -704,6 +704,18 @@ pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+/// Filename inside `app_data_dir()` for the local SQLite store. Debug builds
+/// use a separate file so `npm run tauri:dev` doesn't clobber the installed
+/// production app's data. The two files sit side by side in the same
+/// directory; the prod build never reads the dev file and vice versa.
+pub fn db_filename() -> &'static str {
+    if cfg!(debug_assertions) {
+        "powadb-dev.db"
+    } else {
+        "powadb.db"
+    }
+}
+
 /// Take a one-time snapshot of `powadb.db` before this build's migrations
 /// run, so a user can downgrade to the previous PowaDB version and keep
 /// their saved connections / snippets / diagrams.

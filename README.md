@@ -130,6 +130,19 @@ npm run tauri:dev     # full desktop app
 npm run dev           # frontend only at http://localhost:1420 (no IPC)
 ```
 
+#### Dev and prod run side by side
+
+Debug builds (`npm run tauri:dev`) and release builds (the installed PowaDB app from a `.dmg` / `.msi` / `.AppImage`) **do not share local state**, so you can iterate on the dev branch while keeping the installed version usable:
+
+| | Debug build | Release build |
+| :--- | :--- | :--- |
+| Local DB filename | `powadb-dev.db` | `powadb.db` |
+| Keychain service | `com.aza.powadb-dev` | `com.aza.powadb` |
+
+Both files sit in the same `app_data_dir` (see [Upgrading from 0.10](#upgrading-from-010) for the per-OS path). On the **first launch of a debug build** on a machine where `powadb.db` already exists, the dev DB is seeded by copying the prod file — so you start with your existing connections / snippets / diagrams rather than an empty store. Saved passwords are **not** copied across keychain services; you'll be re-prompted on first connect, and the answer is then stored under `com.aza.powadb-dev`.
+
+To start the dev environment clean, delete `powadb-dev.db` (and, if you like, the matching `connection-…` entries under `com.aza.powadb-dev` in Keychain Access).
+
 ### Build a release
 
 ```bash

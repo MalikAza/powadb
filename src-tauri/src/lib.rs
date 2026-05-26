@@ -43,7 +43,31 @@ pub fn run() {
         })
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let db_path = data_dir.join("powadb.db");
+            // Debug builds (`npm run tauri:dev`) keep a separate DB file
+            // and Keychain service so iterating on schema or password
+            // migrations doesn't trash the installed production app's
+            // state. On first launch of a debug build, seed the dev DB
+            // from the prod one if it exists, so the developer doesn't
+            // start with an empty connection list. Saved passwords stay
+            // in the prod keychain service — dev will re-prompt on first
+            // use and store the answer under the dev service name.
+            let db_path = data_dir.join(storage::db_filename());
+            if cfg!(debug_assertions) && !db_path.exists() {
+                let prod_path = data_dir.join("powadb.db");
+                if prod_path.exists() {
+                    match std::fs::copy(&prod_path, &db_path) {
+                        Ok(_) => eprintln!(
+                            "storage: seeded {} from {} on first launch of dev build \
+                             (saved passwords stay in the prod keychain — dev will re-prompt)",
+                            db_path.display(),
+                            prod_path.display()
+                        ),
+                        Err(e) => eprintln!(
+                            "storage: dev DB seed copy failed: {e} (starting with an empty dev DB)"
+                        ),
+                    }
+                }
+            }
             let storage = tauri::async_runtime::block_on(storage::Storage::open(db_path))?;
             let settings = tauri::async_runtime::block_on(storage.load_settings())?;
             let secrets = secret_store::SecretStore::new();
