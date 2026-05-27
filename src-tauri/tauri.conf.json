@@ -14,7 +14,9 @@
       {
         "title": "PowaDB",
         "width": 1280,
-        "height": 800
+        "height": 800,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {
