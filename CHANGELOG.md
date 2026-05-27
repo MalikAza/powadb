@@ -1,25 +1,24 @@
-## [Unreleased]
+## [0.11.0] - 2026-05-27
 
 ### Security
 
 - **Connection passwords moved to the OS keychain.** Saved DB credentials are now stored in **macOS Keychain**, **Windows Credential Manager**, or **libsecret** on Linux instead of the plaintext `password` column in `powadb.db`. The first time the app reads a saved password, **macOS will prompt for Keychain access** — choose **Always Allow** to avoid being prompted on every connect. Existing plaintext rows are migrated automatically on first launch; the legacy column is then NULL'd out. If the keychain backend is unavailable (CI, headless Linux without secret-service, locked Keychain) the app falls back to the SQLite column and logs a loud stderr warning. See [README → Upgrading](README.md#upgrading-from-010) for the rollback path.
-- **Strict Content Security Policy** in the webview (was `null`). Tightens the blast radius of any XSS-like bug that could otherwise read IPC or exfiltrate.
-- **Credentials scrubbed from error messages** at the IPC boundary. `scheme://user:pass@host` patterns in driver errors (sqlx / mongodb) are redacted to `scheme://***@host` before reaching the frontend.
+- **Strict Content Security Policy**
+- **Credentials scrubbed from error messages**
 - **Diagram-DDL allowlist.** When generating `CREATE TABLE` from a diagram document, column `data_type`, `default_value`, and FK `ON UPDATE` / `ON DELETE` rules are validated against strict allowlists. Diagram JSON imported from disk can no longer ship arbitrary SQL through these fields.
 - **PRAGMA identifier hardening.** SQLite introspection now rejects identifiers containing NUL or control characters before quoting them.
 - **hstore wire decoder** caps the pre-allocation hint so a hostile server can't trigger a multi-GB allocation via an inflated count field.
 
 ### Added
 
-- **Versioned schema-migration runner** for `powadb.db`. Replaces the inline `CREATE TABLE IF NOT EXISTS` + best-effort `ALTER TABLE ADD COLUMN` block in `Storage::open` with a `schema_version` table and per-migration SQL files under `src-tauri/migrations/`. Existing installs pick up version 1 transparently.
+- **Versioned schema-migration runner** for `powadb.db`.
 - **Pre-migration DB backup.** On every launch, before any schema or password migration touches the file, `powadb.db` is copied to `powadb.db.backup-pre-<version>` alongside it. One backup per upgraded-to version; safe to delete once the new version proves stable. See [README → Upgrading](README.md#upgrading-from-010).
-- `history-degraded` IPC event surfaces the first storage-write failure when query history can't be saved (full disk, corrupted `powadb.db`, etc.). Previously these failures were silently swallowed.
 - Typed `AppError` variants: `Unsupported { feature, engine }`, `BadInput { field, reason }`, `Schema(_)`. The frontend can now branch on these (e.g. tag the field a `BadInput` complained about) instead of pattern-matching on a free-form string.
 - `validate_ident_chars` helper that every DDL-generating path now uses before reaching `quote_ident`.
 
 ### Changed
 
-- **Cancellation latency on large dumps** is now bounded to ~200 ms. The initial `SELECT *` in `dump_table_data` races against the dump's cancel flag — clicking Cancel mid-fetch on a multi-million-row scan no longer waits for the full read to complete.
+- **Cancellation latency on large dumps** is now bounded to ~200 ms.
 - **`PoolRegistry::swap_pool_for_database`** no longer holds the pools mutex across the pool's `close().await`, so switching the active database doesn't block concurrent registry operations.
 - Engine-feature mismatches (e.g. asking Mongo for a SQL-only operation) now return a typed `Unsupported` error with the failing feature name and engine kind, instead of a generic string.
 - `validate_db_name` and "drop currently-used database" guards now return `BadInput { field, reason }` so the frontend can highlight the offending input.
