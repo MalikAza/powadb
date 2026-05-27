@@ -110,15 +110,36 @@ function AppearanceTab({ onOpenEditor }: { onOpenEditor: (theme: CustomTheme | n
 
   const [communityQuery, setCommunityQuery] = useState("");
   const [communityFilter, setCommunityFilter] = useState<"all" | "light" | "dark">("all");
+  const [customQuery, setCustomQuery] = useState("");
+  const [customFilter, setCustomFilter] = useState<"all" | "light" | "dark">("all");
+
+  const installedKeys = useMemo(
+    () => new Set(customThemes.map((t) => `${t.name.toLowerCase()}::${t.base}`)),
+    [customThemes],
+  );
+  const communityKeys = useMemo(
+    () => new Set(COMMUNITY_THEMES.map((c) => `${c.theme.name.toLowerCase()}::${c.theme.base}`)),
+    [],
+  );
 
   const filteredCommunity = useMemo(() => {
     const q = communityQuery.trim().toLowerCase();
     return COMMUNITY_THEMES.filter((c) => {
+      if (installedKeys.has(`${c.theme.name.toLowerCase()}::${c.theme.base}`)) return false;
       if (communityFilter !== "all" && c.theme.base !== communityFilter) return false;
       if (q && !c.theme.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [communityQuery, communityFilter]);
+  }, [communityQuery, communityFilter, installedKeys]);
+
+  const filteredCustom = useMemo(() => {
+    const q = customQuery.trim().toLowerCase();
+    return customThemes.filter((t) => {
+      if (customFilter !== "all" && t.base !== customFilter) return false;
+      if (q && !t.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [customQuery, customFilter, customThemes]);
 
   async function exportTheme(theme: CustomTheme) {
     const path = await ipc.pickSavePathWithFilter(
@@ -220,21 +241,36 @@ function AppearanceTab({ onOpenEditor }: { onOpenEditor: (theme: CustomTheme | n
               No custom themes yet.
             </div>
           ) : (
-            <ScrollArea className="h-[208px] rounded-md border">
-              <div className="grid gap-1 p-1 pr-3">
-                {customThemes.map((t) => (
-                  <CustomThemeRow
-                    key={t.id}
-                    theme={t}
-                    active={selection.kind === "custom" && selection.id === t.id}
-                    onSelect={() => setSelection({ kind: "custom", id: t.id })}
-                    onEdit={() => onOpenEditor(t)}
-                    onDelete={() => deleteCustom(t.id)}
-                    onExport={() => exportTheme(t)}
-                  />
-                ))}
-              </div>
-            </ScrollArea>
+            <>
+              <ThemeFilterBar
+                query={customQuery}
+                onQueryChange={setCustomQuery}
+                filter={customFilter}
+                onFilterChange={setCustomFilter}
+              />
+              {filteredCustom.length === 0 ? (
+                <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
+                  No themes match.
+                </div>
+              ) : (
+                <ScrollArea className="h-[104px] rounded-md border">
+                  <div className="grid gap-1 p-1 pr-3">
+                    {filteredCustom.map((t) => (
+                      <CustomThemeRow
+                        key={t.id}
+                        theme={t}
+                        active={selection.kind === "custom" && selection.id === t.id}
+                        fromCommunity={communityKeys.has(`${t.name.toLowerCase()}::${t.base}`)}
+                        onSelect={() => setSelection({ kind: "custom", id: t.id })}
+                        onEdit={() => onOpenEditor(t)}
+                        onDelete={() => deleteCustom(t.id)}
+                        onExport={() => exportTheme(t)}
+                      />
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </>
           )}
         </div>
       </Section>
@@ -245,47 +281,19 @@ function AppearanceTab({ onOpenEditor }: { onOpenEditor: (theme: CustomTheme | n
           description="Curated palettes shipped with PowaDB. Install one to add a copy to your custom themes."
         >
           <div className="grid gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={communityQuery}
-                  onChange={(e) => setCommunityQuery(e.target.value)}
-                  placeholder="Search themes…"
-                  className="h-8 pl-7 text-xs"
-                  spellCheck={false}
-                />
-              </div>
-              <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
-                <FilterPill
-                  active={communityFilter === "all"}
-                  onClick={() => setCommunityFilter("all")}
-                >
-                  All
-                </FilterPill>
-                <FilterPill
-                  active={communityFilter === "light"}
-                  onClick={() => setCommunityFilter("light")}
-                  icon={<Sun className="size-3" />}
-                >
-                  Light
-                </FilterPill>
-                <FilterPill
-                  active={communityFilter === "dark"}
-                  onClick={() => setCommunityFilter("dark")}
-                  icon={<Moon className="size-3" />}
-                >
-                  Dark
-                </FilterPill>
-              </div>
-            </div>
+            <ThemeFilterBar
+              query={communityQuery}
+              onQueryChange={setCommunityQuery}
+              filter={communityFilter}
+              onFilterChange={setCommunityFilter}
+            />
 
             {filteredCommunity.length === 0 ? (
               <div className="rounded-md border border-dashed p-4 text-center text-xs text-muted-foreground">
                 No themes match.
               </div>
             ) : (
-              <ScrollArea className="h-[208px] rounded-md border">
+              <ScrollArea className="h-[104px] rounded-md border">
                 <div className="grid gap-1 p-1 pr-3">
                   {filteredCommunity.map((c) => (
                     <CommunityThemeRow
@@ -505,6 +513,52 @@ function FilterPill({
   );
 }
 
+function ThemeFilterBar({
+  query,
+  onQueryChange,
+  filter,
+  onFilterChange,
+}: {
+  query: string;
+  onQueryChange: (v: string) => void;
+  filter: "all" | "light" | "dark";
+  onFilterChange: (f: "all" | "light" | "dark") => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="relative min-w-0 flex-1">
+        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(e) => onQueryChange(e.target.value)}
+          placeholder="Search themes…"
+          className="h-8 pl-7 text-xs"
+          spellCheck={false}
+        />
+      </div>
+      <div className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+        <FilterPill active={filter === "all"} onClick={() => onFilterChange("all")}>
+          All
+        </FilterPill>
+        <FilterPill
+          active={filter === "light"}
+          onClick={() => onFilterChange("light")}
+          icon={<Sun className="size-3" />}
+        >
+          Light
+        </FilterPill>
+        <FilterPill
+          active={filter === "dark"}
+          onClick={() => onFilterChange("dark")}
+          icon={<Moon className="size-3" />}
+        >
+          Dark
+        </FilterPill>
+      </div>
+    </div>
+  );
+}
+
 function CommunityThemeRow({
   community,
   onInstall,
@@ -545,6 +599,7 @@ function CommunityThemeRow({
 function CustomThemeRow({
   theme,
   active,
+  fromCommunity,
   onSelect,
   onEdit,
   onDelete,
@@ -552,6 +607,7 @@ function CustomThemeRow({
 }: {
   theme: CustomTheme;
   active: boolean;
+  fromCommunity: boolean;
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -578,6 +634,11 @@ function CustomThemeRow({
         </div>
         <span className="text-sm font-medium">{theme.name}</span>
         <span className="text-[11px] text-muted-foreground">{theme.base}</span>
+        {fromCommunity && (
+          <span className="rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+            Community
+          </span>
+        )}
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
