@@ -714,6 +714,90 @@ mod tests {
     }
 
     #[test]
+    fn numeric_literal_accepts_signed_and_decimal_forms() {
+        for ok in ["0", "42", "-42", "+1", "3.14", "-0.5", ".5", "10."] {
+            assert!(looks_like_numeric_literal(ok), "should accept {ok:?}");
+        }
+    }
+
+    #[test]
+    fn numeric_literal_rejects_non_numeric_input() {
+        for bad in ["", " ", "abc", "1a", "1..2", "+", "-", "1+1", "0x1f"] {
+            assert!(!looks_like_numeric_literal(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn quoted_string_accepts_well_formed_literals() {
+        for ok in ["''", "'abc'", "'O''Brien'", "'a''b''c'"] {
+            assert!(looks_like_quoted_string(ok), "should accept {ok:?}");
+        }
+    }
+
+    #[test]
+    fn quoted_string_rejects_unbalanced_or_unescaped_quotes() {
+        for bad in ["'", "'abc", "abc'", "'a'b'", "''abc"] {
+            assert!(!looks_like_quoted_string(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn bare_identifier_accepts_alphanumeric_underscore_starting_with_letter_or_underscore() {
+        for ok in ["a", "_x", "foo_bar", "Foo123", "_"] {
+            assert!(looks_like_bare_identifier(ok), "should accept {ok:?}");
+        }
+    }
+
+    #[test]
+    fn bare_identifier_rejects_invalid_starts_and_chars() {
+        for bad in ["", "1abc", "foo bar", "foo-bar", "foo.bar"] {
+            assert!(!looks_like_bare_identifier(bad), "should reject {bad:?}");
+        }
+        // Length cap: 64+ chars rejected.
+        let long = "a".repeat(64);
+        assert!(!looks_like_bare_identifier(&long));
+    }
+
+    #[test]
+    fn simple_function_call_accepts_zero_or_literal_args() {
+        for ok in [
+            "now()",
+            "uuid_generate_v4()",
+            "nextval('seq')",
+            "to_timestamp(0)",
+        ] {
+            assert!(looks_like_simple_function_call(ok), "should accept {ok:?}");
+        }
+    }
+
+    #[test]
+    fn simple_function_call_rejects_expressions_and_malformed_input() {
+        for bad in [
+            "now(",
+            "now)",
+            "1 + 1",
+            "foo(a + b)",
+            "foo(BAR)",
+            "(no name)",
+        ] {
+            assert!(
+                !looks_like_simple_function_call(bad),
+                "should reject {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn split_top_level_args_respects_quoted_commas() {
+        assert_eq!(split_top_level_args("a, b, c"), vec!["a", "b", "c"]);
+        assert_eq!(split_top_level_args("'a,b', c"), vec!["'a,b'", "c"]);
+        // Escaped single-quote inside a quoted segment stays inside.
+        assert_eq!(split_top_level_args("'a''b', c"), vec!["'a''b'", "c"]);
+        // No commas → one element.
+        assert_eq!(split_top_level_args("solo"), vec!["solo"]);
+    }
+
+    #[test]
     fn alter_fk_rejects_off_whitelist_action() {
         let json = doc(r#"{
               "version":1,
