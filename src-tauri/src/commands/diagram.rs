@@ -1023,4 +1023,121 @@ mod tests {
         upsert_table(&mut tables, "other", "a");
         assert_eq!(tables.len(), 3);
     }
+
+    #[tokio::test]
+    async fn sqlite_introspects_unique_and_explicit_indexes() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT, name TEXT, age INTEGER)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE UNIQUE INDEX t_email_uq ON t(email)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE INDEX t_name_idx ON t(name)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let out = introspect_sqlite(&pool).await.unwrap();
+        let t = out.tables.iter().find(|tb| tb.name == "t").unwrap();
+        let email_idx = t.indexes.iter().find(|i| i.name == "t_email_uq").unwrap();
+        assert!(email_idx.is_unique);
+        assert!(!email_idx.is_primary);
+        assert_eq!(email_idx.columns, vec!["email"]);
+        let name_idx = t.indexes.iter().find(|i| i.name == "t_name_idx").unwrap();
+        assert!(!name_idx.is_unique);
+        assert_eq!(name_idx.columns, vec!["name"]);
+    }
+
+    #[tokio::test]
+    async fn sqlite_introspects_composite_foreign_keys() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE parent (a INTEGER NOT NULL, b INTEGER NOT NULL, PRIMARY KEY (a, b))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE child (
+              id INTEGER PRIMARY KEY,
+              pa INTEGER NOT NULL,
+              pb INTEGER NOT NULL,
+              FOREIGN KEY (pa, pb) REFERENCES parent(a, b)
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let out = introspect_sqlite(&pool).await.unwrap();
+        assert_eq!(
+            out.foreign_keys.len(),
+            1,
+            "composite FK collapses to one row"
+        );
+        let fk = &out.foreign_keys[0];
+        assert_eq!(fk.from_columns, vec!["pa", "pb"]);
+        assert_eq!(fk.to_columns, vec!["a", "b"]);
+        assert_eq!(fk.from_table, "child");
+        assert_eq!(fk.to_table, "parent");
+    }
+
+    #[tokio::test]
+    async fn sqlite_introspects_default_values_and_nullability() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE t (id INTEGER PRIMARY KEY, status TEXT NOT NULL DEFAULT 'active', note TEXT)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let out = introspect_sqlite(&pool).await.unwrap();
+        let t = out.tables.iter().find(|tb| tb.name == "t").unwrap();
+        let status = t.columns.iter().find(|c| c.name == "status").unwrap();
+        assert!(!status.nullable);
+        assert_eq!(status.default.as_deref(), Some("'active'"));
+        let note = t.columns.iter().find(|c| c.name == "note").unwrap();
+        assert!(note.nullable);
+    }
+
+    #[tokio::test]
+    async fn sqlite_skips_internal_sqlite_master_tables() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE real (id INTEGER PRIMARY KEY)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Force-create an autoindex so sqlite_autoindex_real_1 exists. Internal
+        // tables start with sqlite_ — they must not appear in the introspection.
+        let out = introspect_sqlite(&pool).await.unwrap();
+        for t in &out.tables {
+            assert!(
+                !t.name.starts_with("sqlite_"),
+                "internal table leaked: {}",
+                t.name
+            );
+        }
+    }
 }
