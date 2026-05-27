@@ -1229,4 +1229,415 @@ mod tests {
         let err = generate_alter_ddl(&ops, DbKind::Sqlite).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("sqlite"));
     }
+
+    #[test]
+    fn render_live_type_emits_varchar_with_length_when_present() {
+        let c = DiagColumn {
+            name: "n".into(),
+            data_type: "character varying".into(),
+            nullable: true,
+            is_pk: false,
+            default: None,
+            ordinal: 1,
+            char_max_len: Some(255),
+            numeric_precision: None,
+            numeric_scale: None,
+        };
+        assert_eq!(render_live_type(&c), "varchar(255)");
+    }
+
+    #[test]
+    fn render_live_type_drops_length_when_unset() {
+        let c = DiagColumn {
+            name: "n".into(),
+            data_type: "character varying".into(),
+            nullable: true,
+            is_pk: false,
+            default: None,
+            ordinal: 1,
+            char_max_len: None,
+            numeric_precision: None,
+            numeric_scale: None,
+        };
+        assert_eq!(render_live_type(&c), "varchar");
+    }
+
+    #[test]
+    fn render_live_type_handles_character_with_and_without_length() {
+        let with_len = DiagColumn {
+            name: "n".into(),
+            data_type: "character".into(),
+            nullable: true,
+            is_pk: false,
+            default: None,
+            ordinal: 1,
+            char_max_len: Some(10),
+            numeric_precision: None,
+            numeric_scale: None,
+        };
+        assert_eq!(render_live_type(&with_len), "char(10)");
+
+        let without_len = DiagColumn {
+            char_max_len: None,
+            ..with_len.clone()
+        };
+        assert_eq!(render_live_type(&without_len), "char");
+    }
+
+    #[test]
+    fn render_live_type_renders_numeric_with_precision_and_scale() {
+        let pcs = DiagColumn {
+            name: "n".into(),
+            data_type: "numeric".into(),
+            nullable: true,
+            is_pk: false,
+            default: None,
+            ordinal: 1,
+            char_max_len: None,
+            numeric_precision: Some(10),
+            numeric_scale: Some(2),
+        };
+        assert_eq!(render_live_type(&pcs), "numeric(10,2)");
+
+        let p_only = DiagColumn {
+            numeric_scale: None,
+            ..pcs.clone()
+        };
+        assert_eq!(render_live_type(&p_only), "numeric(10)");
+
+        let neither = DiagColumn {
+            numeric_precision: None,
+            numeric_scale: None,
+            data_type: "decimal".into(),
+            ..pcs
+        };
+        assert_eq!(render_live_type(&neither), "decimal");
+    }
+
+    #[test]
+    fn render_live_type_passes_unknown_types_through() {
+        let c = DiagColumn {
+            name: "n".into(),
+            data_type: "jsonb".into(),
+            nullable: true,
+            is_pk: false,
+            default: None,
+            ordinal: 1,
+            char_max_len: None,
+            numeric_precision: None,
+            numeric_scale: None,
+        };
+        assert_eq!(render_live_type(&c), "jsonb");
+    }
+
+    #[test]
+    fn type_strings_match_is_case_and_whitespace_insensitive() {
+        assert!(type_strings_match("VARCHAR(64)", " varchar(64) "));
+        assert!(type_strings_match("integer", "INTEGER"));
+        assert!(!type_strings_match("integer", "bigint"));
+    }
+
+    #[test]
+    fn defaults_match_treats_none_and_blank_as_equal() {
+        assert!(defaults_match(&None, &None));
+        assert!(defaults_match(&Some("  ".into()), &None));
+        assert!(defaults_match(&Some(" 42 ".into()), &Some("42".into())));
+        assert!(!defaults_match(&Some("42".into()), &Some("0".into())));
+    }
+
+    #[test]
+    fn parse_table_id_splits_on_first_dot() {
+        assert_eq!(
+            parse_table_id("public.users"),
+            ("public".into(), "users".into())
+        );
+        assert_eq!(parse_table_id("a.b.c"), ("a".into(), "b.c".into()));
+    }
+
+    #[test]
+    fn parse_table_id_returns_empty_schema_when_no_dot() {
+        assert_eq!(parse_table_id("users"), ("".into(), "users".into()));
+    }
+
+    #[test]
+    fn project_table_applies_rename_when_present() {
+        let mut map = HashMap::new();
+        map.insert(("public".to_string(), "old".to_string()), "new".to_string());
+        assert_eq!(project_table(&map, "public", "old"), "new");
+    }
+
+    #[test]
+    fn project_table_falls_back_to_original_when_no_rename() {
+        let map = HashMap::new();
+        assert_eq!(project_table(&map, "public", "kept"), "kept");
+    }
+
+    #[test]
+    fn live_fk_key_projects_renamed_tables() {
+        let mut renames = HashMap::new();
+        renames.insert(
+            ("public".to_string(), "users".to_string()),
+            "accounts".to_string(),
+        );
+
+        let fk = DiagFk {
+            id: "x".into(),
+            name: Some("fk1".into()),
+            from_schema: "public".into(),
+            from_table: "books".into(),
+            from_columns: vec!["author_id".into()],
+            to_schema: "public".into(),
+            to_table: "users".into(),
+            to_columns: vec!["id".into()],
+            on_update: None,
+            on_delete: None,
+        };
+        let key = live_fk_key(&fk, &renames);
+        assert_eq!(
+            key,
+            (
+                "public".into(),
+                "books".into(),
+                vec!["author_id".into()],
+                "public".into(),
+                "accounts".into(),
+                vec!["id".into()],
+            )
+        );
+    }
+
+    #[test]
+    fn normalize_fk_rule_drops_no_action_and_empty() {
+        assert!(normalize_fk_rule(None).is_none());
+        assert!(normalize_fk_rule(Some("")).is_none());
+        assert!(normalize_fk_rule(Some("   ")).is_none());
+        assert!(normalize_fk_rule(Some("no action")).is_none());
+        assert!(normalize_fk_rule(Some("NO ACTION")).is_none());
+    }
+
+    #[test]
+    fn normalize_fk_rule_uppercases_real_rules() {
+        assert_eq!(
+            normalize_fk_rule(Some("cascade")).as_deref(),
+            Some("CASCADE")
+        );
+        assert_eq!(
+            normalize_fk_rule(Some("  set null  ")).as_deref(),
+            Some("SET NULL")
+        );
+    }
+
+    #[test]
+    fn alter_ddl_pg_create_table_includes_pk_constraint() {
+        let ops = vec![DiffOp::AddTable {
+            schema: "public".into(),
+            name: "users".into(),
+            columns: vec![
+                OpColumn {
+                    name: "id".into(),
+                    data_type: "integer".into(),
+                    nullable: false,
+                    is_pk: true,
+                    default_value: None,
+                },
+                OpColumn {
+                    name: "email".into(),
+                    data_type: "text".into(),
+                    nullable: true,
+                    is_pk: false,
+                    default_value: None,
+                },
+            ],
+        }];
+        let sql = generate_alter_ddl(&ops, DbKind::Postgres).unwrap();
+        assert!(sql.contains("CREATE TABLE \"public\".\"users\""));
+        assert!(sql.contains("\"id\" integer NOT NULL"));
+        assert!(sql.contains("\"email\" text"));
+        assert!(sql.contains("PRIMARY KEY (\"id\")"));
+    }
+
+    #[test]
+    fn alter_ddl_pg_alter_column_nullable_uses_drop_or_set() {
+        let drop_op = DiffOp::AlterColumnNullable {
+            schema: "public".into(),
+            table: "t".into(),
+            column: "c".into(),
+            nullable: true,
+        };
+        let set_op = DiffOp::AlterColumnNullable {
+            schema: "public".into(),
+            table: "t".into(),
+            column: "c".into(),
+            nullable: false,
+        };
+        let drop_sql = generate_alter_ddl(&[drop_op], DbKind::Postgres).unwrap();
+        assert!(drop_sql.contains("ALTER COLUMN \"c\" DROP NOT NULL"));
+        let set_sql = generate_alter_ddl(&[set_op], DbKind::Postgres).unwrap();
+        assert!(set_sql.contains("ALTER COLUMN \"c\" SET NOT NULL"));
+    }
+
+    #[test]
+    fn alter_ddl_mysql_rejects_nullable_change() {
+        let op = DiffOp::AlterColumnNullable {
+            schema: "".into(),
+            table: "t".into(),
+            column: "c".into(),
+            nullable: false,
+        };
+        let err = generate_alter_ddl(&[op], DbKind::Mysql).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("mysql"));
+    }
+
+    #[test]
+    fn alter_ddl_pg_alter_column_default_set_and_drop() {
+        let set_op = DiffOp::AlterColumnDefault {
+            schema: "public".into(),
+            table: "t".into(),
+            column: "c".into(),
+            default: Some("now()".into()),
+        };
+        let drop_op = DiffOp::AlterColumnDefault {
+            schema: "public".into(),
+            table: "t".into(),
+            column: "c".into(),
+            default: None,
+        };
+        let blank_op = DiffOp::AlterColumnDefault {
+            schema: "public".into(),
+            table: "t".into(),
+            column: "c".into(),
+            default: Some("   ".into()),
+        };
+        let set_sql = generate_alter_ddl(&[set_op], DbKind::Postgres).unwrap();
+        assert!(set_sql.contains("SET DEFAULT now()"));
+        let drop_sql = generate_alter_ddl(&[drop_op], DbKind::Postgres).unwrap();
+        assert!(drop_sql.contains("DROP DEFAULT"));
+        let blank_sql = generate_alter_ddl(&[blank_op], DbKind::Postgres).unwrap();
+        assert!(blank_sql.contains("DROP DEFAULT"));
+    }
+
+    #[test]
+    fn alter_ddl_pg_add_fk_emits_constraint_with_rules() {
+        let op = DiffOp::AddFk {
+            schema: "public".into(),
+            table: "books".into(),
+            constraint_name: Some("books_author_fk".into()),
+            columns: vec!["author_id".into()],
+            target_schema: "public".into(),
+            target_table: "authors".into(),
+            target_columns: vec!["id".into()],
+            on_update: Some("NO ACTION".into()),
+            on_delete: Some("cascade".into()),
+        };
+        let sql = generate_alter_ddl(&[op], DbKind::Postgres).unwrap();
+        assert!(sql.contains(
+            "ALTER TABLE \"public\".\"books\" ADD CONSTRAINT \"books_author_fk\" FOREIGN KEY (\"author_id\") REFERENCES \"public\".\"authors\" (\"id\")"
+        ));
+        assert!(!sql.contains("ON UPDATE")); // NO ACTION drops
+        assert!(sql.contains("ON DELETE CASCADE"));
+    }
+
+    #[test]
+    fn alter_ddl_pg_add_fk_synthesizes_constraint_name_when_missing() {
+        let op = DiffOp::AddFk {
+            schema: "public".into(),
+            table: "books".into(),
+            constraint_name: None,
+            columns: vec!["author_id".into(), "tenant_id".into()],
+            target_schema: "public".into(),
+            target_table: "authors".into(),
+            target_columns: vec!["id".into(), "tenant_id".into()],
+            on_update: None,
+            on_delete: None,
+        };
+        let sql = generate_alter_ddl(&[op], DbKind::Postgres).unwrap();
+        assert!(sql.contains("ADD CONSTRAINT \"fk_books_author_id_tenant_id\""));
+    }
+
+    #[test]
+    fn alter_ddl_sqlite_rejects_add_fk() {
+        let op = DiffOp::AddFk {
+            schema: "".into(),
+            table: "books".into(),
+            constraint_name: None,
+            columns: vec!["a".into()],
+            target_schema: "".into(),
+            target_table: "authors".into(),
+            target_columns: vec!["id".into()],
+            on_update: None,
+            on_delete: None,
+        };
+        let err = generate_alter_ddl(&[op], DbKind::Sqlite).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("sqlite"));
+    }
+
+    #[test]
+    fn alter_ddl_mysql_drop_fk_uses_drop_foreign_key() {
+        let op = DiffOp::DropFk {
+            schema: "".into(),
+            table: "books".into(),
+            constraint_name: "books_author_fk".into(),
+        };
+        let sql = generate_alter_ddl(&[op], DbKind::Mysql).unwrap();
+        assert!(sql.contains("ALTER TABLE `books` DROP FOREIGN KEY `books_author_fk`"));
+    }
+
+    #[test]
+    fn alter_ddl_sqlite_rejects_drop_fk() {
+        let op = DiffOp::DropFk {
+            schema: "main".into(),
+            table: "t".into(),
+            constraint_name: "fk1".into(),
+        };
+        let err = generate_alter_ddl(&[op], DbKind::Sqlite).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("sqlite"));
+    }
+
+    #[test]
+    fn alter_ddl_mysql_rename_table_uses_rename_table_syntax() {
+        let op = DiffOp::RenameTable {
+            schema: "".into(),
+            from: "users".into(),
+            to: "accounts".into(),
+        };
+        let sql = generate_alter_ddl(&[op], DbKind::Mysql).unwrap();
+        assert!(sql.contains("RENAME TABLE `users` TO `accounts`"));
+    }
+
+    #[test]
+    fn alter_ddl_mongo_rejects_every_op() {
+        for op in [
+            DiffOp::RenameTable {
+                schema: "".into(),
+                from: "a".into(),
+                to: "b".into(),
+            },
+            DiffOp::AlterColumnType {
+                schema: "".into(),
+                table: "t".into(),
+                column: "c".into(),
+                new_type: "int".into(),
+            },
+            DiffOp::AlterColumnNullable {
+                schema: "".into(),
+                table: "t".into(),
+                column: "c".into(),
+                nullable: true,
+            },
+            DiffOp::AlterColumnDefault {
+                schema: "".into(),
+                table: "t".into(),
+                column: "c".into(),
+                default: Some("1".into()),
+            },
+            DiffOp::DropFk {
+                schema: "".into(),
+                table: "t".into(),
+                constraint_name: "fk".into(),
+            },
+        ] {
+            let err = generate_alter_ddl(&[op], DbKind::Mongo).unwrap_err();
+            assert!(err.to_string().to_lowercase().contains("mongo"));
+        }
+    }
 }
