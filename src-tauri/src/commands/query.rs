@@ -1,4 +1,6 @@
-use tauri::State;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tauri::{AppHandle, Emitter, State};
 
 use crate::drivers::{QueryResult, ScriptResult};
 use crate::engine::{EngineQuery, EngineResult};
@@ -6,9 +8,44 @@ use crate::error::{AppError, AppResult};
 use crate::pool_registry::{run_engine_with_cancel, run_script_with_cancel, run_with_cancel};
 use crate::AppState;
 
+/// Fires on the first storage-side failure to persist a query-history row.
+/// The eprintln still happens every time (so the dev terminal shows the full
+/// trail), but we only emit the frontend event once per session — the
+/// frontend's job is to show a one-off "your history isn't being saved"
+/// banner, not to spam toasts on every query.
+pub const HISTORY_DEGRADED_EVENT: &str = "history-degraded";
+
+static HISTORY_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// Wrap `Storage::log_history` so a failure is observable instead of
+/// silently dropped. Errors are logged to stderr; the first failure also
+/// emits a one-shot `history-degraded` event so the frontend can surface
+/// the regression to the user.
+async fn try_log_history(
+    state: &AppState,
+    app: &AppHandle,
+    connection_id: &str,
+    sql: &str,
+    elapsed_ms: Option<i64>,
+    row_count: Option<i64>,
+    error: Option<&str>,
+) {
+    if let Err(e) = state
+        .storage
+        .log_history(connection_id, sql, elapsed_ms, row_count, error)
+        .await
+    {
+        eprintln!("query: failed to log history for {connection_id}: {e}");
+        if !HISTORY_WARNED.swap(true, Ordering::Relaxed) {
+            let _ = app.emit(HISTORY_DEGRADED_EVENT, e.to_string());
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn run_query(
     state: State<'_, AppState>,
+    app: AppHandle,
     connection_id: String,
     query_id: String,
     sql: String,
@@ -18,28 +55,40 @@ pub async fn run_query(
 
     match &result {
         Ok(r) => {
-            let _ = state
-                .storage
-                .log_history(
-                    &connection_id,
-                    &sql,
-                    Some(r.elapsed_ms as i64),
-                    Some(r.rows.len() as i64),
-                    None,
-                )
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &sql,
+                Some(r.elapsed_ms as i64),
+                Some(r.rows.len() as i64),
+                None,
+            )
+            .await;
         }
         Err(AppError::Canceled) => {
-            let _ = state
-                .storage
-                .log_history(&connection_id, &sql, None, None, Some("canceled"))
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &sql,
+                None,
+                None,
+                Some("canceled"),
+            )
+            .await;
         }
         Err(e) => {
-            let _ = state
-                .storage
-                .log_history(&connection_id, &sql, None, None, Some(&e.to_string()))
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &sql,
+                None,
+                None,
+                Some(&e.to_string()),
+            )
+            .await;
         }
     }
 
@@ -49,6 +98,7 @@ pub async fn run_query(
 #[tauri::command]
 pub async fn run_script(
     state: State<'_, AppState>,
+    app: AppHandle,
     connection_id: String,
     query_id: String,
     sql: String,
@@ -65,29 +115,41 @@ pub async fn run_script(
                     s.rows_affected
                         .map(|n| i64::try_from(n).unwrap_or(i64::MAX))
                 });
-                let _ = state
-                    .storage
-                    .log_history(
-                        &connection_id,
-                        &s.sql_excerpt,
-                        Some(s.elapsed_ms as i64),
-                        rows,
-                        s.error.as_deref(),
-                    )
-                    .await;
+                try_log_history(
+                    &state,
+                    &app,
+                    &connection_id,
+                    &s.sql_excerpt,
+                    Some(s.elapsed_ms as i64),
+                    rows,
+                    s.error.as_deref(),
+                )
+                .await;
             }
         }
         Err(AppError::Canceled) => {
-            let _ = state
-                .storage
-                .log_history(&connection_id, &sql, None, None, Some("canceled"))
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &sql,
+                None,
+                None,
+                Some("canceled"),
+            )
+            .await;
         }
         Err(e) => {
-            let _ = state
-                .storage
-                .log_history(&connection_id, &sql, None, None, Some(&e.to_string()))
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &sql,
+                None,
+                None,
+                Some(&e.to_string()),
+            )
+            .await;
         }
     }
 
@@ -112,6 +174,7 @@ pub async fn cancel_query(state: State<'_, AppState>, query_id: String) -> AppRe
 #[tauri::command]
 pub async fn run_engine_query(
     state: State<'_, AppState>,
+    app: AppHandle,
     connection_id: String,
     query_id: String,
     query: EngineQuery,
@@ -131,28 +194,40 @@ pub async fn run_engine_query(
                     (Some(*rows as i64), Some(*elapsed_ms as i64))
                 }
             };
-            let _ = state
-                .storage
-                .log_history(&connection_id, &history_text, elapsed, rows, None)
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &history_text,
+                elapsed,
+                rows,
+                None,
+            )
+            .await;
         }
         Err(AppError::Canceled) => {
-            let _ = state
-                .storage
-                .log_history(&connection_id, &history_text, None, None, Some("canceled"))
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &history_text,
+                None,
+                None,
+                Some("canceled"),
+            )
+            .await;
         }
         Err(e) => {
-            let _ = state
-                .storage
-                .log_history(
-                    &connection_id,
-                    &history_text,
-                    None,
-                    None,
-                    Some(&e.to_string()),
-                )
-                .await;
+            try_log_history(
+                &state,
+                &app,
+                &connection_id,
+                &history_text,
+                None,
+                None,
+                Some(&e.to_string()),
+            )
+            .await;
         }
     }
 
@@ -166,5 +241,51 @@ fn engine_query_history_text(q: &EngineQuery) -> String {
         EngineQuery::Sql(s) => s.clone(),
         EngineQuery::Mongo(op) => serde_json::to_string(op)
             .unwrap_or_else(|_| format!("<unserializable mongo op: {op:?}>")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::MongoOp;
+    use serde_json::json;
+
+    #[test]
+    fn history_text_passes_sql_through_verbatim() {
+        let q = EngineQuery::Sql("SELECT 1 -- comment".into());
+        assert_eq!(engine_query_history_text(&q), "SELECT 1 -- comment");
+    }
+
+    #[test]
+    fn history_text_serializes_mongo_op_as_json() {
+        let q = EngineQuery::Mongo(Box::new(MongoOp::Find {
+            collection: "users".into(),
+            database: None,
+            filter: json!({ "active": true }),
+            projection: None,
+            limit: Some(10),
+            skip: None,
+            sort: None,
+        }));
+        let text = engine_query_history_text(&q);
+        // Must round-trip back to a MongoOp so the history view's
+        // "re-run" affordance keeps working.
+        let back: MongoOp = serde_json::from_str(&text).unwrap();
+        assert!(matches!(back, MongoOp::Find { .. }));
+        assert!(text.contains("\"users\""));
+        assert!(text.contains("\"active\""));
+    }
+
+    #[test]
+    fn history_text_for_run_command_is_a_one_liner() {
+        let q = EngineQuery::Mongo(Box::new(MongoOp::RunCommand {
+            value: json!({ "ping": 1 }),
+        }));
+        let text = engine_query_history_text(&q);
+        assert!(
+            !text.contains('\n'),
+            "history text must stay on one line: {text}"
+        );
+        assert!(text.contains("\"ping\""));
     }
 }

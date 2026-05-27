@@ -152,8 +152,9 @@ pub async fn introspect_schema(
             }
             Ok(group_rows(rows_out.into_iter()))
         }
-        None => Err(AppError::Other(
-            "introspect_schema requires a SQL engine".into(),
+        None => Err(AppError::unsupported(
+            "introspect_schema",
+            handle.kind().as_str(),
         )),
     }
 }

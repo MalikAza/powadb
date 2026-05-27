@@ -84,6 +84,16 @@ impl Storage {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
+        // One-shot snapshot of the existing DB *before* this binary's
+        // migrations touch it, so a user can roll back to the previous
+        // PowaDB version without losing their saved connections / snippets
+        // / diagrams. The backup is keyed by the running app version, so a
+        // single upgrade chain produces one file and subsequent launches
+        // on the same version are no-ops. See README → "Upgrading".
+        if let Err(e) = backup_before_migrations(&path) {
+            eprintln!("storage: pre-migration backup failed: {e}");
+        }
+
         let opts = SqliteConnectOptions::new()
             .filename(&path)
             .create_if_missing(true);
@@ -92,143 +102,7 @@ impl Storage {
             .connect_with(opts)
             .await?;
 
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS connections (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                host TEXT NOT NULL,
-                port INTEGER NOT NULL,
-                database TEXT NOT NULL,
-                username TEXT NOT NULL,
-                ssl INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
-
-        // ALTER TABLE migrations: these may fail with "duplicate column name" on already-migrated
-        // databases, which is expected and ignored. Any other failure is logged so we don't
-        // silently corrupt the schema.
-        try_add_column(&pool, "connections", "password TEXT").await;
-        try_add_column(&pool, "connections", "folder_id TEXT").await;
-        try_add_column(&pool, "connections", "color TEXT").await;
-        try_add_column(
-            &pool,
-            "connections",
-            "wg_enabled INTEGER NOT NULL DEFAULT 0",
-        )
-        .await;
-        try_add_column(&pool, "connections", "wg_config TEXT").await;
-        try_add_column(
-            &pool,
-            "connections",
-            "ssh_enabled INTEGER NOT NULL DEFAULT 0",
-        )
-        .await;
-        try_add_column(&pool, "connections", "ssh_config TEXT").await;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS folders (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                parent_id TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS query_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                connection_id TEXT NOT NULL,
-                sql TEXT NOT NULL,
-                executed_at TEXT NOT NULL DEFAULT (datetime('now')),
-                elapsed_ms INTEGER,
-                row_count INTEGER,
-                error TEXT
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_history_conn_time ON query_history(connection_id, executed_at DESC)",
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS snippets (
-                id TEXT PRIMARY KEY,
-                connection_id TEXT,
-                name TEXT NOT NULL,
-                sql TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
-
-        try_add_column(&pool, "snippets", "bytea_modes_json TEXT").await;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS diagrams (
-                id TEXT PRIMARY KEY,
-                connection_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                doc_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            "CREATE INDEX IF NOT EXISTS idx_diagrams_connection ON diagrams(connection_id)",
-        )
-        .execute(&pool)
-        .await?;
-
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS themes (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                base TEXT NOT NULL,
-                radius TEXT NOT NULL,
-                colors_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-            "#,
-        )
-        .execute(&pool)
-        .await?;
+        crate::storage_migrations::run(&pool).await?;
 
         Ok(Self { pool })
     }
@@ -712,7 +586,11 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn get_password(&self, id: &str) -> AppResult<Option<String>> {
+    /// Read the legacy plaintext password column. New code should go
+    /// through `SecretStore::get_password` instead, which prefers the OS
+    /// keychain; this method is the fallback the secret store uses for
+    /// legacy rows that haven't been migrated yet.
+    pub async fn get_legacy_password(&self, id: &str) -> AppResult<Option<String>> {
         let row = sqlx::query("SELECT password FROM connections WHERE id = ?1")
             .bind(id)
             .fetch_optional(&self.pool)
@@ -720,13 +598,36 @@ impl Storage {
         Ok(row.and_then(|r| r.try_get::<Option<String>, _>("password").ok().flatten()))
     }
 
-    pub async fn set_password(&self, id: &str, password: Option<&str>) -> AppResult<()> {
+    /// Write or clear the legacy plaintext password column. New code
+    /// should go through `SecretStore::set_password`; this is the
+    /// fallback the secret store falls back to when the OS keychain is
+    /// unavailable, and the way the migration NULLs rows it has lifted
+    /// into the keychain.
+    pub async fn set_legacy_password(&self, id: &str, password: Option<&str>) -> AppResult<()> {
         sqlx::query("UPDATE connections SET password = ?1 WHERE id = ?2")
             .bind(password)
             .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Enumerate every connection row that still has a non-NULL plaintext
+    /// password column, for the one-time keychain migration on startup.
+    pub async fn list_legacy_passwords(&self) -> AppResult<Vec<(String, String)>> {
+        let rows = sqlx::query(
+            "SELECT id, password FROM connections WHERE password IS NOT NULL AND password <> ''",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let id: String = r.try_get("id").ok()?;
+                let pw: String = r.try_get("password").ok()?;
+                Some((id, pw))
+            })
+            .collect())
     }
 
     pub async fn get_wg_config(&self, id: &str) -> AppResult<Option<String>> {
@@ -803,18 +704,50 @@ pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
-/// Best-effort `ALTER TABLE ... ADD COLUMN`. Silently ignores the "duplicate
-/// column name" error that fires on already-migrated databases; logs every
-/// other failure to stderr so schema drift is observable instead of silent.
-async fn try_add_column(pool: &SqlitePool, table: &str, column_def: &str) {
-    let sql = format!("ALTER TABLE {table} ADD COLUMN {column_def}");
-    if let Err(e) = sqlx::query(&sql).execute(pool).await {
-        let msg = e.to_string();
-        // SQLite reports "duplicate column name: X" when the column already exists.
-        if !msg.contains("duplicate column name") {
-            eprintln!("storage migration failed ({sql}): {msg}");
-        }
+/// Filename inside `app_data_dir()` for the local SQLite store. Debug builds
+/// use a separate file so `npm run tauri:dev` doesn't clobber the installed
+/// production app's data. The two files sit side by side in the same
+/// directory; the prod build never reads the dev file and vice versa.
+pub fn db_filename() -> &'static str {
+    if cfg!(debug_assertions) {
+        "powadb-dev.db"
+    } else {
+        "powadb.db"
     }
+}
+
+/// Take a one-time snapshot of `powadb.db` before this build's migrations
+/// run, so a user can downgrade to the previous PowaDB version and keep
+/// their saved connections / snippets / diagrams.
+///
+/// The backup file is named `powadb.db.backup-pre-{CARGO_PKG_VERSION}` and
+/// sits next to the DB. We skip if the source file doesn't exist (fresh
+/// install) and skip if the destination already exists (already migrated
+/// once on this version).
+///
+/// Errors are returned to the caller but treated as non-fatal there — a
+/// failed backup must not prevent the app from opening.
+fn backup_before_migrations(path: &std::path::Path) -> std::io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let backup_name = format!(
+        "{}.backup-pre-{}",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("powadb.db"),
+        env!("CARGO_PKG_VERSION"),
+    );
+    let backup_path = path.with_file_name(backup_name);
+    if backup_path.exists() {
+        return Ok(());
+    }
+    std::fs::copy(path, &backup_path)?;
+    eprintln!(
+        "storage: snapshotted DB to {} before running migrations (safe to delete once you're confident the upgrade is healthy)",
+        backup_path.display()
+    );
+    Ok(())
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -931,6 +864,39 @@ mod tests {
         assert!(s2.list().await.unwrap().is_empty());
     }
 
+    #[test]
+    fn backup_skips_when_source_missing() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.db");
+        // No source file → no-op, no backup created.
+        backup_before_migrations(&path).unwrap();
+        let entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(entries.is_empty(), "got {entries:?}");
+    }
+
+    #[test]
+    fn backup_creates_snapshot_with_version_suffix_once() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.db");
+        std::fs::write(&path, b"original-bytes").unwrap();
+
+        backup_before_migrations(&path).unwrap();
+        let expected =
+            path.with_file_name(format!("test.db.backup-pre-{}", env!("CARGO_PKG_VERSION")));
+        assert!(expected.exists(), "backup not created at {expected:?}");
+        assert_eq!(std::fs::read(&expected).unwrap(), b"original-bytes");
+
+        // Second pass with the source mutated: backup should NOT be
+        // overwritten — the contract is "snapshot the state we found on
+        // first upgrade", not "always mirror the current file".
+        std::fs::write(&path, b"mutated-bytes").unwrap();
+        backup_before_migrations(&path).unwrap();
+        assert_eq!(std::fs::read(&expected).unwrap(), b"original-bytes");
+    }
+
     #[tokio::test]
     async fn upsert_then_list_returns_connection() {
         let (_d, s) = fresh_storage().await;
@@ -983,20 +949,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn password_round_trip() {
+    async fn legacy_password_round_trip() {
         let (_d, s) = fresh_storage().await;
         s.upsert(&sample_conn("a")).await.unwrap();
-        assert_eq!(s.get_password("a").await.unwrap(), None);
-        s.set_password("a", Some("secret")).await.unwrap();
-        assert_eq!(s.get_password("a").await.unwrap(), Some("secret".into()));
-        s.set_password("a", None).await.unwrap();
-        assert_eq!(s.get_password("a").await.unwrap(), None);
+        assert_eq!(s.get_legacy_password("a").await.unwrap(), None);
+        s.set_legacy_password("a", Some("secret")).await.unwrap();
+        assert_eq!(
+            s.get_legacy_password("a").await.unwrap(),
+            Some("secret".into())
+        );
+        s.set_legacy_password("a", None).await.unwrap();
+        assert_eq!(s.get_legacy_password("a").await.unwrap(), None);
     }
 
     #[tokio::test]
-    async fn get_password_for_missing_connection_is_none() {
+    async fn get_legacy_password_for_missing_connection_is_none() {
         let (_d, s) = fresh_storage().await;
-        assert_eq!(s.get_password("missing").await.unwrap(), None);
+        assert_eq!(s.get_legacy_password("missing").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn list_legacy_passwords_returns_only_non_null_rows() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert(&sample_conn("a")).await.unwrap();
+        s.upsert(&sample_conn("b")).await.unwrap();
+        s.upsert(&sample_conn("c")).await.unwrap();
+        s.set_legacy_password("a", Some("pa")).await.unwrap();
+        s.set_legacy_password("c", Some("pc")).await.unwrap();
+        let mut found = s.list_legacy_passwords().await.unwrap();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![("a".into(), "pa".into()), ("c".into(), "pc".into())]
+        );
     }
 
     #[tokio::test]

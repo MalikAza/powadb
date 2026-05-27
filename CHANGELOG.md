@@ -1,3 +1,36 @@
+## [0.11.0] - 2026-05-27
+
+### Security
+
+- **Connection passwords moved to the OS keychain.** Saved DB credentials are now stored in **macOS Keychain**, **Windows Credential Manager**, or **libsecret** on Linux instead of the plaintext `password` column in `powadb.db`. The first time the app reads a saved password, **macOS will prompt for Keychain access** — choose **Always Allow** to avoid being prompted on every connect. Existing plaintext rows are migrated automatically on first launch; the legacy column is then NULL'd out. If the keychain backend is unavailable (CI, headless Linux without secret-service, locked Keychain) the app falls back to the SQLite column and logs a loud stderr warning. See [README → Upgrading](README.md#upgrading-from-010) for the rollback path.
+- **Strict Content Security Policy**
+- **Credentials scrubbed from error messages**
+- **Diagram-DDL allowlist.** When generating `CREATE TABLE` from a diagram document, column `data_type`, `default_value`, and FK `ON UPDATE` / `ON DELETE` rules are validated against strict allowlists. Diagram JSON imported from disk can no longer ship arbitrary SQL through these fields.
+- **PRAGMA identifier hardening.** SQLite introspection now rejects identifiers containing NUL or control characters before quoting them.
+- **hstore wire decoder** caps the pre-allocation hint so a hostile server can't trigger a multi-GB allocation via an inflated count field.
+
+### Added
+
+- **Versioned schema-migration runner** for `powadb.db`.
+- **Pre-migration DB backup.** On every launch, before any schema or password migration touches the file, `powadb.db` is copied to `powadb.db.backup-pre-<version>` alongside it. One backup per upgraded-to version; safe to delete once the new version proves stable. See [README → Upgrading](README.md#upgrading-from-010).
+- Typed `AppError` variants: `Unsupported { feature, engine }`, `BadInput { field, reason }`, `Schema(_)`. The frontend can now branch on these (e.g. tag the field a `BadInput` complained about) instead of pattern-matching on a free-form string.
+- `validate_ident_chars` helper that every DDL-generating path now uses before reaching `quote_ident`.
+
+### Changed
+
+- **Cancellation latency on large dumps** is now bounded to ~200 ms.
+- **`PoolRegistry::swap_pool_for_database`** no longer holds the pools mutex across the pool's `close().await`, so switching the active database doesn't block concurrent registry operations.
+- Engine-feature mismatches (e.g. asking Mongo for a SQL-only operation) now return a typed `Unsupported` error with the failing feature name and engine kind, instead of a generic string.
+- `validate_db_name` and "drop currently-used database" guards now return `BadInput { field, reason }` so the frontend can highlight the offending input.
+
+### Internal
+
+- **Dev/prod state split.** Debug builds (`npm run tauri:dev`) now read `powadb-dev.db` and use Keychain service `com.aza.powadb-dev`; release builds keep `powadb.db` and `com.aza.powadb`. The dev DB is seeded from the prod one on first launch so contributors don't start with an empty store. See [README → Build from source](README.md#dev-and-prod-run-side-by-side).
+- Duplicate `isGeoColumn` / `isByteaColumn` helpers extracted from `BrowseTabPane.tsx` and `ResultsGrid/Grid.tsx` into a shared `src/lib/columnTypes.ts`.
+- Dump chunk size lifted from a magic `500usize` to a named `DUMP_CHUNK_SIZE` constant with a one-line rationale.
+- `commands/diagram_diff.rs`'s five `unreachable!("Mongo has no DDL")` panics are now typed `Unsupported` errors; `commands/geo.rs` `UnsupportedType` misuse converted to `Unsupported` with the engine kind.
+- Unused `DocColumn::id` field dropped from the diagram-diff struct (serde silently ignores the extra incoming key).
+
 ## [0.10.0] - 2026-05-22
 
 ### Added

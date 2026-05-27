@@ -123,10 +123,9 @@ pub trait Engine: Send + Sync {
     async fn execute_query(&self, q: EngineQuery) -> AppResult<EngineResult> {
         match q {
             EngineQuery::Sql(sql) => self.execute(&sql).await.map(EngineResult::Tabular),
-            EngineQuery::Mongo(_) => Err(AppError::Other(format!(
-                "{:?} engine cannot execute MongoDB queries",
-                self.kind()
-            ))),
+            EngineQuery::Mongo(_) => {
+                Err(AppError::unsupported("MongoDB query", self.kind().as_str()))
+            }
         }
     }
 
@@ -154,7 +153,7 @@ pub trait Engine: Send + Sync {
 pub fn require_sql_pool<'a>(handle: &'a EngineHandle, op: &str) -> AppResult<SqlPoolView<'a>> {
     handle
         .as_sql_pool()
-        .ok_or_else(|| AppError::Other(format!("{op} requires a SQL engine")))
+        .ok_or_else(|| AppError::unsupported(op, handle.kind().as_str()))
 }
 
 // ─── Engine-agnostic query / result types ────────────────────────────────────
@@ -460,11 +459,11 @@ mod tests {
         let handle: EngineHandle = Arc::new(NoPoolEngine);
         match require_sql_pool(&handle, "introspect") {
             Ok(_) => panic!("expected an error from require_sql_pool on a non-SQL engine"),
-            Err(e) => {
-                let msg = format!("{e:?}");
-                assert!(msg.contains("introspect"));
-                assert!(msg.contains("SQL engine"));
+            Err(AppError::Unsupported { feature, engine }) => {
+                assert_eq!(feature, "introspect");
+                assert_eq!(engine, "mongo");
             }
+            Err(e) => panic!("expected Unsupported variant, got {e:?}"),
         }
     }
 
@@ -473,7 +472,12 @@ mod tests {
         let engine = NoPoolEngine;
         let q = EngineQuery::Mongo(Box::new(MongoOp::RunCommand { value: json!({}) }));
         let err = engine.execute_query(q).await.unwrap_err();
-        let msg = format!("{err:?}");
-        assert!(msg.contains("cannot execute MongoDB"));
+        match err {
+            AppError::Unsupported { feature, engine } => {
+                assert_eq!(feature, "MongoDB query");
+                assert_eq!(engine, "mongo");
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
     }
 }

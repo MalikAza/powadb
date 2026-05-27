@@ -18,6 +18,13 @@ use crate::error::{AppError, AppResult};
 use crate::storage::{AppSettings, DbKind, SavedConnection};
 use crate::AppState;
 
+/// Rows per multi-row `INSERT INTO ... VALUES (...), (...)` statement emitted by
+/// the native dumper. Trades memory pressure (per-chunk string + bind buffer)
+/// against round-trip overhead. 500 keeps a single chunk well under common
+/// `max_allowed_packet` / proto limits while still amortising the per-statement
+/// cost; tune here if you hit OOM on very wide tables.
+const DUMP_CHUNK_SIZE: usize = 500;
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
@@ -627,6 +634,31 @@ async fn wait_with_cancel(
     }
 }
 
+/// Race a future against the dump's cancel flag. The flag is polled every
+/// 200ms — same cadence as `wait_with_cancel` — so a Cancel click never
+/// waits more than that even if the underlying future is mid-fetch.
+///
+/// This exists for the long-running `SELECT *` at the top of
+/// `dump_table_data`: before this helper, the user could click Cancel
+/// while the driver was streaming a multi-million-row scan and we'd
+/// happily run the full query before checking the flag at the next chunk
+/// boundary.
+async fn race_cancel<F, T>(fut: F, cancel: Arc<AtomicBool>) -> AppResult<T>
+where
+    F: std::future::Future<Output = AppResult<T>>,
+{
+    tokio::pin!(fut);
+    loop {
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AppError::Canceled);
+        }
+        match tokio::time::timeout(std::time::Duration::from_millis(200), &mut fut).await {
+            Ok(res) => return res,
+            Err(_) => continue,
+        }
+    }
+}
+
 // ─── Native engine: export ────────────────────────────────────────────────────
 
 async fn export_native(
@@ -977,10 +1009,32 @@ async fn dump_table_data(
     let sql_my = format!("SELECT * FROM `{}`", t.table);
     let sql_lite = format!("SELECT * FROM \"{}\"", t.table.replace('"', "\"\""));
 
+    // Race the SELECT against the dump's cancel flag. Driver `execute`
+    // calls are async and yield while waiting on the wire, so this lets
+    // the user Cancel a multi-million-row scan without sitting through
+    // the whole fetch first.
     let result = match require_sql_pool(handle, "dump_table_data")? {
-        SqlPoolView::Postgres(pool) => pg_drv::execute(pool, &sql_pg).await?,
-        SqlPoolView::Mysql(pool) => mysql_drv::execute(pool, &sql_my).await?,
-        SqlPoolView::Sqlite(pool) => sqlite_drv::execute(pool, &sql_lite).await?,
+        SqlPoolView::Postgres(pool) => {
+            race_cancel(
+                async { pg_drv::execute(pool, &sql_pg).await },
+                cancel.clone(),
+            )
+            .await?
+        }
+        SqlPoolView::Mysql(pool) => {
+            race_cancel(
+                async { mysql_drv::execute(pool, &sql_my).await },
+                cancel.clone(),
+            )
+            .await?
+        }
+        SqlPoolView::Sqlite(pool) => {
+            race_cancel(
+                async { sqlite_drv::execute(pool, &sql_lite).await },
+                cancel.clone(),
+            )
+            .await?
+        }
     };
 
     let kind = handle.kind();
@@ -1004,9 +1058,8 @@ async fn dump_table_data(
         DbKind::Mongo => unreachable!("dump_table_data only runs for SQL engines"),
     };
 
-    let chunk_size = 500usize;
     let mut rows_done: u64 = 0;
-    for chunk in result.rows.chunks(chunk_size) {
+    for chunk in result.rows.chunks(DUMP_CHUNK_SIZE) {
         if cancel.load(Ordering::SeqCst) {
             return Err(AppError::Canceled);
         }
@@ -1051,6 +1104,29 @@ async fn dump_table_data(
     Ok(())
 }
 
+/// Render a single value as the SQL-text literal that goes into a native
+/// dump INSERT statement. Per-engine type-name dispatch handles the
+/// non-string cases (booleans, BYTEA / BLOB binary, JSON/JSONB) so the
+/// output is a literal the target DB will parse back to the same value.
+///
+/// **Known limitations** (call out before touching this function — the
+/// tests in `mod tests` pin every quoted case, but these two are
+/// documented gaps the dump format inherently can't cover):
+///
+/// 1. **Postgres `standard_conforming_strings = off`.** PostgreSQL ≥ 9.1
+///    defaults to `on`, where backslashes in `'…'` literals are passed
+///    through verbatim. If the user has set the parameter to `off`
+///    cluster-wide, BYTEA `'\x6162'::bytea` and JSON literals containing
+///    `\n` etc. will be re-interpreted on restore and produce different
+///    bytes. The dump format has no way to mark string literals as
+///    `E'…'` per-statement without bloating every INSERT, so we treat
+///    this as out of scope — point the user at the Tool engine
+///    (`pg_dump`) for full-fidelity dumps.
+/// 2. **Postgres array types** (`int[]`, `text[]`, …). The driver
+///    surfaces them as JSON arrays, which fall into the `other` arm
+///    below and end up as `'[1,2,3]'`. Postgres array literal syntax is
+///    `'{1,2,3}'` — different shape — so restoring an array column via
+///    the native engine will fail. Same workaround: use `pg_dump`.
 fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
     if v.is_null() {
         return "NULL".into();
@@ -1076,7 +1152,10 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
         },
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
-            // Bytea/blobs were already encoded as hex literals upstream.
+            // Bytea/blobs were already encoded as hex literals upstream
+            // (`\xHEX` for Postgres BYTEA; `0xHEX` for MySQL BLOB family);
+            // those literal forms must not be wrapped in single quotes
+            // for MySQL, and must be wrapped + cast for Postgres.
             match (kind, upper.as_str()) {
                 (DbKind::Postgres, "BYTEA") => format!("'{}'::bytea", s.replace('\'', "''")),
                 (
@@ -1696,5 +1775,183 @@ mod tests {
     #[test]
     fn default_true_returns_true() {
         assert!(default_true());
+    }
+
+    // ─── format_sql_literal ───────────────────────────────────────────────
+    //
+    // These tests pin the SQL-text encoding the native dumper produces so
+    // future refactors can't silently regress escaping. The properties to
+    // preserve: single quotes are doubled; binary blobs round-trip through
+    // their engine-native hex literal; booleans match the engine's
+    // expectation; JSON columns get the right cast.
+
+    #[test]
+    fn literal_null_is_unquoted() {
+        for k in [DbKind::Postgres, DbKind::Mysql, DbKind::Sqlite] {
+            assert_eq!(format_sql_literal(&json!(null), "TEXT", k), "NULL");
+        }
+    }
+
+    #[test]
+    fn literal_boolean_matches_engine_convention() {
+        assert_eq!(
+            format_sql_literal(&json!(true), "BOOL", DbKind::Postgres),
+            "TRUE"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(false), "BOOL", DbKind::Postgres),
+            "FALSE"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(true), "TINYINT", DbKind::Mysql),
+            "1"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(false), "TINYINT", DbKind::Mysql),
+            "0"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(true), "INTEGER", DbKind::Sqlite),
+            "1"
+        );
+    }
+
+    #[test]
+    fn literal_number_renders_unquoted() {
+        assert_eq!(
+            format_sql_literal(&json!(42), "INT", DbKind::Postgres),
+            "42"
+        );
+        assert_eq!(
+            format_sql_literal(&json!(-1.5), "NUMERIC", DbKind::Postgres),
+            "-1.5"
+        );
+        assert_eq!(format_sql_literal(&json!(0), "INT", DbKind::Mysql), "0");
+    }
+
+    #[test]
+    fn literal_string_doubles_single_quote() {
+        let out = format_sql_literal(&json!("O'Brien"), "TEXT", DbKind::Postgres);
+        assert_eq!(out, "'O''Brien'");
+    }
+
+    #[test]
+    fn literal_string_doubles_every_single_quote() {
+        let out = format_sql_literal(&json!("'a'b'c'"), "TEXT", DbKind::Sqlite);
+        assert_eq!(out, "'''a''b''c'''");
+    }
+
+    #[test]
+    fn literal_string_preserves_backslash_and_newline_unchanged() {
+        // We rely on Postgres standard_conforming_strings=on (the default
+        // since 9.1) — backslash and newlines are kept literally inside
+        // the quoted form.
+        let out = format_sql_literal(&json!("line1\\nline2"), "TEXT", DbKind::Postgres);
+        assert_eq!(out, "'line1\\nline2'");
+        let out = format_sql_literal(&json!("with\nreal\nnewlines"), "TEXT", DbKind::Sqlite);
+        assert_eq!(out, "'with\nreal\nnewlines'");
+    }
+
+    #[test]
+    fn literal_postgres_bytea_wraps_with_cast() {
+        // The driver supplies the value as `\xHEX`. The literal needs to
+        // be quoted and cast so the restored INSERT yields the same bytes.
+        let out = format_sql_literal(&json!("\\x6162"), "BYTEA", DbKind::Postgres);
+        assert_eq!(out, "'\\x6162'::bytea");
+    }
+
+    #[test]
+    fn literal_mysql_blob_passes_hex_literal_through_unquoted() {
+        // The driver supplies the value as `0xHEX`. MySQL accepts that as
+        // a hex literal *only* when it's not wrapped in quotes.
+        for ty in [
+            "BLOB",
+            "TINYBLOB",
+            "MEDIUMBLOB",
+            "LONGBLOB",
+            "BINARY",
+            "VARBINARY",
+        ] {
+            let out = format_sql_literal(&json!("0x6162"), ty, DbKind::Mysql);
+            assert_eq!(out, "0x6162", "ty={ty}");
+        }
+    }
+
+    #[test]
+    fn literal_jsonb_quotes_and_casts_object() {
+        let out = format_sql_literal(&json!({"a": 1, "b": "c"}), "JSONB", DbKind::Postgres);
+        assert!(
+            out.starts_with("'") && out.ends_with("'::jsonb"),
+            "got {out}"
+        );
+        // Parse it back so we know the cast target receives valid JSON.
+        let inner = out.trim_start_matches('\'').trim_end_matches("'::jsonb");
+        let _: serde_json::Value = serde_json::from_str(inner).unwrap();
+    }
+
+    #[test]
+    fn literal_json_value_with_embedded_quote_round_trips() {
+        // An object whose value contains a single quote must come back
+        // through as valid JSON containing the original character.
+        let v = json!({"name": "O'Brien"});
+        let out = format_sql_literal(&v, "JSON", DbKind::Postgres);
+        let inner = out
+            .trim_start_matches('\'')
+            .trim_end_matches("'::json")
+            .replace("''", "'");
+        let back: serde_json::Value = serde_json::from_str(&inner).unwrap();
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn literal_json_array_lands_in_other_arm_for_non_jsonb_columns() {
+        // Array on a non-JSON column (e.g. a Postgres text[]) — falls
+        // through to the generic `'…'` path. See the docstring's "Known
+        // limitations": this won't round-trip; we test it so future
+        // refactors don't silently fix it without updating the docs and
+        // the user-facing "use pg_dump" guidance.
+        let out = format_sql_literal(&json!([1, 2, 3]), "INT4", DbKind::Postgres);
+        assert_eq!(out, "'[1,2,3]'");
+    }
+
+    #[test]
+    fn literal_type_name_is_case_insensitive() {
+        // The driver may report `bytea` or `BYTEA` depending on path —
+        // the dispatch must not be sensitive to that.
+        let a = format_sql_literal(&json!("\\x"), "bytea", DbKind::Postgres);
+        let b = format_sql_literal(&json!("\\x"), "BYTEA", DbKind::Postgres);
+        assert_eq!(a, b);
+    }
+
+    // ─── race_cancel ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn race_cancel_returns_inner_result_when_flag_stays_false() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let out = race_cancel(async { Ok::<i32, AppError>(42) }, cancel)
+            .await
+            .unwrap();
+        assert_eq!(out, 42);
+    }
+
+    #[tokio::test]
+    async fn race_cancel_returns_canceled_when_flag_flips_during_work() {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_clone = cancel.clone();
+        // Spawn the cancel-flag flip; the inner future sleeps long enough
+        // that the 200ms poll inside race_cancel sees the flag first.
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_clone.store(true, Ordering::SeqCst);
+        });
+        let result: AppResult<i32> = race_cancel(
+            async {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                Ok(0)
+            },
+            cancel,
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::Canceled)));
     }
 }

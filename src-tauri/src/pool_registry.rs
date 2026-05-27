@@ -399,15 +399,19 @@ impl PoolRegistry {
         // Pull out the current PoolEntry. Keep its tunnel reference alive
         // through the rebuild so we don't trigger `gc_tunnels` against a
         // tunnel we're about to reuse.
-        let prev_tunnel = {
-            let mut pools = self.pools.lock().await;
-            match pools.remove(connection_id) {
-                Some(entry) => {
-                    entry.handle.close().await;
-                    entry.tunnel
-                }
-                None => None,
+        //
+        // The remove + close split is deliberate: `handle.close().await` can
+        // block on the pool draining, and holding `self.pools.lock()` across
+        // that await would block every other registry operation
+        // (`get_or_open`, `active_ids`, …) for the duration. We swap to a
+        // local Option, drop the lock, then await.
+        let removed = self.pools.lock().await.remove(connection_id);
+        let prev_tunnel = match removed {
+            Some(entry) => {
+                entry.handle.close().await;
+                entry.tunnel
             }
+            None => None,
         };
 
         self.set_state(connection_id, ConnState::Connecting).await;
