@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { presetColors, THEME_TOKENS } from "@/lib/themeTokens";
 import type { AppSettings, StoredTheme } from "../ipc";
 
 const defaultSettings: AppSettings = {
@@ -23,7 +25,7 @@ vi.mock("../ipc", () => ({
   ipc: ipcMock,
 }));
 
-const { useTheme } = await import("./theme");
+const { useTheme, useResolvedTheme, useApplyTheme } = await import("./theme");
 
 function makeStored(over: Partial<StoredTheme> = {}): StoredTheme {
   return {
@@ -312,5 +314,135 @@ describe("useTheme store", () => {
       expect(lastSaveCall?.[0].theme_kind).toBe("preset");
       expect(lastSaveCall?.[0].theme_value).toBe("system");
     });
+  });
+});
+
+function makeCustomTheme(over: Partial<{ id: string; base: "light" | "dark" }> = {}) {
+  const base = over.base ?? ("dark" as const);
+  return {
+    id: over.id ?? "c1",
+    name: "Custom",
+    base,
+    radius: "0.5rem",
+    colors: presetColors(base),
+    created_at: "",
+    updated_at: "",
+  };
+}
+
+describe("useResolvedTheme", () => {
+  beforeEach(() => {
+    useTheme.setState({
+      selection: { kind: "preset", mode: "system" },
+      customThemes: [],
+      hydrated: false,
+    });
+    mockMatchMedia(false);
+  });
+
+  it("resolves a 'light' preset to 'light'", () => {
+    useTheme.setState({ selection: { kind: "preset", mode: "light" } });
+    const { result } = renderHook(() => useResolvedTheme());
+    expect(result.current).toBe("light");
+  });
+
+  it("resolves a 'dark' preset to 'dark'", () => {
+    useTheme.setState({ selection: { kind: "preset", mode: "dark" } });
+    const { result } = renderHook(() => useResolvedTheme());
+    expect(result.current).toBe("dark");
+  });
+
+  it("resolves the 'system' preset against matchMedia", () => {
+    mockMatchMedia(true);
+    useTheme.setState({ selection: { kind: "preset", mode: "system" } });
+    const { result } = renderHook(() => useResolvedTheme());
+    expect(result.current).toBe("dark");
+  });
+
+  it("uses the custom theme's base when a custom selection is active", () => {
+    const custom = makeCustomTheme({ id: "x", base: "dark" });
+    useTheme.setState({
+      customThemes: [custom],
+      selection: { kind: "custom", id: "x" },
+    });
+    const { result } = renderHook(() => useResolvedTheme());
+    expect(result.current).toBe("dark");
+  });
+
+  it("falls back to 'light' when the custom theme is missing from the list", () => {
+    useTheme.setState({ customThemes: [], selection: { kind: "custom", id: "ghost" } });
+    const { result } = renderHook(() => useResolvedTheme());
+    expect(result.current).toBe("light");
+  });
+});
+
+describe("useApplyTheme", () => {
+  afterEach(() => {
+    document.documentElement.classList.remove("dark");
+    for (const t of THEME_TOKENS) document.documentElement.style.removeProperty(`--${t}`);
+    document.documentElement.style.removeProperty("--radius");
+  });
+
+  beforeEach(() => {
+    useTheme.setState({
+      selection: { kind: "preset", mode: "system" },
+      customThemes: [],
+      hydrated: false,
+    });
+    mockMatchMedia(false);
+  });
+
+  it("toggles the 'dark' class on the html element when the resolved theme is dark", () => {
+    useTheme.setState({ selection: { kind: "preset", mode: "dark" } });
+    renderHook(() => useApplyTheme());
+    expect(document.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("clears the 'dark' class when the resolved theme is light", () => {
+    document.documentElement.classList.add("dark");
+    useTheme.setState({ selection: { kind: "preset", mode: "light" } });
+    renderHook(() => useApplyTheme());
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+  });
+
+  it("clears inline CSS variables when the selection is a preset", () => {
+    document.documentElement.style.setProperty("--background", "red");
+    useTheme.setState({ selection: { kind: "preset", mode: "light" } });
+    renderHook(() => useApplyTheme());
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("");
+  });
+
+  it("applies inline CSS variables for the active custom theme", () => {
+    const custom = makeCustomTheme({ id: "abc", base: "dark" });
+    useTheme.setState({
+      customThemes: [custom],
+      selection: { kind: "custom", id: "abc" },
+    });
+    renderHook(() => useApplyTheme());
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe(
+      custom.colors.background,
+    );
+    expect(document.documentElement.style.getPropertyValue("--radius")).toBe("0.5rem");
+  });
+
+  it("clears inline vars when the active custom id is missing from the list", () => {
+    document.documentElement.style.setProperty("--background", "#abcdef");
+    useTheme.setState({ customThemes: [], selection: { kind: "custom", id: "ghost" } });
+    renderHook(() => useApplyTheme());
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("");
+  });
+
+  it("removes inline vars on unmount of a custom theme", () => {
+    const custom = makeCustomTheme({ id: "u1", base: "light" });
+    useTheme.setState({
+      customThemes: [custom],
+      selection: { kind: "custom", id: "u1" },
+    });
+    const { unmount } = renderHook(() => useApplyTheme());
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe(
+      custom.colors.background,
+    );
+    act(() => unmount());
+    expect(document.documentElement.style.getPropertyValue("--background")).toBe("");
   });
 });
