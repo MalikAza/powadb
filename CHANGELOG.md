@@ -1,3 +1,17 @@
+## [0.11.1]
+
+### Added
+
+- **Native macOS title bar merged into the themed topbar.** On macOS, the native title bar now adopts the in-app sidebar color via `titleBarStyle: Overlay`, with the window title hidden so only the PowaDB logo and active-connection label show. Traffic-light buttons stay in place. Windows and Linux are untouched.
+- **Search + Light/Dark filter on custom themes.** The *Custom themes* list in *Settings → Appearance* gains the same search box and All / Light / Dark filter pills as the community list, sharing a single `ThemeFilterBar` component.
+- **"Community" badge on installed community themes.** Custom themes whose `name + base` matches a bundled community palette are tagged with a small "Community" pill so you can tell preset-derived themes from hand-crafted ones at a glance.
+
+### Changed
+
+- **Topbar logo enlarged** (20 → 28 px) and the bar height raised slightly so the macOS traffic lights sit centered with the logo and title.
+- **Community themes hide once installed.** Installing a community theme removes it from the *Community themes* list (it lives only in *Custom themes*). Deleting the custom copy puts it back. Match is by `name + base`, so renaming the custom copy makes the community entry reappear.
+- **Theme lists compacted** to ~2 rows each (was ~4) in *Settings → Appearance*, leaving more room above the fold.
+
 ## [0.11.0] - 2026-05-27
 
 ### Security
