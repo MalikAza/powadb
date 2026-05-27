@@ -485,7 +485,7 @@ function PresetCard({
   );
 }
 
-function FilterPill({
+export function FilterPill({
   active,
   onClick,
   icon,
@@ -513,7 +513,7 @@ function FilterPill({
   );
 }
 
-function ThemeFilterBar({
+export function ThemeFilterBar({
   query,
   onQueryChange,
   filter,
@@ -559,7 +559,7 @@ function ThemeFilterBar({
   );
 }
 
-function CommunityThemeRow({
+export function CommunityThemeRow({
   community,
   onInstall,
 }: {
@@ -596,7 +596,7 @@ function CommunityThemeRow({
   );
 }
 
-function CustomThemeRow({
+export function CustomThemeRow({
   theme,
   active,
   fromCommunity,
