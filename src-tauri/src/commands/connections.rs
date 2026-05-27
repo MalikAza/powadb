@@ -270,7 +270,89 @@ pub async fn resolve_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::{AppSettings, SettingsStore, Storage};
+    use crate::{
+        job_registry::JobRegistry, pool_registry::PoolRegistry, secret_store::SecretStore,
+    };
     use tempfile::TempDir;
+
+    async fn make_state(dir: &TempDir) -> AppState {
+        let storage = Storage::open(dir.path().join("test.db")).await.unwrap();
+        AppState {
+            storage,
+            pools: PoolRegistry::default(),
+            jobs: JobRegistry::default(),
+            settings: SettingsStore::new(AppSettings::default()),
+            secrets: SecretStore::default(),
+        }
+    }
+
+    fn sample_conn(id: &str) -> SavedConnection {
+        SavedConnection {
+            id: id.into(),
+            name: format!("conn-{id}"),
+            kind: DbKind::Postgres,
+            host: "localhost".into(),
+            port: 5432,
+            database: "app".into(),
+            username: "u".into(),
+            ssl: false,
+            folder_id: None,
+            color: None,
+            wg: None,
+            ssh: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn resolve_connection_returns_record_with_no_password_or_tunnels() {
+        let dir = TempDir::new().unwrap();
+        let state = make_state(&dir).await;
+        state.storage.upsert(&sample_conn("c1")).await.unwrap();
+
+        let (conn, pw, wg, ssh) = resolve_connection(&state, "c1").await.unwrap();
+
+        assert_eq!(conn.id, "c1");
+        assert_eq!(conn.name, "conn-c1");
+        assert!(pw.is_none(), "no password set");
+        assert!(wg.is_none(), "no WG config");
+        assert!(ssh.is_none(), "no SSH config");
+    }
+
+    #[tokio::test]
+    async fn resolve_connection_returns_stored_wg_and_ssh_blobs() {
+        let dir = TempDir::new().unwrap();
+        let state = make_state(&dir).await;
+        state.storage.upsert(&sample_conn("c1")).await.unwrap();
+        state
+            .storage
+            .set_wg_config("c1", Some("[Interface]\nPrivateKey = …\n"))
+            .await
+            .unwrap();
+        state
+            .storage
+            .set_ssh_config("c1", Some("{\"host\":\"j\"}"))
+            .await
+            .unwrap();
+
+        let (_, _, wg, ssh) = resolve_connection(&state, "c1").await.unwrap();
+
+        assert!(wg.as_deref().unwrap().contains("[Interface]"));
+        assert_eq!(ssh.as_deref(), Some("{\"host\":\"j\"}"));
+    }
+
+    #[tokio::test]
+    async fn resolve_connection_errors_on_unknown_id() {
+        let dir = TempDir::new().unwrap();
+        let state = make_state(&dir).await;
+
+        let err = resolve_connection(&state, "missing").await.unwrap_err();
+
+        match err {
+            AppError::ConnectionNotFound(id) => assert_eq!(id, "missing"),
+            other => panic!("expected ConnectionNotFound, got {other:?}"),
+        }
+    }
 
     #[tokio::test]
     async fn read_text_file_returns_contents_under_the_limit() {
