@@ -278,6 +278,7 @@ export function BrowseGrid({
                 decodedGeoms={decodedGeoms}
                 allRows={result.rows}
                 selectedRows={selected}
+                byteaColMode={byteaColMode}
                 onToggleRow={toggleRow}
                 onRequestDelete={setPendingDeleteRow}
                 onStartEdit={(col, value) => setEditing({ row: rowIdx, col, value })}
@@ -703,6 +704,7 @@ function BrowseBodyRow({
   decodedGeoms,
   allRows,
   selectedRows,
+  byteaColMode,
   onToggleRow,
   onRequestDelete,
   onStartEdit,
@@ -726,6 +728,7 @@ function BrowseBodyRow({
   decodedGeoms: Map<string, GeomDecoded>;
   allRows: readonly (readonly unknown[])[];
   selectedRows: Set<number>;
+  byteaColMode: Map<number, ByteaDisplayMode>;
   onToggleRow: (rowIdx: number) => void;
   onRequestDelete: (rowIdx: number) => void;
   onStartEdit: (col: number, value: string) => void;
@@ -819,6 +822,8 @@ function BrowseBodyRow({
         const canFollowFk = fk !== undefined && v !== null && v !== undefined;
         const shown = displayString(rowIdx, colIdx, v);
         const startEdit = () => onStartEdit(colIdx, shown ?? "");
+        const bMode = byteaColMode.get(colIdx);
+        const byteaDisplay = bMode && bMode !== "hex" && shown !== null ? shown : undefined;
         return (
           <td
             key={col.name}
@@ -866,7 +871,13 @@ function BrowseBodyRow({
                 target={`${fk.to_schema ? `${fk.to_schema}.` : ""}${fk.to_table}`}
                 onOpen={() => onFollowFk(fk, row)}
                 onEdit={canEdit ? startEdit : null}
-                onShowFull={() => onShowPreview({ columnName: col.name, value: v })}
+                onShowFull={() =>
+                  onShowPreview({
+                    columnName: col.name,
+                    value: v,
+                    displayValue: byteaDisplay,
+                  })
+                }
               />
             ) : (
               <ContextMenu>
@@ -881,7 +892,13 @@ function BrowseBodyRow({
                 </ContextMenuTrigger>
                 <ContextMenuContent>
                   <ContextMenuItem
-                    onSelect={() => onShowPreview({ columnName: col.name, value: v })}
+                    onSelect={() =>
+                      onShowPreview({
+                        columnName: col.name,
+                        value: v,
+                        displayValue: byteaDisplay,
+                      })
+                    }
                   >
                     <Eye className="size-3.5" />
                     Show full value

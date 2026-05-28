@@ -507,7 +507,18 @@ export function ResultsGrid({
                   onToggleRow={toggleRow}
                   onShowSelectedOnMap={showSelectedRowsOnMap}
                   onSelectCell={(r, c) => setSelected({ row: r, col: c })}
-                  onShowCellPreview={(columnName, value) => setCellPreview({ columnName, value })}
+                  onShowCellPreview={(columnName, value) => {
+                    const col = result.columns.find((c) => c.name === columnName);
+                    let displayValue: string | undefined;
+                    if (col && isByteaColumn(kind, col) && typeof value === "string") {
+                      const mode = getByteaMode(columnName);
+                      if (mode && mode !== "hex") {
+                        const formatted = formatBytea(value, mode);
+                        if (formatted !== null) displayValue = formatted;
+                      }
+                    }
+                    setCellPreview({ columnName, value, displayValue });
+                  }}
                 />
               );
             })}

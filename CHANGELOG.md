@@ -5,6 +5,7 @@
 - **Native macOS title bar merged into the themed topbar.** On macOS, the native title bar now adopts the in-app sidebar color via `titleBarStyle: Overlay`, with the window title hidden so only the PowaDB logo and active-connection label show. Traffic-light buttons stay in place. Windows and Linux are untouched.
 - **Search + Light/Dark filter on custom themes.** The *Custom themes* list in *Settings → Appearance* gains the same search box and All / Light / Dark filter pills as the community list, sharing a single `ThemeFilterBar` component.
 - **"Community" badge on installed community themes.** Custom themes whose `name + base` matches a bundled community palette are tagged with a small "Community" pill so you can tell preset-derived themes from hand-crafted ones at a glance.
+- **BYTEA cell-preview modal honors the column display mode.** When a BYTEA column is rendered as ULID, UUID, or Hex, the "Show full value" dialog now shows — and the Copy button copies — the value in that representation instead of the raw `\xHEX` payload.
 
 ### Changed
 
