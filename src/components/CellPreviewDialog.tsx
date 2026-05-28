@@ -7,7 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export type CellPreview = { columnName: string; value: unknown };
+export type CellPreview = { columnName: string; value: unknown; displayValue?: string };
 
 export function CellPreviewDialog({
   preview,
@@ -19,11 +19,13 @@ export function CellPreviewDialog({
   const text =
     preview === null
       ? ""
-      : preview.value === null || preview.value === undefined
-        ? "NULL"
-        : typeof preview.value === "object"
-          ? JSON.stringify(preview.value, null, 2)
-          : String(preview.value);
+      : preview.displayValue !== undefined
+        ? preview.displayValue
+        : preview.value === null || preview.value === undefined
+          ? "NULL"
+          : typeof preview.value === "object"
+            ? JSON.stringify(preview.value, null, 2)
+            : String(preview.value);
   return (
     <Dialog open={preview !== null} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">

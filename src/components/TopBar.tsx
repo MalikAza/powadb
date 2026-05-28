@@ -1,13 +1,27 @@
 import { useConnections } from "../stores/connections";
 
+const isMacTauri =
+  typeof window !== "undefined" &&
+  "__TAURI_INTERNALS__" in window &&
+  navigator.userAgent.includes("Mac");
+
 export function TopBar() {
   const { connections, activeId } = useConnections();
   const conn = connections.find((c) => c.id === activeId);
 
   return (
-    <div className="flex h-10 items-center justify-between border-b border-border bg-sidebar px-3 text-xs">
+    <div
+      data-tauri-drag-region
+      className="flex py-1 items-center justify-between border-b border-border bg-sidebar px-6 text-xs"
+      style={isMacTauri ? { paddingLeft: 78 } : undefined}
+    >
       <div className="flex items-center gap-2 font-semibold">
-        <img src="/powadb-logo.png" alt="PowaDB" className="size-5" />
+        <img
+          src="/powadb-logo.png"
+          alt="PowaDB"
+          className="size-7"
+          style={{ pointerEvents: "none" }}
+        />
         <span>PowaDB</span>
         {conn && (
           <span className="ml-3 flex items-center gap-2 font-normal text-muted-foreground">

@@ -232,4 +232,29 @@ mod tests {
             "invalid default_value: contains semicolon"
         );
     }
+
+    #[test]
+    fn scrub_handles_empty_input() {
+        assert_eq!(scrub_credentials(""), "");
+    }
+
+    #[test]
+    fn scrub_redacts_mariadb_uri() {
+        let s = scrub_credentials("connect mariadb://u:p@host/db failed");
+        assert_eq!(s, "connect mariadb://***@host/db failed");
+    }
+
+    #[test]
+    fn scrub_redacts_uri_at_end_of_message_with_no_terminator() {
+        // `auth_end = Some(_)` + `stop = None` → userinfo runs to end of string.
+        let s = scrub_credentials("connect failed: mongodb://u:p@host.example.com");
+        assert_eq!(s, "connect failed: mongodb://***@host.example.com");
+    }
+
+    #[test]
+    fn scrub_leaves_at_sign_after_path_alone() {
+        // `@` appears AFTER a path separator → not a userinfo `@`, do not redact.
+        let s = scrub_credentials("see postgres://host/path@anchor for more");
+        assert_eq!(s, "see postgres://host/path@anchor for more");
+    }
 }
