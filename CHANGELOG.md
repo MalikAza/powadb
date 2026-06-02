@@ -1,3 +1,8 @@
+## [0.11.2] - 2026-06-02
+
+### Fixed
+- **Cartography background layers are now loading properly**: Because of a security issue, the links of the layers were blocked by the app.
+
 ## [0.11.1] - 2026-05-29
 
 ### Added

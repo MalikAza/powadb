@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PowaDB",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "identifier": "com.aza.powadb",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost; font-src 'self' data:; object-src 'none'; frame-src 'none'; worker-src 'self' blob:"
+      "csp": "default-src 'self'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://data.geopf.fr; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://data.geopf.fr; font-src 'self' data:; object-src 'none'; frame-src 'none'; worker-src 'self' blob:"
     }
   },
   "bundle": {
