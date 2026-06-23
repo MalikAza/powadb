@@ -1,3 +1,14 @@
+## [0.11.3] - 2026-06-23
+
+### Added
+
+- **Databases tree under each connection in the sidebar.** Postgres/MySQL connections gain an expand chevron that lazily lists their databases (MongoDB Compass-like). Clicking a database activates the connection and switches to it, with the current database highlighted.
+
+### Fixed
+
+- **Schema tree no longer hangs on "Connecting…" after switching database from the command palette.** Switching via `⌘K` went through `save_connection`, which closed the pool without a state transition, so the tree never re-introspected until a manual refresh. Both the palette and the schema tree now use the dedicated `switch_database` path, which reuses the active tunnel and emits proper state events.
+- **The Databases panel keeps its open/closed state across a switch.** It previously collapsed every time because its expanded state was lost when the panel briefly unmounted to load the new database list.
+
 ## [0.11.2] - 2026-06-02
 
 ### Fixed
