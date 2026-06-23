@@ -35,6 +35,7 @@ type Actions = {
   deactivate: () => void;
   refreshConnected: () => Promise<void>;
   disconnect: (id: string) => Promise<void>;
+  switchDatabase: (id: string, database: string) => Promise<void>;
   setConnState: (id: string, state: ConnState) => void;
 };
 
@@ -90,6 +91,18 @@ export const useConnections = create<State & Actions>((set, get) => ({
     emit("connection-disconnected", id);
     if (get().activeId === id) set({ activeId: null });
     await get().refreshConnected();
+  },
+
+  async switchDatabase(id, database) {
+    // The dedicated `switch_database` command reuses the active SSH/WG tunnel
+    // and only rebuilds the sqlx pool, so the swap is sub-second and emits a
+    // proper connecting→ready transition (which the SchemaTree relies on to
+    // re-introspect). Going through `save` instead would close the pool and
+    // leave the schema tree stuck on "Connecting…".
+    await ipc.switchDatabase(id, database);
+    set((s) => ({
+      connections: s.connections.map((c) => (c.id === id ? { ...c, database } : c)),
+    }));
   },
 
   async saveFolder(input) {

@@ -71,6 +71,7 @@ function useDatabaseActions(
   dispatchFetch: Dispatch<FetchAction>,
 ) {
   const setDatabasesInStore = useSchema((s) => s.setDatabases);
+  const switchDatabaseAction = useConnections((s) => s.switchDatabase);
   const [dropDb, setDropDb] = useState<{ pending: string | null; busy: string | null }>({
     pending: null,
     busy: null,
@@ -115,13 +116,7 @@ function useDatabaseActions(
   async function switchDatabase(db: string) {
     if (!conn || db === conn.database) return;
     try {
-      // The dedicated `switch_database` command reuses the active SSH/WG
-      // tunnel and only rebuilds the sqlx pool, so the swap is sub-second
-      // instead of paying a full handshake.
-      await ipc.switchDatabase(conn.id, db);
-      useConnections.setState((s) => ({
-        connections: s.connections.map((c) => (c.id === conn.id ? { ...c, database: db } : c)),
-      }));
+      await switchDatabaseAction(conn.id, db);
       toast.success(`Switched to ${db}`);
     } catch (e) {
       toast.error(`Failed to switch: ${String(e)}`);
