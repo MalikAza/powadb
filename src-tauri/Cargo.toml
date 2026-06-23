@@ -1,6 +1,6 @@
 [package]
 name = "powadb"
-version = "0.11.2"
+version = "0.11.3"
 description = "PowaDB — a fast modern database client"
 authors = ["aza"]
 edition = "2021"

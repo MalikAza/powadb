@@ -21,7 +21,8 @@ type Props = {
 };
 
 export function CommandPalette({ open, onOpenChange }: Props) {
-  const { connections, activeId, activate, connectedIds, disconnect, save } = useConnections();
+  const { connections, activeId, activate, connectedIds, disconnect, switchDatabase } =
+    useConnections();
   const { tabs, activeTabId, newQueryTab, closeTab, patchTab } = useTabs();
   const openExportDialog = useUi((s) => s.openExportDialog);
   const openImportDialog = useUi((s) => s.openImportDialog);
@@ -43,24 +44,10 @@ export function CommandPalette({ open, onOpenChange }: Props) {
     onOpenChange(false);
   }
 
-  async function switchDatabase(db: string) {
+  async function pickDatabase(db: string) {
     if (!activeConn || db === activeConn.database) return;
     try {
-      // Preserve tunnel flags — see SchemaTree.tsx for the same caveat.
-      await save({
-        id: activeConn.id,
-        name: activeConn.name,
-        kind: activeConn.kind,
-        host: activeConn.host,
-        port: activeConn.port,
-        database: db,
-        username: activeConn.username,
-        ssl: activeConn.ssl,
-        folder_id: activeConn.folder_id,
-        color: activeConn.color,
-        wg_enabled: !!activeConn.wg,
-        ssh_enabled: !!activeConn.ssh,
-      });
+      await switchDatabase(activeConn.id, db);
       toast.success(`Switched to ${db}`);
     } catch (e) {
       toast.error(`Failed to switch: ${String(e)}`);
@@ -211,7 +198,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
                     value={`switch db ${db}`}
                     disabled={isActive}
                     onSelect={() => {
-                      switchDatabase(db);
+                      pickDatabase(db);
                       close();
                     }}
                   >
