@@ -1,10 +1,12 @@
 import {
   ChevronDown,
   ChevronRight,
+  Database,
   Download,
   Folder as FolderIcon,
   FolderOpen,
   FolderPlus,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -13,6 +15,7 @@ import {
   Upload,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,7 +27,9 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { onActivateKey } from "@/lib/a11y";
 import { cn } from "@/lib/utils";
+import { ipc } from "../ipc";
 import { useConnections } from "../stores/connections";
+import { useSchema } from "../stores/schema";
 import { useUi } from "../stores/ui";
 import type { Folder, SavedConnection } from "../types";
 import { buildTree, type FolderNode } from "../utils/folderTree";
@@ -340,6 +345,45 @@ function ConnRow({
   // Subscribe to just this connection's state so we don't re-render the whole
   // list every time any other connection's state changes.
   const connState = useConnections((s) => s.connStates[c.id]);
+  const switchDatabase = useConnections((s) => s.switchDatabase);
+  const databases = useSchema((s) => s.databasesByConnection[c.id]);
+  const setDatabases = useSchema((s) => s.setDatabases);
+  // Only engines whose `list_databases` returns rows get a tree (Postgres /
+  // MySQL); SQLite and Mongo return an empty list from that command.
+  const canListDatabases = c.kind === "postgres" || c.kind === "mysql";
+  const [expanded, setExpanded] = useState(false);
+  const [loadingDbs, setLoadingDbs] = useState(false);
+
+  async function toggleExpanded() {
+    const next = !expanded;
+    setExpanded(next);
+    // Fetch lazily on first expand. `list_databases` opens the pool through the
+    // proper SSH/WG tunnel via `get_or_open`, so by the time a database row is
+    // clickable the pool is live and `switchDatabase` can reuse that tunnel.
+    if (next && !databases) {
+      setLoadingDbs(true);
+      try {
+        const dbs = await ipc.listDatabases(c.id);
+        setDatabases(c.id, dbs);
+      } catch (e) {
+        toast.error(`Failed to list databases: ${String(e)}`);
+        setExpanded(false);
+      } finally {
+        setLoadingDbs(false);
+      }
+    }
+  }
+
+  async function pickDatabase(db: string) {
+    onActivate(c.id);
+    if (db === c.database) return;
+    try {
+      await switchDatabase(c.id, db);
+      toast.success(`Switched to ${db}`);
+    } catch (e) {
+      toast.error(`Failed to switch: ${String(e)}`);
+    }
+  }
   const stateKind = connState?.kind ?? (isConnected ? "ready" : "idle");
   const indicatorClass =
     stateKind === "ready"
@@ -360,89 +404,157 @@ function ConnRow({
             : "Connection error"
           : "Not connected";
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-pressed={isActive}
-      onClick={() => onActivate(c.id)}
-      onDoubleClick={() => onEdit(c.id)}
-      onKeyDown={onActivateKey(() => onActivate(c.id))}
-      className={cn(
-        "group relative cursor-pointer rounded-md py-1 pr-2 text-xs",
-        isActive ? "bg-primary/15 text-foreground" : "hover:bg-sidebar-accent",
-      )}
-      style={{ paddingLeft: 8 + depth * 12 + 16 }}
-    >
-      {c.color && (
-        <span
-          aria-hidden
-          className="absolute left-0 top-1 bottom-1 w-1 rounded-full"
-          style={{ backgroundColor: c.color, marginLeft: depth * 12 + 4 }}
-        />
-      )}
-      <div className="flex items-center justify-between gap-1">
-        <span
-          role="status"
-          aria-label={indicatorTitle}
-          title={indicatorTitle}
-          className={cn("size-1.5 shrink-0 rounded-full", indicatorClass)}
-        />
-        <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
-        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
-          {c.kind}
-        </span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-pressed={isActive}
+        onClick={() => onActivate(c.id)}
+        onDoubleClick={() => onEdit(c.id)}
+        onKeyDown={onActivateKey(() => onActivate(c.id))}
+        className={cn(
+          "group relative cursor-pointer rounded-md py-1 pr-2 text-xs",
+          isActive ? "bg-primary/15 text-foreground" : "hover:bg-sidebar-accent",
+        )}
+        style={{ paddingLeft: 8 + depth * 12 + 16 }}
+      >
+        {c.color && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1 bottom-1 w-1 rounded-full"
+            style={{ backgroundColor: c.color, marginLeft: depth * 12 + 4 }}
+          />
+        )}
+        {canListDatabases && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleExpanded();
+            }}
+            className="absolute top-1.5 flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            style={{ left: 8 + depth * 12 }}
+            aria-expanded={expanded}
+            title={expanded ? "Hide databases" : "Show databases"}
+          >
+            {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          </button>
+        )}
+        <div className="flex items-center justify-between gap-1">
+          <span
+            role="status"
+            aria-label={indicatorTitle}
+            title={indicatorTitle}
+            className={cn("size-1.5 shrink-0 rounded-full", indicatorClass)}
+          />
+          <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
+          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
+            {c.kind}
+          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+                onClick={(e) => e.stopPropagation()}
+                title="More actions"
+              >
+                <MoreHorizontal className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
               onClick={(e) => e.stopPropagation()}
-              title="More actions"
+              className="text-xs"
             >
-              <MoreHorizontal className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()} className="text-xs">
-            <DropdownMenuItem onSelect={() => onEdit(c.id)}>
-              <Pencil className="size-3.5" />
-              Edit…
-            </DropdownMenuItem>
-            {isConnected && (
-              <DropdownMenuItem onSelect={() => onDisconnect(c.id)}>
-                <Unplug className="size-3.5" />
-                Disconnect
+              <DropdownMenuItem onSelect={() => onEdit(c.id)}>
+                <Pencil className="size-3.5" />
+                Edit…
               </DropdownMenuItem>
-            )}
-            <DropdownMenuItem
-              onSelect={() => {
-                onActivate(c.id);
-                openExportDialog(c.id);
-              }}
-            >
-              <Download className="size-3.5" />
-              Export database…
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => {
-                onActivate(c.id);
-                openImportDialog(c.id);
-              }}
-            >
-              <Upload className="size-3.5" />
-              Import SQL file…
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c)}>
-              <Trash2 className="size-3.5" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {isConnected && (
+                <DropdownMenuItem onSelect={() => onDisconnect(c.id)}>
+                  <Unplug className="size-3.5" />
+                  Disconnect
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                onSelect={() => {
+                  onActivate(c.id);
+                  openExportDialog(c.id);
+                }}
+              >
+                <Download className="size-3.5" />
+                Export database…
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  onActivate(c.id);
+                  openImportDialog(c.id);
+                }}
+              >
+                <Upload className="size-3.5" />
+                Import SQL file…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c)}>
+                <Trash2 className="size-3.5" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          {c.username}@{c.host}:{c.port}/{c.database}
+        </div>
       </div>
-      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-        {c.username}@{c.host}:{c.port}/{c.database}
-      </div>
-    </div>
+
+      {expanded && (
+        <div>
+          {loadingDbs && !databases ? (
+            <div
+              className="flex items-center gap-1 py-0.5 text-[11px] text-muted-foreground"
+              style={{ paddingLeft: 8 + depth * 12 + 28 }}
+            >
+              <Loader2 className="size-3 animate-spin" />
+              <span>Loading…</span>
+            </div>
+          ) : databases && databases.length > 0 ? (
+            databases.map((db) => {
+              const isCurrent = db === c.database;
+              return (
+                <button
+                  key={db}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    pickDatabase(db);
+                  }}
+                  disabled={isCurrent}
+                  title={isCurrent ? "Current database" : `Switch to ${db}`}
+                  className={cn(
+                    "flex w-full items-center gap-1 rounded py-0.5 pr-2 text-left text-[11px]",
+                    isCurrent
+                      ? "cursor-default font-medium text-primary"
+                      : "text-foreground hover:bg-sidebar-accent",
+                  )}
+                  style={{ paddingLeft: 8 + depth * 12 + 28 }}
+                >
+                  <Database className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{db}</span>
+                </button>
+              );
+            })
+          ) : (
+            <div
+              className="py-0.5 text-[11px] text-muted-foreground"
+              style={{ paddingLeft: 8 + depth * 12 + 28 }}
+            >
+              No databases
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }
