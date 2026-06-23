@@ -470,7 +470,9 @@ function DatabasesPanel({
   onRequestDrop,
   onCreate,
 }: DatabasesPanelProps) {
-  const [databasesOpen, setDatabasesOpen] = useState(false);
+  const databasesOpen = useUi((s) => s.databasesOpen);
+  const toggleDatabases = useUi((s) => s.toggleDatabases);
+  const setDatabasesOpen = useUi((s) => s.setDatabasesOpen);
   const [createDb, setCreateDb] = useState<{ open: boolean; name: string; busy: boolean }>({
     open: false,
     name: "",
@@ -501,7 +503,7 @@ function DatabasesPanel({
       <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <button
           type="button"
-          onClick={() => setDatabasesOpen((v) => !v)}
+          onClick={toggleDatabases}
           className="flex flex-1 items-center gap-1 rounded px-1 py-0.5 hover:bg-sidebar-accent"
         >
           {databasesOpen ? (
