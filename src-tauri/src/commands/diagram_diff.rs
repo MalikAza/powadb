@@ -665,6 +665,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 quote_ident(to, kind),
             )]),
             DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
+            DbKind::S3 => Err(AppError::unsupported("DDL operation", "s3")),
         },
         DiffOp::AddColumn {
             schema,
@@ -731,6 +732,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 "sqlite",
             )),
             DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
+            DbKind::S3 => Err(AppError::unsupported("DDL operation", "s3")),
         },
         DiffOp::AlterColumnNullable {
             schema,
@@ -758,6 +760,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 "sqlite",
             )),
             DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
+            DbKind::S3 => Err(AppError::unsupported("DDL operation", "s3")),
         },
         DiffOp::AlterColumnDefault {
             schema,
@@ -798,6 +801,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 "sqlite",
             )),
             DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
+            DbKind::S3 => Err(AppError::unsupported("DDL operation", "s3")),
         },
         DiffOp::AddFk {
             schema,
@@ -859,6 +863,7 @@ fn render_op(op: &DiffOp, kind: DbKind) -> AppResult<Vec<String>> {
                 "sqlite",
             )),
             DbKind::Mongo => Err(AppError::unsupported("DDL operation", "mongo")),
+            DbKind::S3 => Err(AppError::unsupported("DDL operation", "s3")),
         },
     }
 }

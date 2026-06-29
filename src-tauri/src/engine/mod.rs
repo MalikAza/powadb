@@ -30,11 +30,13 @@ use crate::storage::DbKind;
 pub mod mongo;
 pub mod mysql;
 pub mod postgres;
+pub mod s3;
 pub mod sqlite;
 
 pub use mongo::MongoEngine;
 pub use mysql::MysqlEngine;
 pub use postgres::PostgresEngine;
+pub use s3::S3Engine;
 pub use sqlite::SqliteEngine;
 
 /// Reference-counted handle to a live database connection pool.
@@ -58,6 +60,10 @@ pub enum SqlPoolView<'a> {
 pub enum QueryLanguage {
     Sql,
     Mongo,
+    /// The engine has no query language at all — there is no editor. Object
+    /// stores (S3) are browsed, not queried; the frontend shows an object
+    /// browser instead of a query editor for these.
+    None,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -143,6 +149,13 @@ pub trait Engine: Send + Sync {
     /// `mongodb::Client` access (introspection, namespace listing, …).
     /// SQL engines return `None`.
     fn as_mongo(&self) -> Option<&crate::engine::mongo::MongoEngine> {
+        None
+    }
+
+    /// Downcast to the S3 engine for the object-storage command paths
+    /// (bucket/object listing, metadata, download, preview). Every other
+    /// engine returns `None`.
+    fn as_s3(&self) -> Option<&crate::engine::s3::S3Engine> {
         None
     }
 }

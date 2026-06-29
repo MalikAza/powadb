@@ -29,7 +29,9 @@ pub fn quote_ident(name: &str, kind: DbKind) -> String {
             let escaped = name.replace('`', "``");
             format!("`{}`", escaped)
         }
-        DbKind::Mongo => unreachable!("Mongo doesn't use SQL identifier quoting"),
+        DbKind::Mongo | DbKind::S3 => {
+            unreachable!("non-SQL engines don't use SQL identifier quoting")
+        }
     }
 }
 
