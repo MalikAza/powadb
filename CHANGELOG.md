@@ -1,3 +1,34 @@
+## [0.12.0-beta.1] - 2026-06-29
+
+> **Beta release.** This build ships the new S3 connection type for early
+> feedback. The rest of the app is stable; only the S3 feature is beta. If you
+> rely on PowaDB day-to-day and don't need S3, you can wait for `0.12.0` final.
+
+### Added
+
+- **S3 / object-storage connections (Beta).** PowaDB can now connect to
+  S3-compatible object stores — **Garage, RustFS, MinIO, OVH Object Storage,
+  AWS S3** — and browse them from a new object-browser tab: list buckets,
+  navigate prefixes (folders), inspect object metadata, **download** objects to
+  disk (with progress + cancel), and **preview** text/JSON/images inline.
+  Create a connection with type **"S3 / Object storage"** and fill in the
+  endpoint host, access key, secret key, and (optionally) region.
+
+  **Scope of this beta:** read-only browsing + download + preview. **Writing
+  (upload, delete, bucket creation) is not included yet** — that's planned for a
+  later release.
+
+  **What may still change:** the connection form reuses the existing fields
+  (endpoint, access key, secret key, region) and infers **path-style vs
+  virtual-hosted** addressing from the endpoint (path-style for everything
+  except `amazonaws.com`). This heuristic and the field layout may evolve before
+  `0.12.0` final, so a saved S3 connection might need re-creating across beta
+  builds.
+
+  **Found a problem?** Please report it at
+  <https://github.com/MalikAza/powadb/issues> with your provider (Garage / MinIO
+  / OVH / …) and whether path-style addressing was needed.
+
 ## [0.11.3] - 2026-06-23
 
 ### Added
