@@ -1,8 +1,11 @@
-## [0.12.0-beta.1] - 2026-06-29
+## [0.12.0-1] - 2026-06-29
 
 > **Beta release.** This build ships the new S3 connection type for early
-> feedback. The rest of the app is stable; only the S3 feature is beta. If you
-> rely on PowaDB day-to-day and don't need S3, you can wait for `0.12.0` final.
+> feedback. The rest of the app is stable; only the S3 feature is beta. The
+> `-1` suffix marks this as the first numbered pre-release of `0.12.0` (the
+> Windows MSI installer can't encode a `-beta` label, so betas are numbered
+> `0.12.0-1`, `0.12.0-2`, … before the `0.12.0` final). If you rely on PowaDB
+> day-to-day and don't need S3, you can wait for `0.12.0` final.
 
 ### Added
 
