@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { DbKind } from "@/types";
 
-export const dbKindSchema = z.enum(["postgres", "mysql", "sqlite", "mongo"]);
+export const dbKindSchema = z.enum(["postgres", "mysql", "sqlite", "mongo", "s3"]);
 
 export const themeModeSchema = z.enum(["light", "dark", "system"]);
 export type ThemeModeEnum = z.infer<typeof themeModeSchema>;
@@ -277,4 +277,8 @@ export const KIND_DEFAULTS: Record<DbKind, { port: number; database: string; use
   // Mongo: `database` may hold a full mongodb:// or mongodb+srv:// URI, in
   // which case host/port/username are ignored.
   mongo: { port: 27017, database: "", username: "" },
+  // S3 object store: `host` is the endpoint host, `port` the endpoint port,
+  // `username` the access key, `database` the region. Validated through the
+  // generic host/port/username path (endpoint + access key required).
+  s3: { port: 443, database: "", username: "" },
 };

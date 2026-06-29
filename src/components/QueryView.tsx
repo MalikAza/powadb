@@ -22,6 +22,10 @@ const DiagramTabPane = lazy(() =>
   import("./Diagram/DiagramTabPane").then((m) => ({ default: m.DiagramTabPane })),
 );
 
+const ObjectBrowserPane = lazy(() =>
+  import("./ObjectBrowserPane").then((m) => ({ default: m.ObjectBrowserPane })),
+);
+
 export function QueryView() {
   const { connections, activeId } = useConnections();
   const conn = connections.find((c) => c.id === activeId);
@@ -77,13 +81,23 @@ export function QueryView() {
     );
   }
 
+  // Object stores have no query/diagram tabs; they're opened by clicking a
+  // bucket in the sidebar.
+  const isObjectStore = conn.kind === "s3";
+
   if (!activeTab) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
-        <p>No tab open.</p>
-        <Button onClick={() => newQueryTab(activeId)}>
-          <Plus className="size-4" /> New query tab
-        </Button>
+        {isObjectStore ? (
+          <p>Select a bucket on the left to browse its objects.</p>
+        ) : (
+          <>
+            <p>No tab open.</p>
+            <Button onClick={() => newQueryTab(activeId)}>
+              <Plus className="size-4" /> New query tab
+            </Button>
+          </>
+        )}
       </div>
     );
   }
@@ -95,8 +109,8 @@ export function QueryView() {
         activeId={activeTab.id}
         onSelect={(id) => setActiveTab(id)}
         onClose={(id) => closeTab(id)}
-        onNewQuery={() => newQueryTab(activeId)}
-        onNewDiagram={() => openDiagramTab(activeId)}
+        onNewQuery={isObjectStore ? null : () => newQueryTab(activeId)}
+        onNewDiagram={isObjectStore ? null : () => openDiagramTab(activeId)}
       />
       {activeTab.kind === "browse" ? (
         <Suspense fallback={<div className="flex-1" />}>
@@ -105,6 +119,10 @@ export function QueryView() {
       ) : activeTab.kind === "diagram" ? (
         <Suspense fallback={<div className="flex-1" />}>
           <DiagramTabPane key={activeTab.id} tab={activeTab} conn={conn} />
+        </Suspense>
+      ) : activeTab.kind === "objects" ? (
+        <Suspense fallback={<div className="flex-1" />}>
+          <ObjectBrowserPane key={activeTab.id} tab={activeTab} conn={conn} />
         </Suspense>
       ) : (
         <QueryTabPane key={activeTab.id} tab={activeTab} conn={conn} />
@@ -121,12 +139,12 @@ function TabBar({
   onNewQuery,
   onNewDiagram,
 }: {
-  tabs: { id: string; title: string; kind: "query" | "browse" | "diagram" }[];
+  tabs: { id: string; title: string; kind: "query" | "browse" | "diagram" | "objects" }[];
   activeId: string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  onNewQuery: () => void;
-  onNewDiagram: () => void;
+  onNewQuery: (() => void) | null;
+  onNewDiagram: (() => void) | null;
 }) {
   return (
     <div className="flex h-9 shrink-0 items-center border-b border-border bg-sidebar">
@@ -159,10 +177,18 @@ function TabBar({
                   ? "bg-primary/30 text-foreground"
                   : t.kind === "diagram"
                     ? "bg-sky-500/30 text-foreground"
-                    : "bg-muted text-muted-foreground",
+                    : t.kind === "objects"
+                      ? "bg-amber-500/30 text-foreground"
+                      : "bg-muted text-muted-foreground",
               )}
             >
-              {t.kind === "browse" ? "T" : t.kind === "diagram" ? "D" : "Q"}
+              {t.kind === "browse"
+                ? "T"
+                : t.kind === "diagram"
+                  ? "D"
+                  : t.kind === "objects"
+                    ? "S3"
+                    : "Q"}
             </span>
             <span className="truncate">{t.title}</span>
             <button
@@ -178,27 +204,33 @@ function TabBar({
           </div>
         ))}
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="mr-2 size-6 shrink-0"
-            title="New tab"
-            aria-label="New tab"
-          >
-            <Plus className="size-3.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={onNewQuery}>
-            <SquareCode className="size-3.5" /> New query tab
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={onNewDiagram}>
-            <Network className="size-3.5" /> New diagram tab
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {(onNewQuery || onNewDiagram) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="mr-2 size-6 shrink-0"
+              title="New tab"
+              aria-label="New tab"
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {onNewQuery && (
+              <DropdownMenuItem onClick={onNewQuery}>
+                <SquareCode className="size-3.5" /> New query tab
+              </DropdownMenuItem>
+            )}
+            {onNewDiagram && (
+              <DropdownMenuItem onClick={onNewDiagram}>
+                <Network className="size-3.5" /> New diagram tab
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }

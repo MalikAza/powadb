@@ -23,6 +23,7 @@ import { useSchema } from "../stores/schema";
 import { useTabs } from "../stores/tabs";
 import { useUi } from "../stores/ui";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { S3BucketTree } from "./S3BucketTree";
 
 type TableMeta = SchemaMeta["tables"][number];
 type Conn = ReturnType<typeof useConnections.getState>["connections"][number];
@@ -330,8 +331,11 @@ export function SchemaTree() {
   // re-open a pool the user just disconnected.
   useEffect(() => {
     if (!activeId) return;
+    // S3 has no SQL schema/database introspection; the bucket tree fetches
+    // its own data. Skip the SQL probes so they don't error against it.
+    if (conn?.kind === "s3") return;
     if (connState.kind === "ready") refresh();
-  }, [activeId, connState.kind, conn?.database]);
+  }, [activeId, connState.kind, conn?.database, conn?.kind]);
 
   function browseTable(schema: string, table: string) {
     if (!activeId) return;
@@ -385,6 +389,11 @@ export function SchemaTree() {
   }, [openTables]);
 
   if (!activeId) return null;
+
+  // S3 connections have no SQL schema; show a bucket tree instead.
+  if (conn?.kind === "s3") {
+    return <S3BucketTree connectionId={activeId} connState={connState} />;
+  }
 
   return (
     <div className="text-xs">
