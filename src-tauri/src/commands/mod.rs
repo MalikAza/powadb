@@ -10,6 +10,7 @@ pub mod folders;
 pub mod geo;
 pub mod history;
 pub mod query;
+pub mod s3;
 pub mod schema;
 pub mod settings;
 pub mod snippets;

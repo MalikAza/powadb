@@ -51,7 +51,17 @@ export type DiagramTab = BaseTab & {
   introspection: DiagramIntrospection | null;
 };
 
-export type Tab = QueryTab | BrowseTab | DiagramTab;
+export type ObjectBrowserTab = BaseTab & {
+  kind: "objects";
+  /** The bucket being browsed. */
+  bucket: string;
+  /** Current `/`-delimited prefix ("folder"). Empty string is the bucket root. */
+  prefix: string;
+  /** Currently selected object key, for the preview pane. */
+  selectedKey: string | null;
+};
+
+export type Tab = QueryTab | BrowseTab | DiagramTab | ObjectBrowserTab;
 
 type State = {
   tabs: Tab[];
@@ -72,6 +82,7 @@ type Actions = {
     initialFilters?: Record<string, Filter>,
   ) => string;
   openDiagramTab: (connectionId: string) => string;
+  openObjectBrowserTab: (connectionId: string, bucket: string) => string;
   closeTab: (id: string) => void;
   closeTabsForConnection: (connectionId: string) => void;
   setActiveTab: (id: string) => void;
@@ -170,6 +181,33 @@ export const useTabs = create<State & Actions>((set, get) => ({
       diagramId: null,
       mode: "modeler",
       introspection: null,
+    };
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
+    return id;
+  },
+
+  openObjectBrowserTab(connectionId, bucket): string {
+    // One tab per (connection, bucket); reuse if already open.
+    const existing = get().tabs.find(
+      (t): t is ObjectBrowserTab =>
+        t.kind === "objects" && t.connectionId === connectionId && t.bucket === bucket,
+    );
+    if (existing) {
+      set({ activeTabId: existing.id });
+      return existing.id;
+    }
+    const id = newId("tab");
+    const tab: ObjectBrowserTab = {
+      id,
+      kind: "objects",
+      connectionId,
+      title: bucket,
+      bucket,
+      prefix: "",
+      selectedKey: null,
+      result: null,
+      error: null,
+      loading: false,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
     return id;

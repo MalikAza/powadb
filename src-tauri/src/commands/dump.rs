@@ -300,6 +300,10 @@ enum ToolKind {
 }
 
 fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf> {
+    // Object stores have no native dump/restore CLI.
+    if matches!(kind, DbKind::S3) {
+        return None;
+    }
     let override_path = match (kind, tool) {
         (DbKind::Postgres, ToolKind::Dump) => s.pg_dump_path.as_deref(),
         (DbKind::Postgres, ToolKind::Client) => s.psql_path.as_deref(),
@@ -309,6 +313,7 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Sqlite, _) => s.sqlite3_path.as_deref(),
         (DbKind::Mongo, ToolKind::Dump) => s.mongodump_path.as_deref(),
         (DbKind::Mongo, ToolKind::Client) => s.mongorestore_path.as_deref(),
+        (DbKind::S3, _) => unreachable!("S3 returns early above"),
     };
     if let Some(p) = override_path.filter(|p| !p.is_empty()) {
         return Some(PathBuf::from(p));
@@ -321,6 +326,7 @@ fn resolve_tool(s: &AppSettings, kind: DbKind, tool: ToolKind) -> Option<PathBuf
         (DbKind::Sqlite, _) => "sqlite3",
         (DbKind::Mongo, ToolKind::Dump) => "mongodump",
         (DbKind::Mongo, ToolKind::Client) => "mongorestore",
+        (DbKind::S3, _) => unreachable!("S3 returns early above"),
     };
     which::which(bin).ok()
 }
@@ -454,6 +460,7 @@ async fn export_with_tool(
                 }
             }
         }
+        DbKind::S3 => unreachable!("S3 has no native dump (supports_native_dump is false)"),
     }
 
     if matches!(conn.kind, DbKind::Sqlite) {
@@ -560,6 +567,7 @@ async fn import_with_tool(
             cmd.arg(&conn.database);
             feed_via_stdin = true;
         }
+        DbKind::S3 => unreachable!("S3 has no native restore (supports_native_dump is false)"),
     }
 
     if feed_via_stdin {
@@ -1048,14 +1056,18 @@ async fn dump_table_data(
         .map(|c| match kind {
             DbKind::Postgres | DbKind::Sqlite => format!("\"{}\"", c.name),
             DbKind::Mysql => format!("`{}`", c.name),
-            DbKind::Mongo => unreachable!("dump_table_data only runs for SQL engines"),
+            DbKind::Mongo | DbKind::S3 => {
+                unreachable!("dump_table_data only runs for SQL engines")
+            }
         })
         .collect();
     let table_qualified = match kind {
         DbKind::Postgres => format!("\"{}\".\"{}\"", t.schema, t.table),
         DbKind::Mysql => format!("`{}`", t.table),
         DbKind::Sqlite => format!("\"{}\"", t.table.replace('"', "\"\"")),
-        DbKind::Mongo => unreachable!("dump_table_data only runs for SQL engines"),
+        DbKind::Mongo | DbKind::S3 => {
+            unreachable!("dump_table_data only runs for SQL engines")
+        }
     };
 
     let mut rows_done: u64 = 0;
@@ -1148,7 +1160,9 @@ fn format_sql_literal(v: &Value, type_name: &str, kind: DbKind) -> String {
                     "0".into()
                 }
             }
-            DbKind::Mongo => unreachable!("format_sql_literal only runs for SQL engines"),
+            DbKind::Mongo | DbKind::S3 => {
+                unreachable!("format_sql_literal only runs for SQL engines")
+            }
         },
         Value::Number(n) => n.to_string(),
         Value::String(s) => {

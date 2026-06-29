@@ -262,6 +262,11 @@ pub fn run() {
             commands::settings::save_settings,
             commands::settings::open_external,
             commands::capabilities::get_capabilities,
+            commands::s3::s3_list_buckets,
+            commands::s3::s3_list_objects,
+            commands::s3::s3_object_meta,
+            commands::s3::s3_preview_object,
+            commands::s3::s3_download_object,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

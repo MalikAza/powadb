@@ -133,9 +133,10 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
   }, [watchedKind]);
 
   const isSqlite = watchedKind === "sqlite";
+  const isS3 = watchedKind === "s3";
   const wgEnabled = form.watch("wg_enabled");
   const sshEnabled = form.watch("ssh_enabled");
-  const isMultiStep = (wgEnabled || sshEnabled) && !isSqlite;
+  const isMultiStep = (wgEnabled || sshEnabled) && !isSqlite && !isS3;
   const sshAuthMethod = form.watch("ssh_auth_method");
 
   useEffect(() => {
@@ -273,6 +274,7 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
               <Step1Connection
                 form={form}
                 isSqlite={isSqlite}
+                isS3={isS3}
                 showPassword={showPassword}
                 onToggleShowPassword={() => setShowPassword((v) => !v)}
                 onPickSqlitePath={pickSqlitePath}
@@ -333,6 +335,7 @@ type ConnectionFormHandle = UseFormReturn<ConnectionFormInput, unknown, Connecti
 type Step1Props = {
   form: ConnectionFormHandle;
   isSqlite: boolean;
+  isS3: boolean;
   showPassword: boolean;
   onToggleShowPassword: () => void;
   onPickSqlitePath: () => void;
@@ -342,6 +345,7 @@ type Step1Props = {
 function Step1Connection({
   form,
   isSqlite,
+  isS3,
   showPassword,
   onToggleShowPassword,
   onPickSqlitePath,
@@ -380,6 +384,7 @@ function Step1Connection({
                 <SelectItem value="mysql">MySQL / MariaDB</SelectItem>
                 <SelectItem value="sqlite">SQLite</SelectItem>
                 <SelectItem value="mongo">MongoDB</SelectItem>
+                <SelectItem value="s3">S3 / Object storage</SelectItem>
               </SelectContent>
             </Select>
             <FormMessage />
@@ -394,9 +399,11 @@ function Step1Connection({
             name="host"
             render={({ field }) => (
               <FormItem>
-                <FormLabel className="text-xs font-normal text-muted-foreground">Host</FormLabel>
+                <FormLabel className="text-xs font-normal text-muted-foreground">
+                  {isS3 ? "Endpoint host" : "Host"}
+                </FormLabel>
                 <FormControl>
-                  <Input {...field} />
+                  <Input {...field} placeholder={isS3 ? "s3.gra.io.cloud.ovh.net" : undefined} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -424,7 +431,7 @@ function Step1Connection({
         render={({ field }) => (
           <FormItem>
             <FormLabel className="text-xs font-normal text-muted-foreground">
-              {isSqlite ? "Database file" : "Database (optional)"}
+              {isSqlite ? "Database file" : isS3 ? "Region (optional)" : "Database (optional)"}
             </FormLabel>
             <FormControl>
               {isSqlite ? (
@@ -436,7 +443,10 @@ function Step1Connection({
                   </Button>
                 </div>
               ) : (
-                <Input {...field} placeholder="leave empty to pick later" />
+                <Input
+                  {...field}
+                  placeholder={isS3 ? "us-east-1 (default)" : "leave empty to pick later"}
+                />
               )}
             </FormControl>
             <FormMessage />
@@ -452,7 +462,7 @@ function Step1Connection({
             render={({ field }) => (
               <FormItem>
                 <FormLabel className="text-xs font-normal text-muted-foreground">
-                  Username
+                  {isS3 ? "Access key" : "Username"}
                 </FormLabel>
                 <FormControl>
                   <Input {...field} />
@@ -502,40 +512,46 @@ function Step1Connection({
                 <FormControl>
                   <Checkbox checked={field.value} onCheckedChange={field.onChange} />
                 </FormControl>
-                <FormLabel className="cursor-pointer text-xs font-normal">Require TLS</FormLabel>
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            control={form.control}
-            name="wg_enabled"
-            render={({ field }) => (
-              <FormItem className="flex items-center gap-x-2 gap-y-0">
-                <FormControl>
-                  <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                </FormControl>
                 <FormLabel className="cursor-pointer text-xs font-normal">
-                  Connect through WireGuard tunnel
+                  {isS3 ? "Use HTTPS" : "Require TLS"}
                 </FormLabel>
               </FormItem>
             )}
           />
 
-          <FormField
-            control={form.control}
-            name="ssh_enabled"
-            render={({ field }) => (
-              <FormItem className="flex items-center gap-x-2 gap-y-0">
-                <FormControl>
-                  <Checkbox checked={field.value} onCheckedChange={field.onChange} />
-                </FormControl>
-                <FormLabel className="cursor-pointer text-xs font-normal">
-                  Connect through SSH tunnel
-                </FormLabel>
-              </FormItem>
-            )}
-          />
+          {!isS3 && (
+            <>
+              <FormField
+                control={form.control}
+                name="wg_enabled"
+                render={({ field }) => (
+                  <FormItem className="flex items-center gap-x-2 gap-y-0">
+                    <FormControl>
+                      <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                    </FormControl>
+                    <FormLabel className="cursor-pointer text-xs font-normal">
+                      Connect through WireGuard tunnel
+                    </FormLabel>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="ssh_enabled"
+                render={({ field }) => (
+                  <FormItem className="flex items-center gap-x-2 gap-y-0">
+                    <FormControl>
+                      <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                    </FormControl>
+                    <FormLabel className="cursor-pointer text-xs font-normal">
+                      Connect through SSH tunnel
+                    </FormLabel>
+                  </FormItem>
+                )}
+              />
+            </>
+          )}
         </>
       )}
 

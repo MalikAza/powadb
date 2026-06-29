@@ -11,7 +11,9 @@ use crate::commands::connections::resolve_connection;
 use crate::drivers::{
     mysql as mysql_drv, postgres as pg_drv, sqlite as sqlite_drv, QueryResult, ScriptResult,
 };
-use crate::engine::{EngineHandle, MongoEngine, MysqlEngine, PostgresEngine, SqliteEngine};
+use crate::engine::{
+    EngineHandle, MongoEngine, MysqlEngine, PostgresEngine, S3Engine, SqliteEngine,
+};
 use crate::error::{AppError, AppResult};
 use crate::ssh::{self, SshConfig, SshTunnelHandle};
 use crate::storage::{DbKind, SavedConnection};
@@ -530,6 +532,25 @@ async fn open_pool(
         };
         return Ok(Arc::new(MongoEngine::connect(&uri, &default_db).await?));
     }
+    if matches!(conn.kind, DbKind::S3) {
+        // Object store. The SQL-shaped connection fields are repurposed:
+        //   host → endpoint host, port → endpoint port, ssl → http vs https,
+        //   database → region, username → access key, password → secret key.
+        // Path-style addressing (required by Garage/RustFS/MinIO) is the
+        // default; AWS endpoints get virtual-hosted addressing.
+        let path_style = !host.contains("amazonaws.com");
+        let engine = S3Engine::connect(
+            host,
+            port,
+            conn.ssl,
+            &conn.database,
+            &conn.username,
+            password,
+            path_style,
+        )
+        .await?;
+        return Ok(Arc::new(engine));
+    }
     let url = build_url(
         &conn.kind,
         &conn.username,
@@ -542,7 +563,7 @@ async fn open_pool(
     let handle: EngineHandle = match conn.kind {
         DbKind::Postgres => Arc::new(PostgresEngine::new(pg_drv::connect(&url).await?)),
         DbKind::Mysql => Arc::new(MysqlEngine::new(mysql_drv::connect(&url).await?)),
-        DbKind::Sqlite | DbKind::Mongo => unreachable!("handled above"),
+        DbKind::Sqlite | DbKind::Mongo | DbKind::S3 => unreachable!("handled above"),
     };
     Ok(handle)
 }
@@ -559,7 +580,9 @@ fn build_url(
     let scheme = match kind {
         DbKind::Postgres => "postgres",
         DbKind::Mysql => "mysql",
-        DbKind::Sqlite | DbKind::Mongo => unreachable!("non-SQL engines build their own URI"),
+        DbKind::Sqlite | DbKind::Mongo | DbKind::S3 => {
+            unreachable!("non-SQL engines build their own URI")
+        }
     };
     let userinfo = if let Some(pw) = password {
         format!("{}:{}", urlencode(username), urlencode(pw))

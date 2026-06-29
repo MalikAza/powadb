@@ -20,7 +20,7 @@ export type SchemaMeta = {
 /// Capability flags returned by `get_capabilities`. Drives feature visibility
 /// in the UI — hide the Diagram tab for Mongo, hide CREATE DATABASE for
 /// SQLite, hide PostGIS handling outside Postgres, etc.
-export type QueryLanguage = "sql" | "mongo";
+export type QueryLanguage = "sql" | "mongo" | "none";
 
 export type Capabilities = {
   supports_databases_list: boolean;
@@ -89,6 +89,51 @@ export type EngineResult =
   | { kind: "tabular"; columns: unknown[]; rows: unknown[][]; elapsed_ms: number }
   | { kind: "documents"; docs: unknown[]; elapsed_ms: number }
   | { kind: "affected"; rows: number; elapsed_ms: number };
+
+// ─── S3 / object storage ──────────────────────────────────────────────────────
+
+/// A bucket from the account-level listing.
+export type S3Bucket = { name: string; creation_date: string | null };
+
+/// One object key in a listing (not a rolled-up folder prefix).
+export type S3Object = {
+  key: string;
+  size: number;
+  last_modified: string;
+  e_tag: string | null;
+  storage_class: string | null;
+};
+
+/// One page of a `/`-delimited listing under `prefix`.
+export type S3Listing = {
+  prefix: string;
+  folders: string[];
+  objects: S3Object[];
+  next_token: string | null;
+};
+
+export type S3ObjectMeta = {
+  content_type: string | null;
+  content_length: number | null;
+  last_modified: string | null;
+  e_tag: string | null;
+  metadata: Record<string, string>;
+};
+
+/// Bounded preview of an object. Only the field matching `kind` is populated.
+export type S3ObjectPreview = {
+  kind: "text" | "image" | "binary";
+  content_type: string | null;
+  size: number;
+  truncated: boolean;
+  text: string | null;
+  base64: string | null;
+};
+
+export type S3DownloadSummary = { bytes: number };
+
+/// Progress event emitted on `s3-download-progress` during a streaming download.
+export type S3DownloadProgressEvent = { job_id: string; bytes_done: number };
 
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
@@ -275,6 +320,43 @@ export const ipc = {
     invoke("save_settings", { settings }),
 
   openExternal: (url: string): Promise<void> => invoke("open_external", { url }),
+
+  // ─── S3 / object storage ──────────────────────────────────────────────────
+  s3ListBuckets: (connectionId: string): Promise<S3Bucket[]> =>
+    invoke("s3_list_buckets", { connectionId }),
+
+  s3ListObjects: (
+    connectionId: string,
+    bucket: string,
+    prefix: string,
+    continuationToken?: string | null,
+  ): Promise<S3Listing> =>
+    invoke("s3_list_objects", {
+      connectionId,
+      bucket,
+      prefix,
+      continuationToken: continuationToken ?? null,
+    }),
+
+  s3ObjectMeta: (connectionId: string, bucket: string, key: string): Promise<S3ObjectMeta> =>
+    invoke("s3_object_meta", { connectionId, bucket, key }),
+
+  s3PreviewObject: (
+    connectionId: string,
+    bucket: string,
+    key: string,
+    maxBytes?: number,
+  ): Promise<S3ObjectPreview> =>
+    invoke("s3_preview_object", { connectionId, bucket, key, maxBytes: maxBytes ?? null }),
+
+  s3DownloadObject: (
+    connectionId: string,
+    bucket: string,
+    key: string,
+    destPath: string,
+    jobId: string,
+  ): Promise<S3DownloadSummary> =>
+    invoke("s3_download_object", { connectionId, bucket, key, destPath, jobId }),
 };
 
 export type ConnState =
