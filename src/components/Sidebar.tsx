@@ -6,11 +6,29 @@ import { SchemaTree } from "./SchemaTree";
 import { SnippetsPanel } from "./SnippetsPanel";
 
 export function Sidebar() {
-  const { activeId } = useConnections();
+  const { activeId, connections } = useConnections();
   const pane = useUi((s) => s.pane);
   const setPane = useUi((s) => s.setPane);
 
   if (!activeId) return null;
+
+  const activeConn = connections.find((c) => c.id === activeId) ?? null;
+
+  // Object stores have no query history, snippets, or SQL schema — the
+  // Schema/History/Snippets tab bar is dead weight. Show just the bucket tree
+  // (which `SchemaTree` already renders for S3 connections).
+  if (activeConn?.kind === "s3") {
+    return (
+      <div className="flex h-full flex-col bg-sidebar">
+        <div className="flex h-9 shrink-0 items-center border-b border-sidebar-border px-3 text-xs font-medium text-muted-foreground">
+          Buckets
+        </div>
+        <div className="m-0 min-h-0 flex-1 overflow-y-auto p-2">
+          <SchemaTree />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col bg-sidebar">
