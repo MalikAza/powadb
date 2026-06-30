@@ -11,7 +11,9 @@
 //! through `as_s3()`.
 
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -19,7 +21,7 @@ use s3::bucket::Bucket;
 use s3::creds::Credentials;
 use s3::region::Region;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWriteExt, ReadBuf};
 
 use super::{Capabilities, Engine, QueryLanguage};
 use crate::drivers::{QueryResult, ScriptResult};
@@ -295,6 +297,134 @@ impl S3Engine {
                 base64: None,
             }),
         }
+    }
+
+    /// Stream a local file up to `key`, checking `cancel` and reporting
+    /// cumulative bytes via `on_progress`. Overwrites any existing object
+    /// (S3 `PUT` semantics). Returns total bytes uploaded.
+    pub async fn put_object_from_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        local_path: &str,
+        content_type: Option<&str>,
+        cancel: &AtomicBool,
+        on_progress: impl FnMut(u64) + Unpin,
+    ) -> AppResult<u64> {
+        let b = self.bucket(bucket)?;
+        let file = tokio::fs::File::open(local_path).await?;
+        let mut reader = CountingReader {
+            inner: file,
+            written: 0,
+            cancel,
+            on_progress,
+        };
+        let content_type = content_type.unwrap_or("application/octet-stream");
+        let result = b
+            .put_object_stream_with_content_type(&mut reader, key, content_type)
+            .await;
+        if cancel.load(Ordering::SeqCst) {
+            return Err(AppError::Canceled);
+        }
+        result.map_err(s3_err)?;
+        Ok(reader.written)
+    }
+
+    /// Delete a single object.
+    pub async fn delete_object(&self, bucket: &str, key: &str) -> AppResult<()> {
+        let b = self.bucket(bucket)?;
+        b.delete_object(key).await.map_err(s3_err)?;
+        Ok(())
+    }
+
+    /// Recursively delete every object under `prefix` (a "folder"). Returns the
+    /// number of objects deleted.
+    pub async fn delete_prefix(&self, bucket: &str, prefix: &str) -> AppResult<u64> {
+        let b = self.bucket(bucket)?;
+        // No delimiter → a flat, recursive listing of every key under prefix.
+        let pages = b.list(prefix.to_string(), None).await.map_err(s3_err)?;
+        let mut deleted = 0u64;
+        for page in pages {
+            for obj in page.contents {
+                b.delete_object(&obj.key).await.map_err(s3_err)?;
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
+    /// Create a zero-byte directory marker so an empty "folder" shows up in
+    /// delimiter-based listings. `prefix` should end with `/`.
+    pub async fn create_folder(&self, bucket: &str, prefix: &str) -> AppResult<()> {
+        let b = self.bucket(bucket)?;
+        b.put_object(prefix, &[]).await.map_err(s3_err)?;
+        Ok(())
+    }
+
+    /// Copy then delete — S3 has no native rename. `src` and `dst` are full keys.
+    pub async fn rename_object(&self, bucket: &str, src: &str, dst: &str) -> AppResult<()> {
+        let b = self.bucket(bucket)?;
+        b.copy_object_internal(src, dst).await.map_err(s3_err)?;
+        b.delete_object(src).await.map_err(s3_err)?;
+        Ok(())
+    }
+
+    /// Move every object under `src_prefix` to `dst_prefix` (folder rename).
+    /// S3 has no native directory, so each key is copied then deleted. Returns
+    /// the number of objects moved.
+    pub async fn rename_prefix(
+        &self,
+        bucket: &str,
+        src_prefix: &str,
+        dst_prefix: &str,
+    ) -> AppResult<u64> {
+        let b = self.bucket(bucket)?;
+        let pages = b.list(src_prefix.to_string(), None).await.map_err(s3_err)?;
+        let mut moved = 0u64;
+        for page in pages {
+            for obj in page.contents {
+                let rest = obj.key.strip_prefix(src_prefix).unwrap_or(&obj.key);
+                let new_key = format!("{dst_prefix}{rest}");
+                b.copy_object_internal(&obj.key, &new_key)
+                    .await
+                    .map_err(s3_err)?;
+                b.delete_object(&obj.key).await.map_err(s3_err)?;
+                moved += 1;
+            }
+        }
+        Ok(moved)
+    }
+}
+
+/// An `AsyncRead` adapter that tallies bytes read (for upload progress) and
+/// aborts the read with an error once `cancel` is set.
+struct CountingReader<'a, R, F> {
+    inner: R,
+    written: u64,
+    cancel: &'a AtomicBool,
+    on_progress: F,
+}
+
+impl<R: AsyncRead + Unpin, F: FnMut(u64) + Unpin> AsyncRead for CountingReader<'_, R, F> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if this.cancel.load(Ordering::SeqCst) {
+            return Poll::Ready(Err(std::io::Error::other("upload canceled")));
+        }
+        let before = buf.filled().len();
+        let r = Pin::new(&mut this.inner).poll_read(cx, buf);
+        if let Poll::Ready(Ok(())) = &r {
+            let read = (buf.filled().len() - before) as u64;
+            if read > 0 {
+                this.written += read;
+                (this.on_progress)(this.written);
+            }
+        }
+        r
     }
 }
 

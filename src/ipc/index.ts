@@ -135,6 +135,25 @@ export type S3DownloadSummary = { bytes: number };
 /// Progress event emitted on `s3-download-progress` during a streaming download.
 export type S3DownloadProgressEvent = { job_id: string; bytes_done: number };
 
+/// Progress event emitted on `s3-upload-progress` during a streaming upload.
+export type S3UploadProgressEvent = { job_id: string; bytes_done: number };
+
+/// Local path of an object downloaded into the preview cache.
+export type S3CachedObject = { path: string };
+
+/// One member of an archive (zip) object.
+export type S3ArchiveEntry = {
+  name: string;
+  size: number;
+  compressed_size: number;
+  is_dir: boolean;
+};
+
+export type S3UploadSummary = { bytes: number };
+export type S3UploadDirSummary = { bytes: number; files: number };
+export type S3DeleteFolderSummary = { deleted: number };
+export type S3RenameFolderSummary = { moved: number };
+
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
@@ -293,6 +312,9 @@ export const ipc = {
   pickSavePath: (defaultFilename?: string): Promise<string | null> =>
     invoke("pick_save_path", { defaultFilename }),
 
+  pickSavePathAny: (defaultFilename?: string): Promise<string | null> =>
+    invoke("pick_save_path_any", { defaultFilename }),
+
   pickSavePathWithFilter: (
     defaultFilename: string | undefined,
     filterLabel: string,
@@ -308,6 +330,10 @@ export const ipc = {
 
   pickOpenPathWithFilter: (filterLabel: string, extensions: string[]): Promise<string | null> =>
     invoke("pick_open_path_with_filter", { filterLabel, extensions }),
+
+  pickAnyFile: (): Promise<string | null> => invoke("pick_any_file"),
+
+  pickDirectory: (): Promise<string | null> => invoke("pick_directory"),
 
   pickWgConfPath: (): Promise<string | null> => invoke("pick_wg_conf_path"),
 
@@ -357,6 +383,60 @@ export const ipc = {
     jobId: string,
   ): Promise<S3DownloadSummary> =>
     invoke("s3_download_object", { connectionId, bucket, key, destPath, jobId }),
+
+  s3CacheObject: (connectionId: string, bucket: string, key: string): Promise<S3CachedObject> =>
+    invoke("s3_cache_object", { connectionId, bucket, key }),
+
+  s3ArchiveEntries: (
+    connectionId: string,
+    bucket: string,
+    key: string,
+  ): Promise<S3ArchiveEntry[]> => invoke("s3_archive_entries", { connectionId, bucket, key }),
+
+  s3PutObject: (
+    connectionId: string,
+    bucket: string,
+    key: string,
+    srcPath: string,
+    jobId: string,
+  ): Promise<S3UploadSummary> =>
+    invoke("s3_put_object", { connectionId, bucket, key, srcPath, jobId }),
+
+  s3PutDirectory: (
+    connectionId: string,
+    bucket: string,
+    destPrefix: string,
+    srcDir: string,
+    jobId: string,
+  ): Promise<S3UploadDirSummary> =>
+    invoke("s3_put_directory", { connectionId, bucket, destPrefix, srcDir, jobId }),
+
+  s3DeleteObject: (connectionId: string, bucket: string, key: string): Promise<void> =>
+    invoke("s3_delete_object", { connectionId, bucket, key }),
+
+  s3DeleteFolder: (
+    connectionId: string,
+    bucket: string,
+    prefix: string,
+  ): Promise<S3DeleteFolderSummary> => invoke("s3_delete_folder", { connectionId, bucket, prefix }),
+
+  s3CreateFolder: (connectionId: string, bucket: string, prefix: string): Promise<void> =>
+    invoke("s3_create_folder", { connectionId, bucket, prefix }),
+
+  s3RenameObject: (
+    connectionId: string,
+    bucket: string,
+    srcKey: string,
+    dstKey: string,
+  ): Promise<void> => invoke("s3_rename_object", { connectionId, bucket, srcKey, dstKey }),
+
+  s3RenameFolder: (
+    connectionId: string,
+    bucket: string,
+    srcPrefix: string,
+    dstPrefix: string,
+  ): Promise<S3RenameFolderSummary> =>
+    invoke("s3_rename_folder", { connectionId, bucket, srcPrefix, dstPrefix }),
 };
 
 export type ConnState =

@@ -1,3 +1,32 @@
+## [0.12.0-2] - 2026-06-30
+
+> **Beta release.** Second numbered pre-release of `0.12.0`. This build turns
+> the S3 object browser into a full file manager: the read-only beta from
+> `0.12.0-1` can now **write**. The rest of the app is unchanged; only the S3
+> feature is beta.
+
+### Added
+
+- **S3 write operations (Beta).** The object browser is now a two-way file
+  manager. You can **upload** files and **whole folders** (with progress +
+  cancel), **create** folders, **rename** objects and folders, and **delete**
+  objects and folders. This fills the gap called out in `0.12.0-1`, where the
+  beta was browse/download/preview only.
+- **Object browser rebuilt as a file manager.** The `ObjectBrowserPane` is a
+  redesigned file-manager UI — file-type icons per object, an icon/category
+  helper covering common formats, and inline actions for the new write
+  operations.
+- **Download multiple objects as an archive.** Selected objects/folders can be
+  bundled and downloaded together via the new archive path.
+- **Preview cache.** Previewed objects are cached locally so reopening a preview
+  doesn't re-fetch from the store.
+
+### Changed
+
+- **SQL-only chrome is hidden on object-store connections.** The command palette
+  and sidebar no longer surface SQL/query actions that don't apply to an S3
+  connection, so the UI only shows what an object store supports.
+
 ## [0.12.0-1] - 2026-06-29
 
 > **Beta release.** This build ships the new S3 connection type for early

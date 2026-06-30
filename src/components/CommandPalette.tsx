@@ -1,4 +1,4 @@
-import { Database, Download, Play, Plus, Unplug, Upload, X } from "lucide-react";
+import { Database, Download, Play, Plus, RefreshCw, Unplug, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   CommandDialog,
@@ -28,6 +28,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   const openImportDialog = useUi((s) => s.openImportDialog);
   const databasesByConnection = useSchema((s) => s.databasesByConnection);
   const activeConn = activeId ? (connections.find((c) => c.id === activeId) ?? null) : null;
+  const isS3 = activeConn?.kind === "s3";
   const switchable = activeConn ? (databasesByConnection[activeConn.id] ?? []) : [];
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
@@ -78,16 +79,42 @@ export function CommandPalette({ open, onOpenChange }: Props) {
         <CommandEmpty>No matches.</CommandEmpty>
 
         <CommandGroup heading="Actions">
-          <CommandItem
-            value="new query tab"
-            onSelect={() => {
-              if (activeId) newQueryTab(activeId);
-              close();
-            }}
-          >
-            <Plus className="size-3.5" />
-            New query tab
-          </CommandItem>
+          {!isS3 && (
+            <CommandItem
+              value="new query tab"
+              onSelect={() => {
+                if (activeId) newQueryTab(activeId);
+                close();
+              }}
+            >
+              <Plus className="size-3.5" />
+              New query tab
+            </CommandItem>
+          )}
+          {isS3 && activeId && (
+            <>
+              <CommandItem
+                value="refresh bucket"
+                onSelect={() => {
+                  window.dispatchEvent(new CustomEvent("s3-refresh"));
+                  close();
+                }}
+              >
+                <RefreshCw className="size-3.5" />
+                Refresh
+              </CommandItem>
+              <CommandItem
+                value="upload file"
+                onSelect={() => {
+                  window.dispatchEvent(new CustomEvent("s3-upload-request"));
+                  close();
+                }}
+              >
+                <Upload className="size-3.5" />
+                Upload file…
+              </CommandItem>
+            </>
+          )}
           {activeQueryTab && !activeQueryTab.loading && (
             <CommandItem
               value="run current query"

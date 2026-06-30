@@ -252,9 +252,12 @@ pub fn run() {
             commands::dump::check_dump_tools,
             commands::dump::cancel_dump,
             commands::dump::pick_save_path,
+            commands::dump::pick_save_path_any,
             commands::dump::pick_save_path_with_filter,
             commands::dump::pick_open_path,
             commands::dump::pick_open_path_with_filter,
+            commands::dump::pick_any_file,
+            commands::dump::pick_directory,
             commands::dump::pick_wg_conf_path,
             commands::dump::pick_ssh_key_path,
             commands::dump::pick_sqlite_path,
@@ -267,6 +270,15 @@ pub fn run() {
             commands::s3::s3_object_meta,
             commands::s3::s3_preview_object,
             commands::s3::s3_download_object,
+            commands::s3::s3_cache_object,
+            commands::s3::s3_archive_entries,
+            commands::s3::s3_put_object,
+            commands::s3::s3_delete_object,
+            commands::s3::s3_delete_folder,
+            commands::s3::s3_create_folder,
+            commands::s3::s3_rename_object,
+            commands::s3::s3_rename_folder,
+            commands::s3::s3_put_directory,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

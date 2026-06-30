@@ -107,6 +107,25 @@ pub async fn pick_save_path(
     rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
+/// Save-file picker with **no** extension filter, so the suggested name's own
+/// extension is kept verbatim (object-store downloads must not get a `.sql`
+/// appended).
+#[tauri::command]
+pub async fn pick_save_path_any(
+    app: AppHandle,
+    default_filename: Option<String>,
+) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().file();
+    if let Some(name) = default_filename {
+        dialog = dialog.set_file_name(&name);
+    }
+    dialog.save_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
 /// Generic save-file picker the frontend can call when it needs to control the
 /// filter label and accepted extensions (diagram exports, etc.).
 #[tauri::command]
@@ -137,6 +156,28 @@ pub async fn pick_open_path(app: AppHandle) -> AppResult<Option<String>> {
         .pick_file(move |path| {
             let _ = tx.send(path.map(|p| p.to_string()));
         });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+/// Open-file picker with **no** extension filter — every file is selectable.
+/// (A `["*"]` filter greys out everything on macOS, so object-store uploads
+/// need an unfiltered picker.)
+#[tauri::command]
+pub async fn pick_any_file(app: AppHandle) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_file(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
+    rx.await.map_err(|e| AppError::Other(e.to_string()))
+}
+
+/// Directory picker — used to upload an entire local folder to an object store.
+#[tauri::command]
+pub async fn pick_directory(app: AppHandle) -> AppResult<Option<String>> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_folder(move |path| {
+        let _ = tx.send(path.map(|p| p.to_string()));
+    });
     rx.await.map_err(|e| AppError::Other(e.to_string()))
 }
 
