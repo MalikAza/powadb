@@ -1,3 +1,12 @@
+## [0.12.0-3] - 2026-07-06
+
+> **Beta release.** Third numbered pre-release of `0.12.0`.
+
+### Fixed
+*The next two points are resolving an issue about wireguard connections.*
+- Wireguard tunnel bind peer UDP socket to the endpoint's address family
+- Wireguard config now prefer IPv4 when resolving a hostname endpoint
+
 ## [0.12.0-2] - 2026-06-30
 
 > **Beta release.** Second numbered pre-release of `0.12.0`. This build turns
