@@ -97,8 +97,17 @@ pub async fn open_tunnel(cfg: &WgConfig, target: SocketAddr) -> AppResult<Tunnel
         }
     };
 
-    // UDP socket talking to the WG peer.
-    let udp = UdpSocket::bind("0.0.0.0:0")
+    // UDP socket talking to the WG peer. Bind to the same address family as the
+    // peer endpoint — the inner tunnel is IPv4-only, but the outer transport to
+    // the peer can be IPv4 or IPv6 (e.g. a hostname `Endpoint` that resolves to
+    // an AAAA record). An IPv4 socket connected to an IPv6 endpoint fails with
+    // EINVAL ("os error 22"), so the bind family must match `endpoint`.
+    let bind_addr = if cfg.peer.endpoint.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    };
+    let udp = UdpSocket::bind(bind_addr)
         .await
         .map_err(|e| AppError::WgTunnel(format!("udp bind failed: {e}")))?;
     udp.connect(cfg.peer.endpoint)

@@ -235,9 +235,20 @@ fn resolve_endpoint(raw: &str) -> AppResult<SocketAddr> {
     }
     // Try DNS once at config-load time. The handshake retries via boringtun;
     // re-resolution on failures is a follow-up.
-    raw.to_socket_addrs()
+    let resolved: Vec<SocketAddr> = raw
+        .to_socket_addrs()
         .map_err(|e| AppError::Other(format!("could not resolve endpoint `{raw}`: {e}")))?
-        .next()
+        .collect();
+    // Prefer an IPv4 result over IPv6. WireGuard servers are commonly reachable
+    // only over IPv4 even when the endpoint hostname also carries an AAAA record;
+    // taking the resolver's first answer blindly can pick an IPv6 address the
+    // peer never accepts UDP on, which surfaces as ECONNREFUSED and a handshake
+    // timeout. Fall back to IPv6 only when no IPv4 address was returned.
+    resolved
+        .iter()
+        .find(|sa| sa.is_ipv4())
+        .or_else(|| resolved.first())
+        .copied()
         .ok_or_else(|| AppError::Other(format!("endpoint `{raw}` resolved to nothing")))
 }
 
