@@ -65,6 +65,11 @@ pub struct SavedConnection {
     pub folder_id: Option<String>,
     #[serde(default)]
     pub color: Option<String>,
+    /// Manual sidebar position within the parent container. NULL until the
+    /// user first drags an item in that container; NULL rows sort by name
+    /// after positioned ones.
+    #[serde(default)]
+    pub position: Option<i64>,
     #[serde(default)]
     pub wg: Option<WgTunnel>,
     #[serde(default)]
@@ -76,6 +81,28 @@ pub struct Folder {
     pub id: String,
     pub name: String,
     pub parent_id: Option<String>,
+    /// Same semantics as `SavedConnection::position`.
+    #[serde(default)]
+    pub position: Option<i64>,
+}
+
+/// One row of a sidebar drag-and-drop update: the connection's new container
+/// and its position within it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionPosition {
+    pub id: String,
+    #[serde(default)]
+    pub folder_id: Option<String>,
+    pub position: i64,
+}
+
+/// One row of a sidebar drag-and-drop update for a folder.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderPosition {
+    pub id: String,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    pub position: i64,
 }
 
 pub struct Storage {
@@ -447,8 +474,8 @@ impl Storage {
 
     pub async fn list(&self) -> AppResult<Vec<SavedConnection>> {
         let rows = sqlx::query(
-            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, wg_enabled, ssh_enabled
-             FROM connections ORDER BY name",
+            "SELECT id, name, kind, host, port, database, username, ssl, folder_id, color, position, wg_enabled, ssh_enabled
+             FROM connections ORDER BY position IS NULL, position, name",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -472,6 +499,7 @@ impl Storage {
                     ssl: ssl_i != 0,
                     folder_id: r.try_get("folder_id").ok().flatten(),
                     color: r.try_get("color").ok().flatten(),
+                    position: r.try_get("position").ok().flatten(),
                     wg: if wg_enabled_i != 0 {
                         Some(WgTunnel::default())
                     } else {
@@ -524,10 +552,63 @@ impl Storage {
         Ok(())
     }
 
-    pub async fn list_folders(&self) -> AppResult<Vec<Folder>> {
-        let rows = sqlx::query("SELECT id, name, parent_id FROM folders ORDER BY name")
-            .fetch_all(&self.pool)
+    /// Stored sidebar position of a connection, if any. Used by
+    /// `save_connection` to echo back the position `upsert` deliberately
+    /// leaves untouched.
+    pub async fn connection_position(&self, id: &str) -> AppResult<Option<i64>> {
+        let row = sqlx::query("SELECT position FROM connections WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
             .await?;
+        Ok(row.and_then(|r| r.try_get("position").ok().flatten()))
+    }
+
+    /// Same as `connection_position`, for folders.
+    pub async fn folder_position(&self, id: &str) -> AppResult<Option<i64>> {
+        let row = sqlx::query("SELECT position FROM folders WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get("position").ok().flatten()))
+    }
+
+    /// Apply a batch of sidebar drag-and-drop updates: each connection gets
+    /// its new container (`folder_id`) and position, atomically.
+    pub async fn set_connection_positions(&self, items: &[ConnectionPosition]) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        for item in items {
+            sqlx::query("UPDATE connections SET folder_id = ?1, position = ?2 WHERE id = ?3")
+                .bind(&item.folder_id)
+                .bind(item.position)
+                .bind(&item.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Same as `set_connection_positions`, for folders (`parent_id` + position).
+    pub async fn set_folder_positions(&self, items: &[FolderPosition]) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        for item in items {
+            sqlx::query("UPDATE folders SET parent_id = ?1, position = ?2 WHERE id = ?3")
+                .bind(&item.parent_id)
+                .bind(item.position)
+                .bind(&item.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn list_folders(&self) -> AppResult<Vec<Folder>> {
+        let rows = sqlx::query(
+            "SELECT id, name, parent_id, position FROM folders ORDER BY position IS NULL, position, name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows
             .into_iter()
             .filter_map(|r| {
@@ -535,6 +616,7 @@ impl Storage {
                     id: r.try_get("id").ok()?,
                     name: r.try_get("name").ok()?,
                     parent_id: r.try_get("parent_id").ok().flatten(),
+                    position: r.try_get("position").ok().flatten(),
                 })
             })
             .collect())
@@ -833,8 +915,18 @@ mod tests {
             ssl: false,
             folder_id: None,
             color: None,
+            position: None,
             wg: None,
             ssh: None,
+        }
+    }
+
+    fn sample_folder(id: &str, name: &str, parent_id: Option<&str>) -> Folder {
+        Folder {
+            id: id.into(),
+            name: name.into(),
+            parent_id: parent_id.map(Into::into),
+            position: None,
         }
     }
 
@@ -1019,11 +1111,7 @@ mod tests {
     #[tokio::test]
     async fn folder_upsert_and_list() {
         let (_d, s) = fresh_storage().await;
-        let f = Folder {
-            id: "f1".into(),
-            name: "Work".into(),
-            parent_id: None,
-        };
+        let f = sample_folder("f1", "Work", None);
         s.upsert_folder(&f).await.unwrap();
         let all = s.list_folders().await.unwrap();
         assert_eq!(all.len(), 1);
@@ -1033,21 +1121,9 @@ mod tests {
     #[tokio::test]
     async fn delete_folder_promotes_children_to_parent() {
         let (_d, s) = fresh_storage().await;
-        let root = Folder {
-            id: "root".into(),
-            name: "Root".into(),
-            parent_id: None,
-        };
-        let mid = Folder {
-            id: "mid".into(),
-            name: "Mid".into(),
-            parent_id: Some("root".into()),
-        };
-        let leaf = Folder {
-            id: "leaf".into(),
-            name: "Leaf".into(),
-            parent_id: Some("mid".into()),
-        };
+        let root = sample_folder("root", "Root", None);
+        let mid = sample_folder("mid", "Mid", Some("root"));
+        let leaf = sample_folder("leaf", "Leaf", Some("mid"));
         s.upsert_folder(&root).await.unwrap();
         s.upsert_folder(&mid).await.unwrap();
         s.upsert_folder(&leaf).await.unwrap();
@@ -1069,16 +1145,8 @@ mod tests {
     #[tokio::test]
     async fn delete_folder_promotes_children_to_root_when_parent_is_root() {
         let (_d, s) = fresh_storage().await;
-        let top = Folder {
-            id: "top".into(),
-            name: "Top".into(),
-            parent_id: None,
-        };
-        let child = Folder {
-            id: "child".into(),
-            name: "Child".into(),
-            parent_id: Some("top".into()),
-        };
+        let top = sample_folder("top", "Top", None);
+        let child = sample_folder("child", "Child", Some("top"));
         s.upsert_folder(&top).await.unwrap();
         s.upsert_folder(&child).await.unwrap();
 
@@ -1087,6 +1155,132 @@ mod tests {
         let folders = s.list_folders().await.unwrap();
         let child_after = folders.iter().find(|f| f.id == "child").unwrap();
         assert!(child_after.parent_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_connection_positions_moves_and_orders() {
+        let (_d, s) = fresh_storage().await;
+        let f = sample_folder("f1", "Work", None);
+        s.upsert_folder(&f).await.unwrap();
+        // Alphabetical names on purpose: a < b < c.
+        let mut a = sample_conn("a");
+        a.name = "Alpha".into();
+        let mut b = sample_conn("b");
+        b.name = "Beta".into();
+        let mut c = sample_conn("c");
+        c.name = "Gamma".into();
+        for conn in [&a, &b, &c] {
+            s.upsert(conn).await.unwrap();
+        }
+
+        // Drag: Gamma to the top of the root, Alpha into the folder.
+        s.set_connection_positions(&[
+            ConnectionPosition {
+                id: "c".into(),
+                folder_id: None,
+                position: 0,
+            },
+            ConnectionPosition {
+                id: "b".into(),
+                folder_id: None,
+                position: 1,
+            },
+            ConnectionPosition {
+                id: "a".into(),
+                folder_id: Some("f1".into()),
+                position: 0,
+            },
+        ])
+        .await
+        .unwrap();
+
+        let all = s.list().await.unwrap();
+        let ids: Vec<_> = all.iter().map(|x| x.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c", "b"]); // position 0 (f1), 0 (root), 1 (root)
+        let a_after = all.iter().find(|x| x.id == "a").unwrap();
+        assert_eq!(a_after.folder_id.as_deref(), Some("f1"));
+        assert_eq!(a_after.position, Some(0));
+    }
+
+    #[tokio::test]
+    async fn positioned_rows_sort_before_null_ones_which_stay_alphabetical() {
+        let (_d, s) = fresh_storage().await;
+        let mut z = sample_conn("z");
+        z.name = "Zeta".into();
+        let mut m = sample_conn("m");
+        m.name = "Mu".into();
+        let mut a = sample_conn("a");
+        a.name = "Alpha".into();
+        for conn in [&z, &m, &a] {
+            s.upsert(conn).await.unwrap();
+        }
+        // Only Zeta gets a manual position; Alpha/Mu stay NULL → name order.
+        s.set_connection_positions(&[ConnectionPosition {
+            id: "z".into(),
+            folder_id: None,
+            position: 0,
+        }])
+        .await
+        .unwrap();
+
+        let names: Vec<_> = s
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, vec!["Zeta", "Alpha", "Mu"]);
+    }
+
+    #[tokio::test]
+    async fn upsert_preserves_position_and_save_positions_reparents_folders() {
+        let (_d, s) = fresh_storage().await;
+        let f1 = sample_folder("f1", "Work", None);
+        let f2 = sample_folder("f2", "Home", None);
+        s.upsert_folder(&f1).await.unwrap();
+        s.upsert_folder(&f2).await.unwrap();
+
+        s.set_folder_positions(&[
+            FolderPosition {
+                id: "f1".into(),
+                parent_id: None,
+                position: 1,
+            },
+            FolderPosition {
+                id: "f2".into(),
+                parent_id: Some("f1".into()),
+                position: 0,
+            },
+        ])
+        .await
+        .unwrap();
+
+        // Renaming through the regular upsert must not clobber the position.
+        let renamed = Folder {
+            name: "Work-renamed".into(),
+            ..f1.clone()
+        };
+        s.upsert_folder(&renamed).await.unwrap();
+
+        assert_eq!(s.folder_position("f1").await.unwrap(), Some(1));
+        assert_eq!(s.folder_position("missing").await.unwrap(), None);
+        let folders = s.list_folders().await.unwrap();
+        let f2_after = folders.iter().find(|f| f.id == "f2").unwrap();
+        assert_eq!(f2_after.parent_id.as_deref(), Some("f1"));
+        assert_eq!(f2_after.position, Some(0));
+
+        // Same contract on the connections side.
+        s.upsert(&sample_conn("a")).await.unwrap();
+        s.set_connection_positions(&[ConnectionPosition {
+            id: "a".into(),
+            folder_id: None,
+            position: 4,
+        }])
+        .await
+        .unwrap();
+        s.upsert(&sample_conn("a")).await.unwrap();
+        assert_eq!(s.connection_position("a").await.unwrap(), Some(4));
     }
 
     #[tokio::test]

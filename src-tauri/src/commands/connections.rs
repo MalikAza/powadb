@@ -2,7 +2,7 @@ use serde::Deserialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
-use crate::storage::{new_id, DbKind, SavedConnection, SshTunnel, WgTunnel};
+use crate::storage::{new_id, ConnectionPosition, DbKind, SavedConnection, SshTunnel, WgTunnel};
 use crate::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -63,6 +63,10 @@ pub async fn save_connection(
     } else {
         None
     };
+    // `upsert` never writes `position` (drag-and-drop order is managed by
+    // `reorder_connections`), so echo the stored value back to the frontend
+    // instead of resetting it on every edit.
+    let position = state.storage.connection_position(&id).await?;
     let conn = SavedConnection {
         id: id.clone(),
         name: input.name,
@@ -74,6 +78,7 @@ pub async fn save_connection(
         ssl: input.ssl,
         folder_id: input.folder_id,
         color: input.color,
+        position,
         wg,
         ssh,
     };
@@ -110,6 +115,17 @@ pub async fn save_connection(
     }
     state.pools.close(&id).await;
     Ok(conn)
+}
+
+/// Persist a sidebar drag-and-drop: each item carries its new container
+/// (`folder_id`) and position within it. The frontend sends the full ordered
+/// sibling list of every affected container.
+#[tauri::command]
+pub async fn reorder_connections(
+    state: State<'_, AppState>,
+    items: Vec<ConnectionPosition>,
+) -> AppResult<()> {
+    state.storage.set_connection_positions(&items).await
 }
 
 #[tauri::command]
@@ -299,6 +315,7 @@ mod tests {
             ssl: false,
             folder_id: None,
             color: None,
+            position: None,
             wg: None,
             ssh: None,
         }

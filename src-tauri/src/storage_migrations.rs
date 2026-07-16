@@ -22,11 +22,18 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "initial",
-    sql: include_str!("../migrations/0001_initial.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "initial",
+        sql: include_str!("../migrations/0001_initial.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "positions",
+        sql: include_str!("../migrations/0002_positions.sql"),
+    },
+];
 
 /// Apply every migration whose version is greater than the highest already
 /// recorded in `schema_version`. Idempotent: calling on an up-to-date DB
@@ -100,11 +107,15 @@ mod tests {
             .unwrap()
     }
 
+    fn latest_version() -> i64 {
+        MIGRATIONS.last().unwrap().version
+    }
+
     #[tokio::test]
-    async fn run_on_empty_db_creates_schema_and_stamps_v1() {
+    async fn run_on_empty_db_creates_schema_and_stamps_latest() {
         let pool = fresh_pool().await;
         run(&pool).await.unwrap();
-        assert_eq!(highest_applied(&pool).await.unwrap(), 1);
+        assert_eq!(highest_applied(&pool).await.unwrap(), latest_version());
         // All v1 tables exist.
         for t in [
             "connections",
@@ -130,12 +141,15 @@ mod tests {
             .fetch_all(&pool)
             .await
             .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].try_get::<i64, _>("version").unwrap(), 1);
+        assert_eq!(rows.len(), MIGRATIONS.len());
+        assert_eq!(
+            rows.last().unwrap().try_get::<i64, _>("version").unwrap(),
+            latest_version()
+        );
     }
 
     #[tokio::test]
-    async fn legacy_db_without_schema_version_gets_stamped_v1() {
+    async fn legacy_db_without_schema_version_catches_up_to_latest() {
         let pool = fresh_pool().await;
         // Simulate the pre-migration world: a `connections` table exists but
         // there's no schema_version row.
@@ -144,7 +158,7 @@ mod tests {
             .await
             .unwrap();
         run(&pool).await.unwrap();
-        assert_eq!(highest_applied(&pool).await.unwrap(), 1);
+        assert_eq!(highest_applied(&pool).await.unwrap(), latest_version());
         // The legacy `connections` table is left untouched — `IF NOT EXISTS`
         // is a no-op against it. (The other tables get created.)
         assert!(has_table(&pool, "snippets").await.unwrap());
