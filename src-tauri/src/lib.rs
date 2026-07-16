@@ -281,6 +281,8 @@ pub fn run() {
             commands::s3::s3_rename_object,
             commands::s3::s3_rename_folder,
             commands::s3::s3_put_directory,
+            commands::s3::s3_prefix_stats,
+            commands::s3::s3_cancel_job,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -11,7 +11,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::engine::s3::{BucketInfo, Listing, ObjectMetadata, ObjectPreview, S3Engine};
+use crate::engine::s3::{
+    BucketInfo, Listing, ObjectMetadata, ObjectPreview, PrefixStats, S3Engine,
+};
 use crate::engine::EngineHandle;
 use crate::error::{AppError, AppResult};
 use crate::AppState;
@@ -447,6 +449,56 @@ pub async fn s3_rename_folder(
         .rename_prefix(&bucket, &src_prefix, &dst_prefix)
         .await?;
     Ok(RenameFolderSummary { moved })
+}
+
+/// Progress event for a stats walk. Emitted on the `s3-stats-progress` channel
+/// once per listing page; the frontend keys updates by `job_id`.
+#[derive(Debug, Clone, Serialize)]
+struct StatsProgress {
+    job_id: String,
+    objects: u64,
+    bytes: u64,
+}
+
+#[tauri::command]
+pub async fn s3_prefix_stats(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    connection_id: String,
+    bucket: String,
+    prefix: String,
+    job_id: String,
+) -> AppResult<PrefixStats> {
+    let handle = state.pools.get_or_open(&state, &connection_id).await?;
+    let cancel = state.jobs.register(&job_id).await;
+    let result = {
+        let s3 = require_s3(&handle)?;
+        let app = app.clone();
+        let job_id_for_progress = job_id.clone();
+        s3.prefix_stats(&bucket, &prefix, &cancel, move |objects, bytes| {
+            // Best-effort progress; a failed emit must not abort the walk.
+            let _ = app.emit(
+                "s3-stats-progress",
+                StatsProgress {
+                    job_id: job_id_for_progress.clone(),
+                    objects,
+                    bytes,
+                },
+            );
+        })
+        .await
+    };
+    state.jobs.forget(&job_id).await;
+    // Unlike downloads, cancellation is not an error here: the walk returns
+    // partial counts with `truncated: true` and the frontend discards them.
+    result
+}
+
+/// Cancel any S3 job (stats walk, …) by its `job_id`. Returns whether a live
+/// job was found. Same shape as `cancel_dump`.
+#[tauri::command]
+pub async fn s3_cancel_job(state: State<'_, AppState>, job_id: String) -> AppResult<bool> {
+    Ok(state.jobs.cancel(&job_id).await)
 }
 
 /// Best-effort `Content-Type` from a key's extension; defaults to octet-stream.

@@ -156,6 +156,13 @@ export type S3UploadDirSummary = { bytes: number; files: number };
 export type S3DeleteFolderSummary = { deleted: number };
 export type S3RenameFolderSummary = { moved: number };
 
+/// Recursive object count + total bytes under a prefix. `truncated` when the
+/// walk was canceled mid-scan (counts are partial and should be discarded).
+export type S3PrefixStats = { objects: number; bytes: number; truncated: boolean };
+
+/// Progress event emitted on `s3-stats-progress` once per listing page.
+export type S3StatsProgressEvent = { job_id: string; objects: number; bytes: number };
+
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
@@ -448,6 +455,15 @@ export const ipc = {
     dstPrefix: string,
   ): Promise<S3RenameFolderSummary> =>
     invoke("s3_rename_folder", { connectionId, bucket, srcPrefix, dstPrefix }),
+
+  s3PrefixStats: (
+    connectionId: string,
+    bucket: string,
+    prefix: string,
+    jobId: string,
+  ): Promise<S3PrefixStats> => invoke("s3_prefix_stats", { connectionId, bucket, prefix, jobId }),
+
+  s3CancelJob: (jobId: string): Promise<boolean> => invoke("s3_cancel_job", { jobId }),
 };
 
 export type ConnState =
