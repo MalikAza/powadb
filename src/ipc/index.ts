@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionInput,
+  ConnectionPositionUpdate,
   DbKind,
   Folder,
   FolderInput,
+  FolderPositionUpdate,
   QueryResult,
   SavedConnection,
 } from "../types";
@@ -168,6 +170,11 @@ export const ipc = {
   saveConnection: (input: ConnectionInput): Promise<SavedConnection> =>
     invoke("save_connection", { input }),
 
+  /// Persist a sidebar drag-and-drop: the full ordered sibling list of every
+  /// affected container, each item carrying its new folder + position.
+  reorderConnections: (items: ConnectionPositionUpdate[]): Promise<void> =>
+    invoke("reorder_connections", { items }),
+
   deleteConnection: (id: string): Promise<void> => invoke("delete_connection", { id }),
 
   getConnectionPassword: (id: string): Promise<string | null> =>
@@ -291,6 +298,10 @@ export const ipc = {
 
   listFolders: (): Promise<Folder[]> => invoke("list_folders"),
   saveFolder: (input: FolderInput): Promise<Folder> => invoke("save_folder", { input }),
+  /// Folder counterpart of `reorderConnections`. Rejected by the backend if
+  /// the update would make a folder its own ancestor.
+  reorderFolders: (items: FolderPositionUpdate[]): Promise<void> =>
+    invoke("reorder_folders", { items }),
   deleteFolder: (id: string): Promise<void> => invoke("delete_folder", { id }),
 
   exportDatabase: (

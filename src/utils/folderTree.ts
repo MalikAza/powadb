@@ -1,5 +1,18 @@
 import type { Folder, SavedConnection } from "../types";
 
+/// Sidebar ordering within a container: manually positioned items first (by
+/// `position`), then never-dragged items (`position === null`) alphabetically.
+/// Shared by the tree below and the drag-and-drop order computation.
+export function byPositionThenName(
+  a: { name: string; position: number | null },
+  b: { name: string; position: number | null },
+): number {
+  if (a.position !== null && b.position !== null) return a.position - b.position;
+  if (a.position !== null) return -1;
+  if (b.position !== null) return 1;
+  return a.name.localeCompare(b.name);
+}
+
 export type FolderNode = {
   folder: Folder;
   children: FolderNode[];
@@ -37,15 +50,35 @@ export function buildTree(folders: Folder[], connections: SavedConnection[]): Tr
   }
 
   const sortNode = (n: FolderNode) => {
-    n.children.sort((a, b) => a.folder.name.localeCompare(b.folder.name));
-    n.connections.sort((a, b) => a.name.localeCompare(b.name));
+    n.children.sort((a, b) => byPositionThenName(a.folder, b.folder));
+    n.connections.sort(byPositionThenName);
     n.children.forEach(sortNode);
   };
-  rootFolders.sort((a, b) => a.folder.name.localeCompare(b.folder.name));
+  rootFolders.sort((a, b) => byPositionThenName(a.folder, b.folder));
   rootFolders.forEach(sortNode);
-  rootConnections.sort((a, b) => a.name.localeCompare(b.name));
+  rootConnections.sort(byPositionThenName);
 
   return { rootFolders, rootConnections };
+}
+
+/// True when `folderId` is `ancestorId` itself or lives anywhere under it.
+/// Used to forbid dropping a folder into its own subtree.
+export function isSelfOrDescendant(
+  folders: Folder[],
+  ancestorId: string,
+  folderId: string | null,
+): boolean {
+  const byId: Record<string, Folder> = {};
+  for (const f of folders) byId[f.id] = f;
+  let cur = folderId;
+  const seen = new Set<string>();
+  while (cur) {
+    if (cur === ancestorId) return true;
+    if (seen.has(cur)) return false; // corrupt cycle — bail out
+    seen.add(cur);
+    cur = byId[cur]?.parent_id ?? null;
+  }
+  return false;
 }
 
 export function folderPaths(folders: Folder[]): { folder: Folder; path: string }[] {

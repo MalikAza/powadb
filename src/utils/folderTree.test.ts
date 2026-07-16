@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Folder, SavedConnection } from "../types";
-import { buildTree, folderPaths } from "./folderTree";
+import { buildTree, folderPaths, isSelfOrDescendant } from "./folderTree";
 
 const conn = (over: Partial<SavedConnection>): SavedConnection => ({
   id: over.id ?? "c",
@@ -13,14 +13,21 @@ const conn = (over: Partial<SavedConnection>): SavedConnection => ({
   ssl: false,
   folder_id: over.folder_id ?? null,
   color: over.color ?? null,
+  position: over.position ?? null,
   wg: null,
   ssh: null,
 });
 
-const folder = (id: string, name: string, parent_id: string | null = null): Folder => ({
+const folder = (
+  id: string,
+  name: string,
+  parent_id: string | null = null,
+  position: number | null = null,
+): Folder => ({
   id,
   name,
   parent_id,
+  position,
 });
 
 describe("buildTree", () => {
@@ -61,6 +68,52 @@ describe("buildTree", () => {
     );
     expect(tree.rootFolders.map((n) => n.folder.name)).toEqual(["Alpha", "Zeta"]);
     expect(tree.rootConnections.map((c) => c.name)).toEqual(["bravo", "delta"]);
+  });
+
+  it("sorts positioned items first, then null positions alphabetically", () => {
+    const tree = buildTree(
+      [folder("fz", "Zeta", null, 0), folder("fa", "Alpha"), folder("fm", "Mu")],
+      [
+        conn({ id: "c1", name: "delta", position: 1 }),
+        conn({ id: "c2", name: "bravo" }),
+        conn({ id: "c3", name: "zulu", position: 0 }),
+      ],
+    );
+    // Zeta was manually pinned to the top; Alpha/Mu keep the name fallback.
+    expect(tree.rootFolders.map((n) => n.folder.name)).toEqual(["Zeta", "Alpha", "Mu"]);
+    expect(tree.rootConnections.map((c) => c.name)).toEqual(["zulu", "delta", "bravo"]);
+  });
+
+  it("sorts by position inside folders too", () => {
+    const tree = buildTree(
+      [folder("f1", "Work")],
+      [
+        conn({ id: "c1", name: "alpha", folder_id: "f1", position: 1 }),
+        conn({ id: "c2", name: "beta", folder_id: "f1", position: 0 }),
+      ],
+    );
+    expect(tree.rootFolders[0]?.connections.map((c) => c.id)).toEqual(["c2", "c1"]);
+  });
+});
+
+describe("isSelfOrDescendant", () => {
+  const folders = [
+    folder("root", "Root"),
+    folder("mid", "Mid", "root"),
+    folder("leaf", "Leaf", "mid"),
+  ];
+
+  it("matches the folder itself", () => {
+    expect(isSelfOrDescendant(folders, "mid", "mid")).toBe(true);
+  });
+
+  it("matches deep descendants", () => {
+    expect(isSelfOrDescendant(folders, "root", "leaf")).toBe(true);
+  });
+
+  it("rejects ancestors and siblings", () => {
+    expect(isSelfOrDescendant(folders, "leaf", "root")).toBe(false);
+    expect(isSelfOrDescendant(folders, "mid", null)).toBe(false);
   });
 });
 
