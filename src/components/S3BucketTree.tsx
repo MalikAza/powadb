@@ -1,5 +1,6 @@
 import { Database, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { S3PrefixStatsCell } from "@/components/S3PrefixStatsCell";
 import { Button } from "@/components/ui/button";
 import { ipc, type S3Bucket } from "@/ipc";
 import { cn } from "@/lib/utils";
@@ -63,15 +64,21 @@ export function S3BucketTree({ connectionId, connState }: Props) {
       {error && <div className="px-3 py-2 text-destructive">{error}</div>}
 
       {buckets?.map((b) => (
-        <button
+        <div
           key={b.name}
-          type="button"
-          onClick={() => openObjectBrowserTab(connectionId, b.name)}
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-sidebar-accent"
+          className="group flex w-full items-center gap-2 px-3 py-1.5 hover:bg-sidebar-accent"
         >
-          <Database className="size-3.5 text-primary" />
-          <span className="truncate">{b.name}</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => openObjectBrowserTab(connectionId, b.name)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            <Database className="size-3.5 shrink-0 text-primary" />
+            <span className="truncate">{b.name}</span>
+          </button>
+          {/* Empty prefix = stats for the whole bucket. */}
+          <S3PrefixStatsCell connectionId={connectionId} bucket={b.name} prefix="" />
+        </div>
       ))}
 
       {buckets?.length === 0 && !loading && (

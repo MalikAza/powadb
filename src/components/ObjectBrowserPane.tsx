@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
+import { S3PrefixStatsCell } from "@/components/S3PrefixStatsCell";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -601,7 +602,9 @@ export function ObjectBrowserPane({ tab, conn }: Props) {
                           </div>
                         </td>
                         <td className="px-3 py-1.5 text-right align-middle text-muted-foreground">
-                          —
+                          <div className="flex items-center justify-end">
+                            <S3PrefixStatsCell connectionId={conn.id} bucket={bucket} prefix={f} />
+                          </div>
                         </td>
                         <td className="px-3 py-1.5 text-right align-middle text-muted-foreground">
                           —
