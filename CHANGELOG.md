@@ -1,3 +1,28 @@
+## [0.12.1] - 2026-07-17
+
+### Security
+
+- **Sandboxed PDF previews.** PDF files opened in the object browser's preview
+  now render in a locked-down frame, so a malicious document can no longer run
+  scripts or reach out from the preview.
+
+### Added
+
+- **Reorder and organise the sidebar by dragging.** Connections and folders can
+  now be dragged to reorder them or moved in and out of folders, and your layout
+  is remembered between sessions instead of snapping back to a default order.
+- **Object counts and sizes in the S3 browser.** Buckets and folders can now
+  show how many objects they contain and their total size, computed on demand so
+  large stores stay responsive. The tally can be cancelled while it runs.
+- **Resizable query editor.** The editor pane can now be dragged to make it
+  taller or shorter, giving you more room for the query or for the results grid.
+
+### Fixed
+
+- **Screen-reader labels on icon-only buttons.** Several icon-only controls (in
+  the schema tree, query view, and map layer panel) now carry text labels, so
+  assistive technology announces what they do.
+
 ## [0.12.0-3] - 2026-07-06
 
 > **Beta release.** Third numbered pre-release of `0.12.0`.
