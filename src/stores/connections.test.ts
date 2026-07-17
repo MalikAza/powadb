@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Capabilities } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
 
 const ipcMock = {
@@ -13,6 +14,7 @@ const ipcMock = {
   prewarmConnection: vi.fn(),
   reorderConnections: vi.fn(),
   reorderFolders: vi.fn(),
+  getCapabilities: vi.fn(),
 };
 
 vi.mock("../ipc", () => ({
@@ -42,6 +44,21 @@ function makeConn(over: Partial<SavedConnection> = {}): SavedConnection {
 
 function makeFolder(id: string, name: string, parent_id: string | null = null): Folder {
   return { id, name, parent_id, position: null };
+}
+
+function makeCaps(): Capabilities {
+  return {
+    supports_databases_list: true,
+    supports_database_create: true,
+    supports_database_drop: true,
+    supports_schemas: true,
+    supports_foreign_keys: true,
+    supports_ddl_diff: true,
+    supports_diagram: true,
+    supports_geo: false,
+    supports_native_dump: true,
+    query_language: "sql",
+  };
 }
 
 beforeEach(() => {
@@ -354,5 +371,49 @@ describe("useConnections", () => {
     const before = useConnections.getState().connStates;
     useConnections.getState().setConnState("missing", { kind: "idle" });
     expect(useConnections.getState().connStates).toBe(before);
+  });
+
+  it("setConnState() with idle also drops cached capabilities so a reconnect refetches", () => {
+    useConnections.setState({
+      connStates: { c1: { kind: "ready" } },
+      capabilities: { c1: makeCaps() },
+    });
+    useConnections.getState().setConnState("c1", { kind: "idle" });
+    const s = useConnections.getState();
+    expect(s.connStates).toEqual({});
+    expect(s.capabilities).toEqual({});
+  });
+
+  it("setConnState() fetches and caches capabilities once a pool becomes ready", async () => {
+    const caps = makeCaps();
+    ipcMock.getCapabilities.mockResolvedValue(caps);
+    useConnections.setState({ connStates: {}, capabilities: {} });
+
+    useConnections.getState().setConnState("c1", { kind: "ready" });
+    expect(useConnections.getState().connStates.c1).toEqual({ kind: "ready" });
+
+    // Capability fetch is fire-and-forget; let the microtasks settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ipcMock.getCapabilities).toHaveBeenCalledWith("c1");
+    expect(useConnections.getState().capabilities.c1).toEqual(caps);
+  });
+
+  it("setConnState() does not refetch capabilities already cached for the connection", () => {
+    useConnections.setState({ connStates: {}, capabilities: { c1: makeCaps() } });
+    useConnections.getState().setConnState("c1", { kind: "ready" });
+    expect(ipcMock.getCapabilities).not.toHaveBeenCalled();
+  });
+
+  it("moveFolder() rolls back the optimistic reparent when ipc fails", async () => {
+    useConnections.setState({
+      folders: [makeFolder("f1", "Work"), makeFolder("f2", "Home")],
+    });
+    ipcMock.reorderFolders.mockRejectedValue(new Error("boom"));
+
+    await expect(useConnections.getState().moveFolder("f1", "f2", 0)).rejects.toThrow("boom");
+
+    // Optimistic reparent undone.
+    expect(useConnections.getState().folders.find((f) => f.id === "f1")?.parent_id).toBeNull();
   });
 });
