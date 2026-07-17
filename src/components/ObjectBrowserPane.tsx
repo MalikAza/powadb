@@ -1027,7 +1027,9 @@ function ObjectPreview({
       );
     }
     if (category === "pdf") {
-      return <iframe src={cacheUrl} title="PDF preview" className="h-full w-full border-0" />;
+      return (
+        <iframe src={cacheUrl} title="PDF preview" sandbox="" className="h-full w-full border-0" />
+      );
     }
     if (category === "audio") {
       return (
