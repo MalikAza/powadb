@@ -147,6 +147,7 @@ function LayerControl({ layer }: { layer: BaseLayer }) {
             <span className="text-[10px] text-muted-foreground">Opacity</span>
             <input
               type="range"
+              aria-label="Layer opacity"
               min={0}
               max={100}
               value={opacity}
