@@ -47,6 +47,21 @@ type Props = {
   onOpenChange: (open: boolean) => void;
 };
 
+const STEP1_FIELDS = [
+  "name",
+  "kind",
+  "host",
+  "port",
+  "database",
+  "username",
+  "password",
+  "ssl",
+  "folder_id",
+  "color",
+  "wg_enabled",
+  "ssh_enabled",
+] as const;
+
 export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange }: Props) {
   const { connections, folders, save } = useConnections();
   const editing: SavedConnection | undefined = connections.find((c) => c.id === editingId);
@@ -157,21 +172,6 @@ export function ConnectionForm({ editingId, initialFolderId, open, onOpenChange 
       form.setValue("wg_enabled", false);
     }
   }, [sshEnabled]);
-
-  const STEP1_FIELDS = [
-    "name",
-    "kind",
-    "host",
-    "port",
-    "database",
-    "username",
-    "password",
-    "ssl",
-    "folder_id",
-    "color",
-    "wg_enabled",
-    "ssh_enabled",
-  ] as const;
 
   async function goToStep2(e?: React.MouseEvent) {
     // Defensive: the Next/Save button share a slot in the footer, and when

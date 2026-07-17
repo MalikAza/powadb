@@ -424,6 +424,7 @@ function BrowseHeaderRow({
   allRows: readonly (readonly unknown[])[];
   pkColIndexes: number[] | null;
 }) {
+  const pkColSet = new Set(pkCols);
   return (
     <tr>
       <th className="border-b border-r border-border px-2 py-1.5 text-left">
@@ -447,7 +448,7 @@ function BrowseHeaderRow({
         const headerInner = (
           <div>
             <div className="flex items-center gap-1 overflow-hidden">
-              {pkCols?.includes(c.name) && (
+              {pkColSet.has(c.name) && (
                 <span title="Primary key" className="text-primary">
                   🔑
                 </span>

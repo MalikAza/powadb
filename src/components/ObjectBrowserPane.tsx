@@ -421,7 +421,7 @@ export function ObjectBrowserPane({ tab, conn }: Props) {
       objects = objects.filter((o) => activeCategories.has(fileCategory(o.key)));
     }
     const dir = sortDir === "asc" ? 1 : -1;
-    objects = [...objects].sort((a, b) => {
+    objects = objects.toSorted((a, b) => {
       if (sortKey === "size") return (a.size - b.size) * dir;
       if (sortKey === "modified") {
         return (Date.parse(a.last_modified) - Date.parse(b.last_modified)) * dir;

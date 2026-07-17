@@ -37,7 +37,7 @@ export type SidebarDragData = {
   kind?: DbKind;
 };
 
-export function containerKeyToFolderId(key: string): string | null {
+function containerKeyToFolderId(key: string): string | null {
   return key === "root" ? null : key;
 }
 

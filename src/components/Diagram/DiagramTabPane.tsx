@@ -337,6 +337,13 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
     modeRef.current = mode;
   }, [mode]);
 
+  // Callbacks read the latest doc via a ref so their identity stays stable and
+  // their state updaters stay pure (no reading `cur` just to spawn a side effect).
+  const docRef = useRef(doc);
+  useEffect(() => {
+    docRef.current = doc;
+  }, [doc]);
+
   function maybeAutoApply() {
     if (modeRef.current === "live") setApplyOpen(true);
   }
@@ -352,11 +359,8 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
   );
 
   const openEditTable = useCallback((id: string) => {
-    setDoc((cur) => {
-      const t = cur?.tables.find((x) => x.id === id) ?? null;
-      setTableDialog({ open: true, editing: t });
-      return cur;
-    });
+    const t = docRef.current?.tables.find((x) => x.id === id) ?? null;
+    setTableDialog({ open: true, editing: t });
   }, []);
 
   const askDeleteTable = useCallback((id: string) => {
@@ -404,17 +408,19 @@ function DiagramTabPaneInner({ tab, conn }: { tab: DiagramTab; conn: SavedConnec
     const srcParsed = parseHandleId(c.sourceHandle);
     const tgtParsed = parseHandleId(c.targetHandle);
     if (!srcParsed || !tgtParsed) return;
-    setDoc((cur) => {
-      if (!cur) return cur;
+    const cur = docRef.current;
+    if (cur) {
       const next = docAddEdge(cur, {
         source: sourceTable,
         target: targetTable,
         sourceColumns: [srcParsed.columnName],
         targetColumns: [tgtParsed.columnName],
       });
-      if (next !== cur) setDirty(true);
-      return next;
-    });
+      if (next !== cur) {
+        setDoc(next);
+        setDirty(true);
+      }
+    }
     if (modeRef.current === "live") setApplyOpen(true);
   }, []);
 

@@ -30,6 +30,3 @@ export function styleForColor(idx: number): Style {
     }),
   });
 }
-
-// Default style used by single-feature (v1) callers — same as palette index 0.
-export const defaultFeatureStyle = styleForColor(0);

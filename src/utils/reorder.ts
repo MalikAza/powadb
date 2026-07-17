@@ -17,7 +17,7 @@ export function computeContainerOrder(
   movedId: string,
   targetIndex: number,
 ): string[] {
-  const rest = [...containerItems].sort(byPositionThenName).filter((i) => i.id !== movedId);
+  const rest = containerItems.toSorted(byPositionThenName).filter((i) => i.id !== movedId);
   const index = Math.max(0, Math.min(targetIndex, rest.length));
   const ids = rest.map((i) => i.id);
   ids.splice(index, 0, movedId);
