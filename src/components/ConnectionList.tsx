@@ -34,6 +34,13 @@ import { useUi } from "../stores/ui";
 import type { Folder, SavedConnection } from "../types";
 import { buildTree, type FolderNode } from "../utils/folderTree";
 import { ConfirmDialog } from "./ConfirmDialog";
+import {
+  FolderDropZone,
+  RootDropZone,
+  SidebarDnd,
+  SortableGroup,
+  SortableRow,
+} from "./ConnectionListDnd";
 import { FolderForm } from "./FolderForm";
 
 type PendingDelete =
@@ -90,51 +97,62 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
           </Button>
         </div>
       </div>
-      <ScrollArea className="flex-1">
-        <div className="p-2">
-          {connections.length === 0 && folders.length === 0 && (
-            <p className="px-2 py-1 text-xs text-muted-foreground">No connections yet.</p>
-          )}
+      <SidebarDnd>
+        <ScrollArea className="flex-1">
+          <RootDropZone className="min-h-full p-2">
+            {connections.length === 0 && folders.length === 0 && (
+              <p className="px-2 py-1 text-xs text-muted-foreground">No connections yet.</p>
+            )}
 
-          {tree.rootFolders.map((node) => (
-            <FolderRow
-              key={node.folder.id}
-              node={node}
-              depth={0}
-              openFolders={openFolders}
-              setOpenFolders={setOpenFolders}
-              activeId={activeId}
-              connectedIds={connectedIds}
-              onActivate={activate}
-              onEdit={onEdit}
-              onDisconnect={disconnect}
-              onAddConnHere={onAdd}
-              onAddSubfolder={(parentId) =>
-                setFolderForm({ editing: null, initialParentId: parentId })
-              }
-              onRenameFolder={(folder) => setFolderForm({ editing: folder })}
-              onDeleteFolder={(folder) =>
-                setPendingDelete({ kind: "folder", id: folder.id, name: folder.name })
-              }
-              onDeleteConn={(c) => setPendingDelete({ kind: "conn", id: c.id, name: c.name })}
-            />
-          ))}
+            <SortableGroup
+              id="folders:root"
+              ids={tree.rootFolders.map((n) => `folder:${n.folder.id}`)}
+            >
+              {tree.rootFolders.map((node) => (
+                <FolderRow
+                  key={node.folder.id}
+                  node={node}
+                  depth={0}
+                  containerKey="root"
+                  openFolders={openFolders}
+                  setOpenFolders={setOpenFolders}
+                  activeId={activeId}
+                  connectedIds={connectedIds}
+                  onActivate={activate}
+                  onEdit={onEdit}
+                  onDisconnect={disconnect}
+                  onAddConnHere={onAdd}
+                  onAddSubfolder={(parentId) =>
+                    setFolderForm({ editing: null, initialParentId: parentId })
+                  }
+                  onRenameFolder={(folder) => setFolderForm({ editing: folder })}
+                  onDeleteFolder={(folder) =>
+                    setPendingDelete({ kind: "folder", id: folder.id, name: folder.name })
+                  }
+                  onDeleteConn={(c) => setPendingDelete({ kind: "conn", id: c.id, name: c.name })}
+                />
+              ))}
+            </SortableGroup>
 
-          {tree.rootConnections.map((c) => (
-            <ConnRow
-              key={c.id}
-              c={c}
-              depth={0}
-              isActive={activeId === c.id}
-              isConnected={connectedIds.has(c.id)}
-              onActivate={activate}
-              onEdit={onEdit}
-              onDisconnect={disconnect}
-              onDelete={(c) => setPendingDelete({ kind: "conn", id: c.id, name: c.name })}
-            />
-          ))}
-        </div>
-      </ScrollArea>
+            <SortableGroup id="conns:root" ids={tree.rootConnections.map((c) => `conn:${c.id}`)}>
+              {tree.rootConnections.map((c) => (
+                <ConnRow
+                  key={c.id}
+                  c={c}
+                  depth={0}
+                  containerKey="root"
+                  isActive={activeId === c.id}
+                  isConnected={connectedIds.has(c.id)}
+                  onActivate={activate}
+                  onEdit={onEdit}
+                  onDisconnect={disconnect}
+                  onDelete={(c) => setPendingDelete({ kind: "conn", id: c.id, name: c.name })}
+                />
+              ))}
+            </SortableGroup>
+          </RootDropZone>
+        </ScrollArea>
+      </SidebarDnd>
 
       {folderForm && (
         <FolderForm
@@ -175,6 +193,7 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
 function FolderRow({
   node,
   depth,
+  containerKey,
   openFolders,
   setOpenFolders,
   activeId,
@@ -190,6 +209,8 @@ function FolderRow({
 }: {
   node: FolderNode;
   depth: number;
+  /// "root" or the parent folder id — the DnD container this row lives in.
+  containerKey: string;
   openFolders: Record<string, boolean>;
   setOpenFolders: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   activeId: string | null;
@@ -206,9 +227,12 @@ function FolderRow({
   const isOpen = openFolders[node.folder.id] ?? false;
 
   return (
-    <div>
+    <SortableRow
+      id={`folder:${node.folder.id}`}
+      data={{ type: "folder", entityId: node.folder.id, containerKey, name: node.folder.name }}
+    >
       <div
-        className="group flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sidebar-accent"
+        className="group relative flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sidebar-accent"
         style={{ paddingLeft: 8 + depth * 12 }}
         role="button"
         tabIndex={0}
@@ -218,6 +242,7 @@ function FolderRow({
           setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] })),
         )}
       >
+        <FolderDropZone folderId={node.folder.id} />
         {isOpen ? (
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         ) : (
@@ -283,47 +308,60 @@ function FolderRow({
 
       {isOpen && (
         <>
-          {node.children.map((child) => (
-            <FolderRow
-              key={child.folder.id}
-              node={child}
-              depth={depth + 1}
-              openFolders={openFolders}
-              setOpenFolders={setOpenFolders}
-              activeId={activeId}
-              connectedIds={connectedIds}
-              onActivate={onActivate}
-              onEdit={onEdit}
-              onDisconnect={onDisconnect}
-              onAddConnHere={onAddConnHere}
-              onAddSubfolder={onAddSubfolder}
-              onRenameFolder={onRenameFolder}
-              onDeleteFolder={onDeleteFolder}
-              onDeleteConn={onDeleteConn}
-            />
-          ))}
-          {node.connections.map((c) => (
-            <ConnRow
-              key={c.id}
-              c={c}
-              depth={depth + 1}
-              isActive={activeId === c.id}
-              isConnected={connectedIds.has(c.id)}
-              onActivate={onActivate}
-              onEdit={onEdit}
-              onDisconnect={onDisconnect}
-              onDelete={onDeleteConn}
-            />
-          ))}
+          <SortableGroup
+            id={`folders:${node.folder.id}`}
+            ids={node.children.map((n) => `folder:${n.folder.id}`)}
+          >
+            {node.children.map((child) => (
+              <FolderRow
+                key={child.folder.id}
+                node={child}
+                depth={depth + 1}
+                containerKey={node.folder.id}
+                openFolders={openFolders}
+                setOpenFolders={setOpenFolders}
+                activeId={activeId}
+                connectedIds={connectedIds}
+                onActivate={onActivate}
+                onEdit={onEdit}
+                onDisconnect={onDisconnect}
+                onAddConnHere={onAddConnHere}
+                onAddSubfolder={onAddSubfolder}
+                onRenameFolder={onRenameFolder}
+                onDeleteFolder={onDeleteFolder}
+                onDeleteConn={onDeleteConn}
+              />
+            ))}
+          </SortableGroup>
+          <SortableGroup
+            id={`conns:${node.folder.id}`}
+            ids={node.connections.map((c) => `conn:${c.id}`)}
+          >
+            {node.connections.map((c) => (
+              <ConnRow
+                key={c.id}
+                c={c}
+                depth={depth + 1}
+                containerKey={node.folder.id}
+                isActive={activeId === c.id}
+                isConnected={connectedIds.has(c.id)}
+                onActivate={onActivate}
+                onEdit={onEdit}
+                onDisconnect={onDisconnect}
+                onDelete={onDeleteConn}
+              />
+            ))}
+          </SortableGroup>
         </>
       )}
-    </div>
+    </SortableRow>
   );
 }
 
 function ConnRow({
   c,
   depth,
+  containerKey,
   isActive,
   isConnected,
   onActivate,
@@ -333,6 +371,8 @@ function ConnRow({
 }: {
   c: SavedConnection;
   depth: number;
+  /// "root" or the parent folder id — the DnD container this row lives in.
+  containerKey: string;
   isActive: boolean;
   isConnected: boolean;
   onActivate: (id: string) => void;
@@ -404,7 +444,10 @@ function ConnRow({
             : "Connection error"
           : "Not connected";
   return (
-    <>
+    <SortableRow
+      id={`conn:${c.id}`}
+      data={{ type: "conn", entityId: c.id, containerKey, name: c.name, kind: c.kind }}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -555,6 +598,6 @@ function ConnRow({
           )}
         </div>
       )}
-    </>
+    </SortableRow>
   );
 }

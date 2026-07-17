@@ -2009,4 +2009,136 @@ mod tests {
         .await;
         assert!(matches!(result, Err(AppError::Canceled)));
     }
+
+    // ─── url_encode_minimal / build_mongo_uri / resolve_tool ──────────────
+
+    fn conn(kind: DbKind) -> SavedConnection {
+        SavedConnection {
+            id: "c1".into(),
+            name: "c".into(),
+            kind,
+            host: "db.example.com".into(),
+            port: 27017,
+            database: "app".into(),
+            username: String::new(),
+            ssl: false,
+            folder_id: None,
+            color: None,
+            position: None,
+            wg: None,
+            ssh: None,
+        }
+    }
+
+    #[test]
+    fn url_encode_minimal_passes_unreserved_and_escapes_the_rest() {
+        assert_eq!(url_encode_minimal("aZ9-_.~"), "aZ9-_.~");
+        assert_eq!(url_encode_minimal("a:b/c@d e"), "a%3Ab%2Fc%40d%20e");
+    }
+
+    #[test]
+    fn build_mongo_uri_passes_full_uris_through_verbatim() {
+        let mut c = conn(DbKind::Mongo);
+        c.database = "mongodb+srv://cluster0.example.net/app".into();
+        // Even with credentials supplied, a full URI is returned untouched.
+        c.username = "u".into();
+        assert_eq!(
+            build_mongo_uri(&c, Some("pw")),
+            "mongodb+srv://cluster0.example.net/app"
+        );
+    }
+
+    #[test]
+    fn build_mongo_uri_omits_userinfo_without_full_credentials() {
+        // Empty username → no userinfo, even when a password is present.
+        let c = conn(DbKind::Mongo);
+        assert_eq!(
+            build_mongo_uri(&c, Some("pw")),
+            "mongodb://db.example.com:27017"
+        );
+
+        // Username present but no password → still no userinfo.
+        let mut c2 = conn(DbKind::Mongo);
+        c2.username = "u".into();
+        assert_eq!(build_mongo_uri(&c2, None), "mongodb://db.example.com:27017");
+    }
+
+    #[test]
+    fn build_mongo_uri_percent_encodes_credentials() {
+        let mut c = conn(DbKind::Mongo);
+        c.username = "u@x".into();
+        assert_eq!(
+            build_mongo_uri(&c, Some("p:w")),
+            "mongodb://u%40x:p%3Aw@db.example.com:27017"
+        );
+    }
+
+    #[test]
+    fn resolve_tool_returns_none_for_object_stores() {
+        let s = AppSettings::default();
+        assert_eq!(resolve_tool(&s, DbKind::S3, ToolKind::Dump), None);
+        assert_eq!(resolve_tool(&s, DbKind::S3, ToolKind::Client), None);
+    }
+
+    #[test]
+    fn resolve_tool_honors_configured_override_paths() {
+        let s = AppSettings {
+            pg_dump_path: Some("/opt/pg_dump".into()),
+            psql_path: Some("/opt/psql".into()),
+            mysqldump_path: Some("/opt/mysqldump".into()),
+            mysql_path: Some("/opt/mysql".into()),
+            sqlite3_path: Some("/opt/sqlite3".into()),
+            mongodump_path: Some("/opt/mongodump".into()),
+            mongorestore_path: Some("/opt/mongorestore".into()),
+            ..AppSettings::default()
+        };
+        let got = |k, t| resolve_tool(&s, k, t).map(path_to_string);
+        assert_eq!(
+            got(DbKind::Postgres, ToolKind::Dump).as_deref(),
+            Some("/opt/pg_dump")
+        );
+        assert_eq!(
+            got(DbKind::Postgres, ToolKind::Client).as_deref(),
+            Some("/opt/psql")
+        );
+        assert_eq!(
+            got(DbKind::Mysql, ToolKind::Dump).as_deref(),
+            Some("/opt/mysqldump")
+        );
+        assert_eq!(
+            got(DbKind::Mysql, ToolKind::Client).as_deref(),
+            Some("/opt/mysql")
+        );
+        // sqlite3 backs both dump and client modes.
+        assert_eq!(
+            got(DbKind::Sqlite, ToolKind::Dump).as_deref(),
+            Some("/opt/sqlite3")
+        );
+        assert_eq!(
+            got(DbKind::Sqlite, ToolKind::Client).as_deref(),
+            Some("/opt/sqlite3")
+        );
+        assert_eq!(
+            got(DbKind::Mongo, ToolKind::Dump).as_deref(),
+            Some("/opt/mongodump")
+        );
+        assert_eq!(
+            got(DbKind::Mongo, ToolKind::Client).as_deref(),
+            Some("/opt/mongorestore")
+        );
+    }
+
+    #[test]
+    fn resolve_tool_ignores_an_empty_override_path() {
+        // An empty override must not be returned verbatim; it falls through to
+        // the `which` lookup (whose result we don't assert on here).
+        let s = AppSettings {
+            pg_dump_path: Some(String::new()),
+            ..AppSettings::default()
+        };
+        assert_ne!(
+            resolve_tool(&s, DbKind::Postgres, ToolKind::Dump),
+            Some(PathBuf::from(""))
+        );
+    }
 }

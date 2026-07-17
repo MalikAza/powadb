@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
+import { S3PrefixStatsCell } from "@/components/S3PrefixStatsCell";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -66,6 +67,7 @@ import {
   fileIcon,
   fileIconColor,
 } from "@/lib/fileIcons";
+import { formatBytes } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { usePanelLayouts } from "@/stores/panelLayouts";
 import { type ObjectBrowserTab, useTabs } from "@/stores/tabs";
@@ -75,18 +77,6 @@ type Props = { tab: ObjectBrowserTab; conn: SavedConnection };
 
 type SortKey = "name" | "size" | "modified";
 type SortDir = "asc" | "desc";
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
-}
 
 /** Format an S3 timestamp string to the user's locale; `—` when unparseable. */
 function formatDate(s: string | null | undefined): string {
@@ -431,7 +421,7 @@ export function ObjectBrowserPane({ tab, conn }: Props) {
       objects = objects.filter((o) => activeCategories.has(fileCategory(o.key)));
     }
     const dir = sortDir === "asc" ? 1 : -1;
-    objects = [...objects].sort((a, b) => {
+    objects = objects.toSorted((a, b) => {
       if (sortKey === "size") return (a.size - b.size) * dir;
       if (sortKey === "modified") {
         return (Date.parse(a.last_modified) - Date.parse(b.last_modified)) * dir;
@@ -612,7 +602,9 @@ export function ObjectBrowserPane({ tab, conn }: Props) {
                           </div>
                         </td>
                         <td className="px-3 py-1.5 text-right align-middle text-muted-foreground">
-                          —
+                          <div className="flex items-center justify-end">
+                            <S3PrefixStatsCell connectionId={conn.id} bucket={bucket} prefix={f} />
+                          </div>
                         </td>
                         <td className="px-3 py-1.5 text-right align-middle text-muted-foreground">
                           —
@@ -1035,7 +1027,9 @@ function ObjectPreview({
       );
     }
     if (category === "pdf") {
-      return <iframe src={cacheUrl} title="PDF preview" className="h-full w-full border-0" />;
+      return (
+        <iframe src={cacheUrl} title="PDF preview" sandbox="" className="h-full w-full border-0" />
+      );
     }
     if (category === "audio") {
       return (

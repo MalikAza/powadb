@@ -28,6 +28,9 @@ function parseByteaModesJson(raw: string | null): Record<string, ByteaDisplayMod
   }
 }
 
+type SaveForm = { open: boolean; name: string; scope: "connection" | "global" };
+const INITIAL_SAVE: SaveForm = { open: false, name: "", scope: "connection" };
+
 export function SnippetsPanel() {
   const activeId = useConnections((s) => s.activeId);
   const tabs = useTabs((s) => s.tabs);
@@ -53,8 +56,6 @@ export function SnippetsPanel() {
   );
   const snippets = fetchState.snippets;
   const loading = fetchState.status === "loading";
-  type SaveForm = { open: boolean; name: string; scope: "connection" | "global" };
-  const INITIAL_SAVE: SaveForm = { open: false, name: "", scope: "connection" };
   const [save, setSave] = useState<SaveForm>(INITIAL_SAVE);
   const [pendingDelete, setPendingDelete] = useState<Snippet | null>(null);
   const saveNameInputRef = useRef<HTMLInputElement>(null);

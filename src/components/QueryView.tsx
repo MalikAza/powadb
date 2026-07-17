@@ -193,6 +193,7 @@ function TabBar({
             <span className="truncate">{t.title}</span>
             <button
               type="button"
+              aria-label="Close tab"
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(t.id);

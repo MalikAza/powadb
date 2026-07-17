@@ -27,6 +27,8 @@ import { useConnections } from "../stores/connections";
 import { useSchema } from "../stores/schema";
 import { useUi } from "../stores/ui";
 
+const tableKey = (s: string, t: string) => `${s}.${t}`;
+
 export function ExportDatabaseDialog() {
   const dialog = useUi((s) => s.exportDialog);
   const close = useUi((s) => s.closeExportDialog);
@@ -130,8 +132,6 @@ function ExportDatabaseDialogBody({
     () => schemas.flatMap((s) => s.tables.map((t) => ({ schema: s.name, table: t.name }))),
     [schemas],
   );
-
-  const tableKey = (s: string, t: string) => `${s}.${t}`;
 
   function toggleTable(s: string, t: string) {
     setForm((f) => ({

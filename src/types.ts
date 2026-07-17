@@ -24,11 +24,19 @@ export type SavedConnection = {
   ssl: boolean;
   folder_id: string | null;
   color: string | null;
+  /** Manual sidebar position within the parent container. `null` until the
+   * user first drags an item in that container; `null` rows sort by name
+   * after positioned ones. Managed via `ipc.reorderConnections`, not the
+   * save form. */
+  position: number | null;
   wg: WgTunnel | null;
   ssh: SshTunnel | null;
 };
 
-export type ConnectionInput = Omit<SavedConnection, "id" | "folder_id" | "color" | "wg" | "ssh"> & {
+export type ConnectionInput = Omit<
+  SavedConnection,
+  "id" | "folder_id" | "color" | "position" | "wg" | "ssh"
+> & {
   id?: string;
   password?: string;
   folder_id?: string | null;
@@ -57,12 +65,29 @@ export type Folder = {
   id: string;
   name: string;
   parent_id: string | null;
+  /** Same semantics as `SavedConnection["position"]`. */
+  position: number | null;
 };
 
 export type FolderInput = {
   id?: string;
   name: string;
   parent_id?: string | null;
+};
+
+/** One row of a sidebar drag-and-drop update: the connection's new container
+ * and its position within it. Mirrors `ConnectionPosition` on the Rust side. */
+export type ConnectionPositionUpdate = {
+  id: string;
+  folder_id: string | null;
+  position: number;
+};
+
+/** Same as `ConnectionPositionUpdate`, for folders. */
+export type FolderPositionUpdate = {
+  id: string;
+  parent_id: string | null;
+  position: number;
 };
 
 export type Column = {

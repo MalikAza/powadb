@@ -205,6 +205,7 @@ pub fn run() {
             commands::query::cancel_query,
             commands::connections::list_connections,
             commands::connections::save_connection,
+            commands::connections::reorder_connections,
             commands::connections::delete_connection,
             commands::connections::disconnect,
             commands::connections::list_active_connections,
@@ -243,6 +244,7 @@ pub fn run() {
             commands::table_ops::execute_dml,
             commands::folders::list_folders,
             commands::folders::save_folder,
+            commands::folders::reorder_folders,
             commands::folders::delete_folder,
             commands::geo::geometry_to_geojson,
             commands::geo::geometries_to_geojson,
@@ -279,6 +281,8 @@ pub fn run() {
             commands::s3::s3_rename_object,
             commands::s3::s3_rename_folder,
             commands::s3::s3_put_directory,
+            commands::s3::s3_prefix_stats,
+            commands::s3::s3_cancel_job,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Capabilities } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
 
 const ipcMock = {
@@ -11,6 +12,9 @@ const ipcMock = {
   deleteFolder: vi.fn(),
   disconnect: vi.fn(),
   prewarmConnection: vi.fn(),
+  reorderConnections: vi.fn(),
+  reorderFolders: vi.fn(),
+  getCapabilities: vi.fn(),
 };
 
 vi.mock("../ipc", () => ({
@@ -32,13 +36,29 @@ function makeConn(over: Partial<SavedConnection> = {}): SavedConnection {
     ssl: false,
     folder_id: over.folder_id ?? null,
     color: over.color ?? null,
+    position: over.position ?? null,
     wg: null,
     ssh: null,
   };
 }
 
 function makeFolder(id: string, name: string, parent_id: string | null = null): Folder {
-  return { id, name, parent_id };
+  return { id, name, parent_id, position: null };
+}
+
+function makeCaps(): Capabilities {
+  return {
+    supports_databases_list: true,
+    supports_database_create: true,
+    supports_database_drop: true,
+    supports_schemas: true,
+    supports_foreign_keys: true,
+    supports_ddl_diff: true,
+    supports_diagram: true,
+    supports_geo: false,
+    supports_native_dump: true,
+    query_language: "sql",
+  };
 }
 
 beforeEach(() => {
@@ -272,6 +292,67 @@ describe("useConnections", () => {
     expect(s.connections.find((c) => c.id === "c1")?.folder_id).toBeNull();
   });
 
+  it("moveConnection() renumbers the target container and persists it", async () => {
+    // Alphabetical fallback order: Alpha, Beta, Gamma. Drag Gamma to the top.
+    useConnections.setState({
+      connections: [
+        makeConn({ id: "a", name: "Alpha" }),
+        makeConn({ id: "b", name: "Beta" }),
+        makeConn({ id: "g", name: "Gamma" }),
+      ],
+    });
+    ipcMock.reorderConnections.mockResolvedValue(undefined);
+
+    await useConnections.getState().moveConnection("g", null, 0);
+
+    expect(ipcMock.reorderConnections).toHaveBeenCalledWith([
+      { id: "g", folder_id: null, position: 0 },
+      { id: "a", folder_id: null, position: 1 },
+      { id: "b", folder_id: null, position: 2 },
+    ]);
+    const s = useConnections.getState();
+    expect(s.connections.find((c) => c.id === "g")?.position).toBe(0);
+    expect(s.connections.find((c) => c.id === "b")?.position).toBe(2);
+  });
+
+  it("moveConnection() moves into a folder and rolls back on ipc failure", async () => {
+    useConnections.setState({
+      connections: [makeConn({ id: "a", name: "Alpha" })],
+      folders: [makeFolder("f1", "Work")],
+    });
+    ipcMock.reorderConnections.mockRejectedValue(new Error("boom"));
+
+    await expect(useConnections.getState().moveConnection("a", "f1", 0)).rejects.toThrow("boom");
+
+    // Optimistic update rolled back.
+    expect(useConnections.getState().connections.find((c) => c.id === "a")?.folder_id).toBeNull();
+  });
+
+  it("moveFolder() reparents and renumbers the target container", async () => {
+    useConnections.setState({
+      folders: [makeFolder("f1", "Work"), makeFolder("f2", "Home")],
+    });
+    ipcMock.reorderFolders.mockResolvedValue(undefined);
+
+    await useConnections.getState().moveFolder("f1", "f2", 0);
+
+    expect(ipcMock.reorderFolders).toHaveBeenCalledWith([
+      { id: "f1", parent_id: "f2", position: 0 },
+    ]);
+    expect(useConnections.getState().folders.find((f) => f.id === "f1")?.parent_id).toBe("f2");
+  });
+
+  it("moveFolder() refuses to drop a folder into its own subtree", async () => {
+    useConnections.setState({
+      folders: [makeFolder("root", "Root"), makeFolder("child", "Child", "root")],
+    });
+
+    await useConnections.getState().moveFolder("root", "child", 0);
+
+    expect(ipcMock.reorderFolders).not.toHaveBeenCalled();
+    expect(useConnections.getState().folders.find((f) => f.id === "root")?.parent_id).toBeNull();
+  });
+
   it("setConnState() stores a non-idle state for the connection", () => {
     useConnections.getState().setConnState("c1", { kind: "connecting" });
     expect(useConnections.getState().connStates.c1).toEqual({ kind: "connecting" });
@@ -290,5 +371,49 @@ describe("useConnections", () => {
     const before = useConnections.getState().connStates;
     useConnections.getState().setConnState("missing", { kind: "idle" });
     expect(useConnections.getState().connStates).toBe(before);
+  });
+
+  it("setConnState() with idle also drops cached capabilities so a reconnect refetches", () => {
+    useConnections.setState({
+      connStates: { c1: { kind: "ready" } },
+      capabilities: { c1: makeCaps() },
+    });
+    useConnections.getState().setConnState("c1", { kind: "idle" });
+    const s = useConnections.getState();
+    expect(s.connStates).toEqual({});
+    expect(s.capabilities).toEqual({});
+  });
+
+  it("setConnState() fetches and caches capabilities once a pool becomes ready", async () => {
+    const caps = makeCaps();
+    ipcMock.getCapabilities.mockResolvedValue(caps);
+    useConnections.setState({ connStates: {}, capabilities: {} });
+
+    useConnections.getState().setConnState("c1", { kind: "ready" });
+    expect(useConnections.getState().connStates.c1).toEqual({ kind: "ready" });
+
+    // Capability fetch is fire-and-forget; let the microtasks settle.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ipcMock.getCapabilities).toHaveBeenCalledWith("c1");
+    expect(useConnections.getState().capabilities.c1).toEqual(caps);
+  });
+
+  it("setConnState() does not refetch capabilities already cached for the connection", () => {
+    useConnections.setState({ connStates: {}, capabilities: { c1: makeCaps() } });
+    useConnections.getState().setConnState("c1", { kind: "ready" });
+    expect(ipcMock.getCapabilities).not.toHaveBeenCalled();
+  });
+
+  it("moveFolder() rolls back the optimistic reparent when ipc fails", async () => {
+    useConnections.setState({
+      folders: [makeFolder("f1", "Work"), makeFolder("f2", "Home")],
+    });
+    ipcMock.reorderFolders.mockRejectedValue(new Error("boom"));
+
+    await expect(useConnections.getState().moveFolder("f1", "f2", 0)).rejects.toThrow("boom");
+
+    // Optimistic reparent undone.
+    expect(useConnections.getState().folders.find((f) => f.id === "f1")?.parent_id).toBeNull();
   });
 });

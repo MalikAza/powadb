@@ -3,6 +3,8 @@ import { emit } from "@/lib/events";
 import type { Capabilities } from "../ipc";
 import { ipc } from "../ipc";
 import type { ConnectionInput, Folder, FolderInput, SavedConnection } from "../types";
+import { isSelfOrDescendant } from "../utils/folderTree";
+import { computeContainerOrder } from "../utils/reorder";
 
 export type ConnState =
   | { kind: "idle" }
@@ -31,6 +33,13 @@ type Actions = {
   remove: (id: string) => Promise<void>;
   saveFolder: (input: FolderInput) => Promise<Folder>;
   removeFolder: (id: string) => Promise<void>;
+  /// Drag-and-drop: drop connection `id` at `targetIndex` among the
+  /// connections of `targetFolderId` (null = root). Optimistic; rolls back
+  /// and rethrows on IPC failure.
+  moveConnection: (id: string, targetFolderId: string | null, targetIndex: number) => Promise<void>;
+  /// Same for folders. No-ops when the target container is the folder itself
+  /// or one of its descendants (the backend double-checks anyway).
+  moveFolder: (id: string, targetParentId: string | null, targetIndex: number) => Promise<void>;
   activate: (id: string) => void;
   deactivate: () => void;
   refreshConnected: () => Promise<void>;
@@ -136,6 +145,71 @@ export const useConnections = create<State & Actions>((set, get) => ({
         ),
       };
     });
+  },
+
+  async moveConnection(id, targetFolderId, targetIndex) {
+    const prev = get().connections;
+    const moved = prev.find((c) => c.id === id);
+    if (!moved) return;
+    // Renumber the whole target container (this also freezes the alphabetical
+    // fallback order the first time it's dragged in). The source container
+    // keeps its positions — gaps are harmless to the comparator.
+    const container = prev.filter((c) => c.folder_id === targetFolderId);
+    const orderedIds = computeContainerOrder(
+      container.concat(moved.folder_id === targetFolderId ? [] : [moved]),
+      id,
+      targetIndex,
+    );
+    const updates = orderedIds.map((cid, position) => ({
+      id: cid,
+      folder_id: targetFolderId,
+      position,
+    }));
+    const byId = new Map(updates.map((u) => [u.id, u]));
+    set({
+      connections: prev.map((c) => {
+        const u = byId.get(c.id);
+        return u ? { ...c, folder_id: u.folder_id, position: u.position } : c;
+      }),
+    });
+    try {
+      await ipc.reorderConnections(updates);
+    } catch (e) {
+      set({ connections: prev });
+      throw e;
+    }
+  },
+
+  async moveFolder(id, targetParentId, targetIndex) {
+    const prev = get().folders;
+    const moved = prev.find((f) => f.id === id);
+    if (!moved) return;
+    // Dropping a folder into its own subtree would orphan the whole branch.
+    if (targetParentId !== null && isSelfOrDescendant(prev, id, targetParentId)) return;
+    const container = prev.filter((f) => f.parent_id === targetParentId);
+    const orderedIds = computeContainerOrder(
+      container.concat(moved.parent_id === targetParentId ? [] : [moved]),
+      id,
+      targetIndex,
+    );
+    const updates = orderedIds.map((fid, position) => ({
+      id: fid,
+      parent_id: targetParentId,
+      position,
+    }));
+    const byId = new Map(updates.map((u) => [u.id, u]));
+    set({
+      folders: prev.map((f) => {
+        const u = byId.get(f.id);
+        return u ? { ...f, parent_id: u.parent_id, position: u.position } : f;
+      }),
+    });
+    try {
+      await ipc.reorderFolders(updates);
+    } catch (e) {
+      set({ folders: prev });
+      throw e;
+    }
   },
 
   activate(id) {

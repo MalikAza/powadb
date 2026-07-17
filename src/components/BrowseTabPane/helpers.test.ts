@@ -28,6 +28,7 @@ function makeConn(over: Partial<SavedConnection> = {}): SavedConnection {
     username: "u",
     ssl: false,
     folder_id: null,
+    position: null,
     color: null,
     wg: null,
     ssh: null,

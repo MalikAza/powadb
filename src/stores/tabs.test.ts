@@ -189,6 +189,41 @@ describe("useTabs — openDiagramTab", () => {
   });
 });
 
+describe("useTabs — openObjectBrowserTab", () => {
+  beforeEach(reset);
+
+  it("creates an object-browser tab with default state and activates it", () => {
+    const id = useTabs.getState().openObjectBrowserTab("c1", "my-bucket");
+    const s = useTabs.getState();
+    expect(s.activeTabId).toBe(id);
+    const tab = s.tabs.find((t) => t.id === id);
+    if (tab?.kind !== "objects") throw new Error("expected objects tab");
+    expect(tab.connectionId).toBe("c1");
+    expect(tab.bucket).toBe("my-bucket");
+    expect(tab.title).toBe("my-bucket");
+    expect(tab.prefix).toBe("");
+    expect(tab.selectedKey).toBeNull();
+    expect(tab.result).toBeNull();
+  });
+
+  it("reuses the existing tab for the same connection and bucket", () => {
+    const id1 = useTabs.getState().openObjectBrowserTab("c1", "my-bucket");
+    useTabs.getState().newQueryTab("c1");
+    const id2 = useTabs.getState().openObjectBrowserTab("c1", "my-bucket");
+    expect(id2).toBe(id1);
+    expect(useTabs.getState().tabs.filter((t) => t.kind === "objects")).toHaveLength(1);
+    expect(useTabs.getState().activeTabId).toBe(id1);
+  });
+
+  it("does not dedupe across different buckets or connections", () => {
+    const a = useTabs.getState().openObjectBrowserTab("c1", "bucket-a");
+    const b = useTabs.getState().openObjectBrowserTab("c1", "bucket-b");
+    const c = useTabs.getState().openObjectBrowserTab("c2", "bucket-a");
+    expect(new Set([a, b, c]).size).toBe(3);
+    expect(useTabs.getState().tabs.filter((t) => t.kind === "objects")).toHaveLength(3);
+  });
+});
+
 describe("newQueryId", () => {
   it("returns a unique id on every call", () => {
     const ids = new Set([newQueryId(), newQueryId(), newQueryId()]);

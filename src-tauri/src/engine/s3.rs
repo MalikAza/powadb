@@ -56,6 +56,15 @@ pub struct Listing {
     pub next_token: Option<String>,
 }
 
+/// Recursive stats of every object under a prefix. `truncated` is set when the
+/// walk was canceled mid-scan: counts are a partial lower bound, not totals.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct PrefixStats {
+    pub objects: u64,
+    pub bytes: u64,
+    pub truncated: bool,
+}
+
 /// Metadata for a single object, from a `HEAD` request.
 #[derive(Debug, Clone, Serialize)]
 pub struct ObjectMetadata {
@@ -199,6 +208,54 @@ impl S3Engine {
             folders,
             objects,
             next_token: page.next_continuation_token,
+        })
+    }
+
+    /// Recursive object count and total bytes under `prefix` (an empty prefix
+    /// walks the whole bucket). Pages manually (no delimiter → flat listing) so
+    /// `cancel` is honoured between pages and `on_progress(objects, bytes)`
+    /// fires once per page. Unlike `download_object`, cancellation is not an
+    /// error: partial counts are meaningful, so it returns `truncated: true`.
+    pub async fn prefix_stats(
+        &self,
+        bucket: &str,
+        prefix: &str,
+        cancel: &AtomicBool,
+        on_progress: impl Fn(u64, u64),
+    ) -> AppResult<PrefixStats> {
+        let b = self.bucket(bucket)?;
+        let mut objects = 0u64;
+        let mut bytes = 0u64;
+        let mut token: Option<String> = None;
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Ok(PrefixStats {
+                    objects,
+                    bytes,
+                    truncated: true,
+                });
+            }
+            let (page, _status) = b
+                .list_page(prefix.to_string(), None, token, None, Some(1000))
+                .await
+                .map_err(s3_err)?;
+            for obj in &page.contents {
+                if is_dir_marker(&obj.key, obj.size) {
+                    continue;
+                }
+                objects += 1;
+                bytes += obj.size;
+            }
+            on_progress(objects, bytes);
+            token = page.next_continuation_token;
+            if token.is_none() {
+                break;
+            }
+        }
+        Ok(PrefixStats {
+            objects,
+            bytes,
+            truncated: false,
         })
     }
 
@@ -470,6 +527,15 @@ impl Engine for S3Engine {
     }
 }
 
+/// Zero-byte keys ending in `/` are directory markers (created by
+/// `create_folder`), not user data: stats exclude them, matching the AWS
+/// console convention that folders are not objects. `list_objects` only skips
+/// the marker equal to its own prefix; a recursive walk sees markers at every
+/// depth, so it filters by shape instead.
+fn is_dir_marker(key: &str, size: u64) -> bool {
+    size == 0 && key.ends_with('/')
+}
+
 fn s3_err(e: s3::error::S3Error) -> AppError {
     AppError::Other(format!("s3 error: {e}"))
 }
@@ -482,6 +548,13 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dir_markers_are_zero_byte_slash_suffixed_keys() {
+        assert!(is_dir_marker("a/b/", 0));
+        assert!(!is_dir_marker("a/b/", 5));
+        assert!(!is_dir_marker("a/b", 0));
+    }
 
     #[test]
     fn base64_encode_matches_known_vector() {

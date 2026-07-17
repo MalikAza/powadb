@@ -924,6 +924,62 @@ mod tests {
         assert!(out.foreign_keys.is_empty());
     }
 
+    #[tokio::test]
+    async fn list_fks_sqlite_returns_a_single_column_fk() {
+        let pool = fixture_pool().await;
+        let fks = list_fks_sqlite(&pool, "books").await.unwrap();
+        assert_eq!(fks.len(), 1);
+        let fk = &fks[0];
+        assert_eq!(fk.from_schema, "main");
+        assert_eq!(fk.from_table, "books");
+        assert_eq!(fk.from_columns, vec!["author_id"]);
+        assert_eq!(fk.to_schema, "main");
+        assert_eq!(fk.to_table, "authors");
+        assert_eq!(fk.to_columns, vec!["id"]);
+        assert_eq!(fk.on_delete.as_deref(), Some("CASCADE"));
+    }
+
+    #[tokio::test]
+    async fn list_fks_sqlite_merges_a_composite_fk_into_one_entry() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE parent (a INTEGER, b INTEGER, PRIMARY KEY (a, b))")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            r#"
+            CREATE TABLE child (
+              x INTEGER,
+              y INTEGER,
+              FOREIGN KEY (x, y) REFERENCES parent(a, b) ON UPDATE RESTRICT ON DELETE SET NULL
+            );
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let fks = list_fks_sqlite(&pool, "child").await.unwrap();
+        // Both column-pairs collapse into a single grouped constraint.
+        assert_eq!(fks.len(), 1);
+        let fk = &fks[0];
+        assert_eq!(fk.from_columns, vec!["x", "y"]);
+        assert_eq!(fk.to_columns, vec!["a", "b"]);
+        assert_eq!(fk.on_update.as_deref(), Some("RESTRICT"));
+        assert_eq!(fk.on_delete.as_deref(), Some("SET NULL"));
+    }
+
+    #[tokio::test]
+    async fn list_fks_sqlite_returns_empty_for_a_table_without_fks() {
+        let pool = fixture_pool().await;
+        let fks = list_fks_sqlite(&pool, "authors").await.unwrap();
+        assert!(fks.is_empty());
+    }
+
     fn fk_row(constraint: &str, from_col: &str, to_col: &str) -> FkRow {
         FkRow {
             constraint_schema: "public".into(),

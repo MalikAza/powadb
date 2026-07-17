@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionInput,
+  ConnectionPositionUpdate,
   DbKind,
   Folder,
   FolderInput,
+  FolderPositionUpdate,
   QueryResult,
   SavedConnection,
 } from "../types";
@@ -154,6 +156,13 @@ export type S3UploadDirSummary = { bytes: number; files: number };
 export type S3DeleteFolderSummary = { deleted: number };
 export type S3RenameFolderSummary = { moved: number };
 
+/// Recursive object count + total bytes under a prefix. `truncated` when the
+/// walk was canceled mid-scan (counts are partial and should be discarded).
+export type S3PrefixStats = { objects: number; bytes: number; truncated: boolean };
+
+/// Progress event emitted on `s3-stats-progress` once per listing page.
+export type S3StatsProgressEvent = { job_id: string; objects: number; bytes: number };
+
 export const ipc = {
   runQuery: (connectionId: string, queryId: string, sql: string): Promise<QueryResult> =>
     invoke("run_query", { connectionId, queryId, sql }),
@@ -167,6 +176,11 @@ export const ipc = {
 
   saveConnection: (input: ConnectionInput): Promise<SavedConnection> =>
     invoke("save_connection", { input }),
+
+  /// Persist a sidebar drag-and-drop: the full ordered sibling list of every
+  /// affected container, each item carrying its new folder + position.
+  reorderConnections: (items: ConnectionPositionUpdate[]): Promise<void> =>
+    invoke("reorder_connections", { items }),
 
   deleteConnection: (id: string): Promise<void> => invoke("delete_connection", { id }),
 
@@ -291,6 +305,10 @@ export const ipc = {
 
   listFolders: (): Promise<Folder[]> => invoke("list_folders"),
   saveFolder: (input: FolderInput): Promise<Folder> => invoke("save_folder", { input }),
+  /// Folder counterpart of `reorderConnections`. Rejected by the backend if
+  /// the update would make a folder its own ancestor.
+  reorderFolders: (items: FolderPositionUpdate[]): Promise<void> =>
+    invoke("reorder_folders", { items }),
   deleteFolder: (id: string): Promise<void> => invoke("delete_folder", { id }),
 
   exportDatabase: (
@@ -437,6 +455,15 @@ export const ipc = {
     dstPrefix: string,
   ): Promise<S3RenameFolderSummary> =>
     invoke("s3_rename_folder", { connectionId, bucket, srcPrefix, dstPrefix }),
+
+  s3PrefixStats: (
+    connectionId: string,
+    bucket: string,
+    prefix: string,
+    jobId: string,
+  ): Promise<S3PrefixStats> => invoke("s3_prefix_stats", { connectionId, bucket, prefix, jobId }),
+
+  s3CancelJob: (jobId: string): Promise<boolean> => invoke("s3_cancel_job", { jobId }),
 };
 
 export type ConnState =

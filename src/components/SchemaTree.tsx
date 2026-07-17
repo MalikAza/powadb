@@ -184,6 +184,7 @@ function SchemaSearchInput({ value, onChange, inputRef }: SchemaSearchInputProps
       {value && (
         <button
           type="button"
+          aria-label="Clear search"
           onClick={() => onChange("")}
           className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
         >

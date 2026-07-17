@@ -39,18 +39,15 @@ function makeBaseLayers(): TileLayer[] {
 
 export function MapRoot({ children }: Props) {
   const mapRef = useRef<OLMap | null>(null);
-  const baseLayersRef = useRef<TileLayer[] | null>(null);
+  const [baseLayers] = useState<TileLayer[]>(makeBaseLayers);
   const [vectorLayers, setVectorLayers] = useState<Layer[]>([]);
 
   if (mapRef.current === null) {
-    const baseLayers = makeBaseLayers();
-    baseLayersRef.current = baseLayers;
-    const map = new OLMap({
+    mapRef.current = new OLMap({
       layers: baseLayers,
       view: new View({ center: fromLonLat([2.2137, 46.2276]), zoom: 5 }),
       controls: [],
     });
-    mapRef.current = map;
   }
 
   const mapCallbackRef = useCallback((node: HTMLDivElement | null) => {
@@ -80,7 +77,7 @@ export function MapRoot({ children }: Props) {
       map: mapRef.current!,
       registerLayer,
       unregisterLayer,
-      baseLayers: (baseLayersRef.current ?? []) as BaseLayer[],
+      baseLayers: baseLayers as BaseLayer[],
       vectorLayers,
     }),
     [registerLayer, unregisterLayer, vectorLayers],
