@@ -22,6 +22,10 @@ export type QueryTab = BaseTab & {
   runningQueryId: string | null;
   byteaModes: Record<string, ByteaDisplayMode>;
   snippetId: string | null;
+  /** The SQL as of the last sync with `snippetId` (open or save). `null` when
+   *  the tab isn't backed by a snippet. `sql !== savedSql` is the dirty flag
+   *  the tab bar shows and `Cmd+S` clears. */
+  savedSql: string | null;
   /** When true, the editor runs as a multi-statement script: SQL is split
    *  client-side and each statement runs on a shared connection. The results
    *  panel switches from a single grid to a per-statement summary list. */
@@ -73,7 +77,11 @@ type Actions = {
     connectionId: string,
     sql?: string,
     title?: string,
-    init?: { byteaModes?: Record<string, ByteaDisplayMode>; snippetId?: string | null },
+    init?: {
+      byteaModes?: Record<string, ByteaDisplayMode>;
+      snippetId?: string | null;
+      savedSql?: string | null;
+    },
   ) => string;
   openBrowseTab: (
     connectionId: string,
@@ -88,6 +96,11 @@ type Actions = {
   setActiveTab: (id: string) => void;
   patchTab: (id: string, patch: Partial<Tab>) => void;
 };
+
+/** A snippet-backed query tab whose SQL has drifted from the saved snippet. */
+export function isTabDirty(tab: Tab): boolean {
+  return tab.kind === "query" && tab.snippetId !== null && tab.sql !== tab.savedSql;
+}
 
 const defaultSql = "";
 
@@ -109,6 +122,7 @@ export const useTabs = create<State & Actions>((set, get) => ({
       runningQueryId: null,
       byteaModes: init?.byteaModes ?? {},
       snippetId: init?.snippetId ?? null,
+      savedSql: init?.savedSql ?? null,
       runAsScript: false,
       scriptResult: null,
     };
