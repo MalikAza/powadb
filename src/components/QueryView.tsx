@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { Network, Plus, SquareCode, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -11,7 +12,9 @@ import {
 import { onActivateKey } from "@/lib/a11y";
 import { cn } from "@/lib/utils";
 import { useConnections } from "../stores/connections";
-import { useTabs } from "../stores/tabs";
+import { useSnippets } from "../stores/snippets";
+import { isTabDirty, useTabs } from "../stores/tabs";
+import { useUi } from "../stores/ui";
 import { QueryTabPane } from "./QueryTabPane";
 
 const BrowseTabPane = lazy(() =>
@@ -30,6 +33,11 @@ export function QueryView() {
   const { connections, activeId } = useConnections();
   const conn = connections.find((c) => c.id === activeId);
   const { tabs, activeTabId, newQueryTab, openDiagramTab, closeTab, setActiveTab } = useTabs();
+  const patchTab = useTabs((s) => s.patchTab);
+  const snippets = useSnippets((s) => s.snippets);
+  const saveSnippet = useSnippets((s) => s.save);
+  const openSnippetSaveForm = useUi((s) => s.openSnippetSaveForm);
+  const loadSnippets = useSnippets((s) => s.load);
 
   const visibleTabs = useMemo(
     () => (activeId ? tabs.filter((t) => t.connectionId === activeId) : []),
@@ -37,6 +45,10 @@ export function QueryView() {
   );
   const activeTab =
     visibleTabs.find((t) => t.id === activeTabId) ?? visibleTabs[visibleTabs.length - 1] ?? null;
+  const tabBarItems = useMemo(
+    () => visibleTabs.map((t) => ({ ...t, dirty: isTabDirty(t) })),
+    [visibleTabs],
+  );
 
   useEffect(() => {
     if (activeTab && activeTab.id !== activeTabId) {
@@ -44,18 +56,53 @@ export function QueryView() {
     }
   }, [activeTab, activeTabId, setActiveTab]);
 
+  // Loaded here rather than in SnippetsPanel: Cmd+S must know the linked
+  // snippet's name/folder even when the sidebar is on another pane.
+  useEffect(() => {
+    loadSnippets(activeId ?? null);
+  }, [activeId, loadSnippets]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key.toLowerCase() === "w") {
+      if (!meta) return;
+      const key = e.key.toLowerCase();
+      if (key === "w") {
         if (!activeTab) return;
         e.preventDefault();
         closeTab(activeTab.id);
+        return;
       }
+      if (key !== "s") return;
+      // Cmd+S bubbles out of CodeMirror (CM6 binds nothing to it) and no Tauri
+      // menu accelerator claims it, so a window listener is enough.
+      e.preventDefault();
+      const tab = activeTab?.kind === "query" ? activeTab : null;
+      // Shift, or a tab not backed by a snippet -> "save as", handled by the
+      // panel's form (it needs a name, and a scope for a brand new snippet).
+      if (!tab || e.shiftKey || !tab.snippetId) {
+        openSnippetSaveForm();
+        return;
+      }
+      const existing = snippets.find((s) => s.id === tab.snippetId);
+      const modes = tab.byteaModes;
+      saveSnippet({
+        id: tab.snippetId,
+        name: existing?.name ?? tab.title,
+        sql: tab.sql,
+        connection_id: existing ? existing.connection_id : tab.connectionId,
+        folder_id: existing?.folder_id ?? null,
+        bytea_modes_json: Object.keys(modes).length > 0 ? JSON.stringify(modes) : null,
+      })
+        .then(() => {
+          patchTab(tab.id, { savedSql: tab.sql });
+          toast.success(`Snippet "${existing?.name ?? tab.title}" updated`);
+        })
+        .catch((err) => toast.error(String(err)));
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeTab, closeTab]);
+  }, [activeTab, closeTab, openSnippetSaveForm, patchTab, saveSnippet, snippets]);
 
   useEffect(() => {
     const unlistenQuery = listen("new-tab", () => {
@@ -105,7 +152,7 @@ export function QueryView() {
   return (
     <div className="flex h-full min-w-0 flex-col">
       <TabBar
-        tabs={visibleTabs}
+        tabs={tabBarItems}
         activeId={activeTab.id}
         onSelect={(id) => setActiveTab(id)}
         onClose={(id) => closeTab(id)}
@@ -139,7 +186,12 @@ function TabBar({
   onNewQuery,
   onNewDiagram,
 }: {
-  tabs: { id: string; title: string; kind: "query" | "browse" | "diagram" | "objects" }[];
+  tabs: {
+    id: string;
+    title: string;
+    kind: "query" | "browse" | "diagram" | "objects";
+    dirty: boolean;
+  }[];
   activeId: string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
@@ -161,6 +213,7 @@ function TabBar({
             role="tab"
             tabIndex={0}
             aria-selected={t.id === activeId}
+            aria-label={t.dirty ? `${t.title} (unsaved changes)` : undefined}
             onClick={() => onSelect(t.id)}
             onKeyDown={onActivateKey(() => onSelect(t.id))}
             className={cn(
@@ -191,6 +244,15 @@ function TabBar({
                     : "Q"}
             </span>
             <span className="truncate">{t.title}</span>
+            {t.dirty && (
+              <span
+                aria-hidden="true"
+                title="Unsaved changes — ⌘S to update the snippet"
+                className="shrink-0 text-base leading-none"
+              >
+                •
+              </span>
+            )}
             <button
               type="button"
               aria-label="Close tab"

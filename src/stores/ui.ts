@@ -13,6 +13,9 @@ type State = {
   exportDialog: { connectionId: string } | null;
   importDialog: { connectionId: string } | null;
   schemaSearchFocusToken: number;
+  /** Bumped to make `SnippetsPanel` open its save form (Cmd+S on an unlinked
+   *  tab, Cmd+Shift+S on any tab). Same token pattern as the schema search. */
+  snippetSaveToken: number;
 };
 
 type Actions = {
@@ -29,6 +32,7 @@ type Actions = {
   openImportDialog: (connectionId: string) => void;
   closeImportDialog: () => void;
   focusSchemaSearch: () => void;
+  openSnippetSaveForm: () => void;
 };
 
 const tableKey = (schema: string, table: string) => `${schema}.${table}`;
@@ -41,6 +45,7 @@ export const useUi = create<State & Actions>((set) => ({
   exportDialog: null,
   importDialog: null,
   schemaSearchFocusToken: 0,
+  snippetSaveToken: 0,
 
   setPane: (pane) => set({ pane }),
 
@@ -49,6 +54,9 @@ export const useUi = create<State & Actions>((set) => ({
 
   focusSchemaSearch: () =>
     set((s) => ({ pane: "schema", schemaSearchFocusToken: s.schemaSearchFocusToken + 1 })),
+
+  openSnippetSaveForm: () =>
+    set((s) => ({ pane: "snippets", snippetSaveToken: s.snippetSaveToken + 1 })),
 
   openExportDialog: (connectionId) => set({ exportDialog: { connectionId } }),
   closeExportDialog: () => set({ exportDialog: null }),
