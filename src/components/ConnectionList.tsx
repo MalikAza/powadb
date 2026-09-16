@@ -34,14 +34,14 @@ import { useUi } from "../stores/ui";
 import type { Folder, SavedConnection } from "../types";
 import { buildTree, type FolderNode } from "../utils/folderTree";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FolderForm } from "./FolderForm";
 import {
   FolderDropZone,
   RootDropZone,
   SidebarDnd,
   SortableGroup,
   SortableRow,
-} from "./ConnectionListDnd";
-import { FolderForm } from "./FolderForm";
+} from "./SidebarTreeDnd";
 
 type PendingDelete =
   | { kind: "conn"; id: string; name: string }
@@ -60,6 +60,9 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
   const activate = useConnections((s) => s.activate);
   const remove = useConnections((s) => s.remove);
   const removeFolder = useConnections((s) => s.removeFolder);
+  const saveFolder = useConnections((s) => s.saveFolder);
+  const moveConnection = useConnections((s) => s.moveConnection);
+  const moveFolder = useConnections((s) => s.moveFolder);
   const disconnect = useConnections((s) => s.disconnect);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
@@ -97,7 +100,12 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
           </Button>
         </div>
       </div>
-      <SidebarDnd>
+      <SidebarDnd
+        folders={folders}
+        moveItem={moveConnection}
+        moveFolder={moveFolder}
+        itemIcon={<Database className="size-3.5 shrink-0 text-muted-foreground" />}
+      >
         <ScrollArea className="flex-1">
           <RootDropZone className="min-h-full p-2">
             {connections.length === 0 && folders.length === 0 && (
@@ -134,8 +142,8 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
               ))}
             </SortableGroup>
 
-            <SortableGroup id="conns:root" ids={tree.rootConnections.map((c) => `conn:${c.id}`)}>
-              {tree.rootConnections.map((c) => (
+            <SortableGroup id="conns:root" ids={tree.rootItems.map((c) => `item:${c.id}`)}>
+              {tree.rootItems.map((c) => (
                 <ConnRow
                   key={c.id}
                   c={c}
@@ -157,6 +165,8 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
       {folderForm && (
         <FolderForm
           editing={folderForm.editing}
+          folders={folders}
+          saveFolder={saveFolder}
           initialParentId={folderForm.initialParentId}
           open={true}
           onOpenChange={(open) => !open && setFolderForm(null)}
@@ -207,7 +217,7 @@ function FolderRow({
   onDeleteFolder,
   onDeleteConn,
 }: {
-  node: FolderNode;
+  node: FolderNode<SavedConnection>;
   depth: number;
   /// "root" or the parent folder id — the DnD container this row lives in.
   containerKey: string;
@@ -333,11 +343,8 @@ function FolderRow({
               />
             ))}
           </SortableGroup>
-          <SortableGroup
-            id={`conns:${node.folder.id}`}
-            ids={node.connections.map((c) => `conn:${c.id}`)}
-          >
-            {node.connections.map((c) => (
+          <SortableGroup id={`conns:${node.folder.id}`} ids={node.items.map((c) => `item:${c.id}`)}>
+            {node.items.map((c) => (
               <ConnRow
                 key={c.id}
                 c={c}
@@ -445,8 +452,8 @@ function ConnRow({
           : "Not connected";
   return (
     <SortableRow
-      id={`conn:${c.id}`}
-      data={{ type: "conn", entityId: c.id, containerKey, name: c.name, kind: c.kind }}
+      id={`item:${c.id}`}
+      data={{ type: "item", entityId: c.id, containerKey, name: c.name }}
     >
       <div
         role="button"

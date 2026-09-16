@@ -1,4 +1,13 @@
-import type { Folder, SavedConnection } from "../types";
+import type { Folder } from "../types";
+
+/// Anything a sidebar folder tree can hold: a connection, a snippet, … The
+/// tree only ever reads these four fields, so both sidebars share one builder.
+export type TreeItem = {
+  id: string;
+  name: string;
+  folder_id: string | null;
+  position: number | null;
+};
 
 /// Sidebar ordering within a container: manually positioned items first (by
 /// `position`), then never-dragged items (`position === null`) alphabetically.
@@ -13,24 +22,24 @@ export function byPositionThenName(
   return a.name.localeCompare(b.name);
 }
 
-export type FolderNode = {
+export type FolderNode<I extends TreeItem> = {
   folder: Folder;
-  children: FolderNode[];
-  connections: SavedConnection[];
+  children: FolderNode<I>[];
+  items: I[];
 };
 
-export type Tree = {
-  rootFolders: FolderNode[];
-  rootConnections: SavedConnection[];
+export type Tree<I extends TreeItem> = {
+  rootFolders: FolderNode<I>[];
+  rootItems: I[];
 };
 
-export function buildTree(folders: Folder[], connections: SavedConnection[]): Tree {
-  const nodeById: Record<string, FolderNode> = {};
+export function buildTree<I extends TreeItem>(folders: Folder[], items: I[]): Tree<I> {
+  const nodeById: Record<string, FolderNode<I>> = {};
   for (const f of folders) {
-    nodeById[f.id] = { folder: f, children: [], connections: [] };
+    nodeById[f.id] = { folder: f, children: [], items: [] };
   }
 
-  const rootFolders: FolderNode[] = [];
+  const rootFolders: FolderNode<I>[] = [];
   for (const f of folders) {
     const node = nodeById[f.id];
     if (f.parent_id && nodeById[f.parent_id]) {
@@ -40,25 +49,25 @@ export function buildTree(folders: Folder[], connections: SavedConnection[]): Tr
     }
   }
 
-  const rootConnections: SavedConnection[] = [];
-  for (const c of connections) {
+  const rootItems: I[] = [];
+  for (const c of items) {
     if (c.folder_id && nodeById[c.folder_id]) {
-      nodeById[c.folder_id].connections.push(c);
+      nodeById[c.folder_id].items.push(c);
     } else {
-      rootConnections.push(c);
+      rootItems.push(c);
     }
   }
 
-  const sortNode = (n: FolderNode) => {
+  const sortNode = (n: FolderNode<I>) => {
     n.children.sort((a, b) => byPositionThenName(a.folder, b.folder));
-    n.connections.sort(byPositionThenName);
+    n.items.sort(byPositionThenName);
     n.children.forEach(sortNode);
   };
   rootFolders.sort((a, b) => byPositionThenName(a.folder, b.folder));
   rootFolders.forEach(sortNode);
-  rootConnections.sort(byPositionThenName);
+  rootItems.sort(byPositionThenName);
 
-  return { rootFolders, rootConnections };
+  return { rootFolders, rootItems };
 }
 
 /// True when `folderId` is `ancestorId` itself or lives anywhere under it.

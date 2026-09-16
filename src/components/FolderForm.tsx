@@ -31,19 +31,28 @@ import {
   folderFormSchema,
   ROOT_FOLDER_SENTINEL,
 } from "@/lib/schemas";
-import { useConnections } from "../stores/connections";
-import type { Folder } from "../types";
+import type { Folder, FolderInput } from "../types";
 import { folderPaths } from "../utils/folderTree";
 
+/// Shared by the connection sidebar and the snippets panel — each passes its
+/// own tree and save action, the dialog itself is identical.
 type Props = {
   editing: Folder | null;
   initialParentId?: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  folders: Folder[];
+  saveFolder: (input: FolderInput) => Promise<Folder>;
 };
 
-export function FolderForm({ editing, initialParentId, open, onOpenChange }: Props) {
-  const { folders, saveFolder } = useConnections();
+export function FolderForm({
+  editing,
+  initialParentId,
+  open,
+  onOpenChange,
+  folders,
+  saveFolder,
+}: Props) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const form = useForm<FolderFormInput, unknown, FolderFormValues>({

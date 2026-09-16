@@ -34,8 +34,8 @@ describe("buildTree", () => {
   it("places orphan items at the root", () => {
     const tree = buildTree([], [conn({ id: "c1", name: "alpha" })]);
     expect(tree.rootFolders).toEqual([]);
-    expect(tree.rootConnections).toHaveLength(1);
-    expect(tree.rootConnections[0]?.id).toBe("c1");
+    expect(tree.rootItems).toHaveLength(1);
+    expect(tree.rootItems[0]?.id).toBe("c1");
   });
 
   it("nests subfolders under their parents", () => {
@@ -46,19 +46,19 @@ describe("buildTree", () => {
     expect(tree.rootFolders[0]?.children[0]?.folder.id).toBe("child");
   });
 
-  it("assigns connections to their folder", () => {
+  it("assigns items to their folder", () => {
     const tree = buildTree(
       [folder("f1", "Work")],
       [conn({ id: "c1", name: "prod", folder_id: "f1" })],
     );
-    expect(tree.rootFolders[0]?.connections).toHaveLength(1);
-    expect(tree.rootFolders[0]?.connections[0]?.id).toBe("c1");
-    expect(tree.rootConnections).toHaveLength(0);
+    expect(tree.rootFolders[0]?.items).toHaveLength(1);
+    expect(tree.rootFolders[0]?.items[0]?.id).toBe("c1");
+    expect(tree.rootItems).toHaveLength(0);
   });
 
   it("promotes connections whose folder no longer exists to the root", () => {
     const tree = buildTree([], [conn({ id: "orphan", folder_id: "missing" })]);
-    expect(tree.rootConnections).toHaveLength(1);
+    expect(tree.rootItems).toHaveLength(1);
   });
 
   it("sorts folders and connections alphabetically at each level", () => {
@@ -67,7 +67,7 @@ describe("buildTree", () => {
       [conn({ id: "c1", name: "delta" }), conn({ id: "c2", name: "bravo" })],
     );
     expect(tree.rootFolders.map((n) => n.folder.name)).toEqual(["Alpha", "Zeta"]);
-    expect(tree.rootConnections.map((c) => c.name)).toEqual(["bravo", "delta"]);
+    expect(tree.rootItems.map((c) => c.name)).toEqual(["bravo", "delta"]);
   });
 
   it("sorts positioned items first, then null positions alphabetically", () => {
@@ -81,7 +81,7 @@ describe("buildTree", () => {
     );
     // Zeta was manually pinned to the top; Alpha/Mu keep the name fallback.
     expect(tree.rootFolders.map((n) => n.folder.name)).toEqual(["Zeta", "Alpha", "Mu"]);
-    expect(tree.rootConnections.map((c) => c.name)).toEqual(["zulu", "delta", "bravo"]);
+    expect(tree.rootItems.map((c) => c.name)).toEqual(["zulu", "delta", "bravo"]);
   });
 
   it("sorts by position inside folders too", () => {
@@ -92,7 +92,7 @@ describe("buildTree", () => {
         conn({ id: "c2", name: "beta", folder_id: "f1", position: 0 }),
       ],
     );
-    expect(tree.rootFolders[0]?.connections.map((c) => c.id)).toEqual(["c2", "c1"]);
+    expect(tree.rootFolders[0]?.items.map((c) => c.id)).toEqual(["c2", "c1"]);
   });
 });
 
