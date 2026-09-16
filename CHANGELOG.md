@@ -1,3 +1,27 @@
+## [0.12.2] - 2026-09-16
+
+### Added
+
+- **Snippets live in folders now.** The snippets panel is a real tree: create
+  folders, nest them, and drag snippets between them or reorder them by hand.
+  Your existing snippets stay where they are, and deleting a folder keeps its
+  contents by moving them up a level instead of taking them with it.
+- **Search your snippets.** A search box filters by name *and* by SQL content,
+  automatically opening any folder that contains a match.
+- **⌘S saves the snippet a tab came from.** A query tab opened from a snippet
+  now stays linked to it, so ⌘S updates it in place. ⌘⇧S — or ⌘S on a tab that
+  isn't backed by a snippet — opens the save form to name a new one.
+- **Unsaved-changes marker on tabs.** A dot appears in the tab bar when a
+  snippet-backed tab has edits that haven't been saved back yet.
+- **More snippet actions.** Right-clicking a snippet offers open, rename, edit,
+  duplicate, copy SQL, and delete.
+
+### Changed
+
+- **Sidebar actions moved to right-click.** Connections and folders no longer
+  carry a "…" button; their actions live in a context menu instead. The database
+  kind badge now sits right after the name, in the freed-up space.
+
 ## [0.12.1] - 2026-07-17
 
 ### Security

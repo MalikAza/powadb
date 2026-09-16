@@ -12,29 +12,31 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Database, Folder as FolderIcon } from "lucide-react";
-import { useState } from "react";
+import { Folder as FolderIcon } from "lucide-react";
+import { createContext, useContext, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { useConnections } from "../stores/connections";
-import type { DbKind } from "../types";
+import type { Folder } from "../types";
 import { isSelfOrDescendant } from "../utils/folderTree";
 
-/// Drag-and-drop wiring for the connection sidebar. Rows are sortable within
-/// their container (root or a folder); a folder header additionally exposes a
+/// Drag-and-drop wiring for a sidebar folder tree — used by both the
+/// connection list and the snippets panel. Rows are sortable within their
+/// container (root or a folder); a folder header additionally exposes a
 /// center "drop into" band so an item can be nested without reordering:
 /// hovering the middle of a folder row nests, hovering its edges reorders.
 ///
-/// Sortable/droppable ids: `conn:<id>` / `folder:<id>` rows, `into:<folderId>`
+/// Sortable/droppable ids: `item:<id>` / `folder:<id>` rows, `into:<folderId>`
 /// center bands, `sidebar-root` for the list background (drop = move to root).
+///
+/// The tree itself is supplied by the caller (`SidebarDnd` props) rather than
+/// read from a store, so a second sidebar needs no new drag code.
 
 export type SidebarDragData = {
-  type: "conn" | "folder";
+  type: "item" | "folder";
   entityId: string;
   /// "root" or the parent folder id — which container the row lives in.
   containerKey: string;
   name: string;
-  kind?: DbKind;
 };
 
 function containerKeyToFolderId(key: string): string | null {
@@ -45,7 +47,7 @@ function containerKeyToFolderId(key: string): string | null {
 /// the sidebar rows attach (see `SortableRow` usage in ConnectionList).
 function asDragData(d: unknown): SidebarDragData | undefined {
   if (typeof d !== "object" || d === null) return undefined;
-  if (!("type" in d) || (d.type !== "conn" && d.type !== "folder")) return undefined;
+  if (!("type" in d) || (d.type !== "item" && d.type !== "folder")) return undefined;
   if (!("entityId" in d) || typeof d.entityId !== "string") return undefined;
   if (!("containerKey" in d) || typeof d.containerKey !== "string") return undefined;
   if (!("name" in d) || typeof d.name !== "string") return undefined;
@@ -61,7 +63,7 @@ const collisionDetection: CollisionDetection = (args) => {
       ...args,
       droppableContainers: args.droppableContainers.filter((c) => {
         const t = c.data.current?.type;
-        return type === "row" ? t === "conn" || t === "folder" : t === type;
+        return type === "row" ? t === "item" || t === "folder" : t === type;
       }),
     });
     if (hits.length > 0) return hits;
@@ -69,9 +71,23 @@ const collisionDetection: CollisionDetection = (args) => {
   return closestCenter(args);
 };
 
-export function SidebarDnd({ children }: { children: React.ReactNode }) {
-  const moveConnection = useConnections((s) => s.moveConnection);
-  const moveFolder = useConnections((s) => s.moveFolder);
+const FoldersContext = createContext<Folder[]>([]);
+
+export function SidebarDnd({
+  folders,
+  moveItem,
+  moveFolder,
+  itemIcon,
+  children,
+}: {
+  folders: Folder[];
+  /// Move a leaf row into `targetFolderId` at `targetIndex`.
+  moveItem: (id: string, targetFolderId: string | null, targetIndex: number) => Promise<void>;
+  moveFolder: (id: string, targetParentId: string | null, targetIndex: number) => Promise<void>;
+  /// Icon shown next to the row name in the drag overlay.
+  itemIcon: React.ReactNode;
+  children: React.ReactNode;
+}) {
   const [dragging, setDragging] = useState<SidebarDragData | null>(null);
   // The 6px activation distance keeps plain clicks / double-clicks / hover
   // buttons on the rows working — a drag only starts once the pointer moves.
@@ -97,16 +113,16 @@ export function SidebarDnd({ children }: { children: React.ReactNode }) {
     const end = Number.MAX_SAFE_INTEGER; // append — computeContainerOrder clamps
 
     const done = (() => {
-      if (a.type === "conn") {
-        if (o.type === "into") return moveConnection(a.entityId, o.folderId, end);
-        if (o.type === "rootzone") return moveConnection(a.entityId, null, end);
-        if (o.type === "conn") return moveConnection(a.entityId, overContainer, overIndex);
-        if (o.type === "folder") return moveConnection(a.entityId, o.entityId, end);
+      if (a.type === "item") {
+        if (o.type === "into") return moveItem(a.entityId, o.folderId, end);
+        if (o.type === "rootzone") return moveItem(a.entityId, null, end);
+        if (o.type === "item") return moveItem(a.entityId, overContainer, overIndex);
+        if (o.type === "folder") return moveItem(a.entityId, o.entityId, end);
       } else {
         if (o.type === "into") return moveFolder(a.entityId, o.folderId, end);
         if (o.type === "rootzone") return moveFolder(a.entityId, null, end);
         if (o.type === "folder") return moveFolder(a.entityId, overContainer, overIndex);
-        if (o.type === "conn") return moveFolder(a.entityId, overContainer, end);
+        if (o.type === "item") return moveFolder(a.entityId, overContainer, end);
       }
       return undefined;
     })();
@@ -114,27 +130,29 @@ export function SidebarDnd({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={collisionDetection}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragCancel={() => setDragging(null)}
-    >
-      {children}
-      <DragOverlay dropAnimation={null}>
-        {dragging && (
-          <div className="flex w-fit items-center gap-1.5 rounded-md border border-sidebar-border bg-sidebar px-2 py-1 text-xs shadow-md">
-            {dragging.type === "folder" ? (
-              <FolderIcon className="size-3.5 shrink-0 text-primary/80" />
-            ) : (
-              <Database className="size-3.5 shrink-0 text-muted-foreground" />
-            )}
-            <span className="max-w-40 truncate font-medium">{dragging.name}</span>
-          </div>
-        )}
-      </DragOverlay>
-    </DndContext>
+    <FoldersContext value={folders}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={collisionDetection}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setDragging(null)}
+      >
+        {children}
+        <DragOverlay dropAnimation={null}>
+          {dragging && (
+            <div className="flex w-fit items-center gap-1.5 rounded-md border border-sidebar-border bg-sidebar px-2 py-1 text-xs shadow-md">
+              {dragging.type === "folder" ? (
+                <FolderIcon className="size-3.5 shrink-0 text-primary/80" />
+              ) : (
+                itemIcon
+              )}
+              <span className="max-w-40 truncate font-medium">{dragging.name}</span>
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
+    </FoldersContext>
   );
 }
 
@@ -184,7 +202,7 @@ export function SortableRow({
 /// Disabled while dragging the folder itself or one of its ancestors, so a
 /// subtree can never be dropped into itself.
 export function FolderDropZone({ folderId }: { folderId: string }) {
-  const folders = useConnections((s) => s.folders);
+  const folders = useContext(FoldersContext);
   const { active } = useDndContext();
   const draggingData = asDragData(active?.data.current);
   const disabled =

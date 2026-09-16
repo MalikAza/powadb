@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { newQueryId, useTabs } from "./tabs";
+import { isTabDirty, newQueryId, useTabs } from "./tabs";
 
 function reset() {
   useTabs.setState({ tabs: [], activeTabId: null });
@@ -232,5 +232,36 @@ describe("newQueryId", () => {
 
   it("uses a 'q-' prefix", () => {
     expect(newQueryId()).toMatch(/^q-/);
+  });
+});
+
+describe("isTabDirty", () => {
+  beforeEach(reset);
+
+  it("is false for a tab with no snippet behind it", () => {
+    useTabs.getState().newQueryTab("c1", "SELECT 1");
+    const tab = useTabs.getState().tabs[0];
+    expect(tab.kind === "query" && tab.savedSql).toBeNull();
+    expect(isTabDirty(tab)).toBe(false);
+  });
+
+  it("flips once a snippet-backed tab drifts from the saved SQL, and back on save", () => {
+    const id = useTabs
+      .getState()
+      .newQueryTab("c1", "SELECT 1", "snip", { snippetId: "s1", savedSql: "SELECT 1" });
+    const { patchTab } = useTabs.getState();
+    expect(isTabDirty(useTabs.getState().tabs[0])).toBe(false);
+
+    patchTab(id, { sql: "SELECT 2" });
+    expect(isTabDirty(useTabs.getState().tabs[0])).toBe(true);
+
+    // What Cmd+S does after a successful save.
+    patchTab(id, { savedSql: "SELECT 2" });
+    expect(isTabDirty(useTabs.getState().tabs[0])).toBe(false);
+  });
+
+  it("ignores non-query tabs", () => {
+    useTabs.getState().openBrowseTab("c1", "public", "users");
+    expect(isTabDirty(useTabs.getState().tabs[0])).toBe(false);
   });
 });

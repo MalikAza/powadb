@@ -60,7 +60,7 @@ pub async fn delete_folder(state: State<'_, AppState>, id: String) -> AppResult<
 /// True if applying `items` on top of the stored `folders` would make any
 /// folder its own ancestor. The frontend prevents this drop, but a stale tree
 /// on its side must not be able to corrupt the hierarchy.
-fn creates_cycle(folders: &[Folder], items: &[FolderPosition]) -> bool {
+pub(super) fn creates_cycle(folders: &[Folder], items: &[FolderPosition]) -> bool {
     use std::collections::{HashMap, HashSet};
 
     let mut parent: HashMap<&str, Option<&str>> = folders

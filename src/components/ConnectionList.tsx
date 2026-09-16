@@ -7,7 +7,6 @@ import {
   FolderOpen,
   FolderPlus,
   Loader2,
-  MoreHorizontal,
   Pencil,
   Plus,
   Trash2,
@@ -18,12 +17,12 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { onActivateKey } from "@/lib/a11y";
 import { cn } from "@/lib/utils";
@@ -34,14 +33,14 @@ import { useUi } from "../stores/ui";
 import type { Folder, SavedConnection } from "../types";
 import { buildTree, type FolderNode } from "../utils/folderTree";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FolderForm } from "./FolderForm";
 import {
   FolderDropZone,
   RootDropZone,
   SidebarDnd,
   SortableGroup,
   SortableRow,
-} from "./ConnectionListDnd";
-import { FolderForm } from "./FolderForm";
+} from "./SidebarTreeDnd";
 
 type PendingDelete =
   | { kind: "conn"; id: string; name: string }
@@ -60,6 +59,9 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
   const activate = useConnections((s) => s.activate);
   const remove = useConnections((s) => s.remove);
   const removeFolder = useConnections((s) => s.removeFolder);
+  const saveFolder = useConnections((s) => s.saveFolder);
+  const moveConnection = useConnections((s) => s.moveConnection);
+  const moveFolder = useConnections((s) => s.moveFolder);
   const disconnect = useConnections((s) => s.disconnect);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
@@ -97,7 +99,12 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
           </Button>
         </div>
       </div>
-      <SidebarDnd>
+      <SidebarDnd
+        folders={folders}
+        moveItem={moveConnection}
+        moveFolder={moveFolder}
+        itemIcon={<Database className="size-3.5 shrink-0 text-muted-foreground" />}
+      >
         <ScrollArea className="flex-1">
           <RootDropZone className="min-h-full p-2">
             {connections.length === 0 && folders.length === 0 && (
@@ -134,8 +141,8 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
               ))}
             </SortableGroup>
 
-            <SortableGroup id="conns:root" ids={tree.rootConnections.map((c) => `conn:${c.id}`)}>
-              {tree.rootConnections.map((c) => (
+            <SortableGroup id="conns:root" ids={tree.rootItems.map((c) => `item:${c.id}`)}>
+              {tree.rootItems.map((c) => (
                 <ConnRow
                   key={c.id}
                   c={c}
@@ -157,6 +164,8 @@ export function ConnectionList({ onAdd, onEdit }: Props) {
       {folderForm && (
         <FolderForm
           editing={folderForm.editing}
+          folders={folders}
+          saveFolder={saveFolder}
           initialParentId={folderForm.initialParentId}
           open={true}
           onOpenChange={(open) => !open && setFolderForm(null)}
@@ -207,7 +216,7 @@ function FolderRow({
   onDeleteFolder,
   onDeleteConn,
 }: {
-  node: FolderNode;
+  node: FolderNode<SavedConnection>;
   depth: number;
   /// "root" or the parent folder id — the DnD container this row lives in.
   containerKey: string;
@@ -231,80 +240,53 @@ function FolderRow({
       id={`folder:${node.folder.id}`}
       data={{ type: "folder", entityId: node.folder.id, containerKey, name: node.folder.name }}
     >
-      <div
-        className="group relative flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sidebar-accent"
-        style={{ paddingLeft: 8 + depth * 12 }}
-        role="button"
-        tabIndex={0}
-        aria-expanded={isOpen}
-        onClick={() => setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] }))}
-        onKeyDown={onActivateKey(() =>
-          setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] })),
-        )}
-      >
-        <FolderDropZone folderId={node.folder.id} />
-        {isOpen ? (
-          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-        )}
-        {isOpen ? (
-          <FolderOpen className="size-3.5 shrink-0 text-primary" />
-        ) : (
-          <FolderIcon className="size-3.5 shrink-0 text-primary/80" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">{node.folder.name}</span>
-        <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-5"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddConnHere(node.folder.id);
-            }}
-            title="New connection here"
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className="relative flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 hover:bg-sidebar-accent"
+            style={{ paddingLeft: 8 + depth * 12 }}
+            role="button"
+            tabIndex={0}
+            aria-expanded={isOpen}
+            onClick={() => setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] }))}
+            onKeyDown={onActivateKey(() =>
+              setOpenFolders((o) => ({ ...o, [node.folder.id]: !o[node.folder.id] })),
+            )}
           >
-            <Plus className="size-3" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-5"
-            onClick={(e) => {
-              e.stopPropagation();
-              onAddSubfolder(node.folder.id);
-            }}
-            title="New subfolder"
-          >
-            <FolderPlus className="size-3" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-5"
-            onClick={(e) => {
-              e.stopPropagation();
-              onRenameFolder(node.folder);
-            }}
-            title="Rename"
-          >
-            <Pencil className="size-3" />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-5"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDeleteFolder(node.folder);
-            }}
-            title="Delete folder"
-          >
-            <Trash2 className="size-3" />
-          </Button>
-        </div>
-      </div>
+            <FolderDropZone folderId={node.folder.id} />
+            {isOpen ? (
+              <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+            )}
+            {isOpen ? (
+              <FolderOpen className="size-3.5 shrink-0 text-primary" />
+            ) : (
+              <FolderIcon className="size-3.5 shrink-0 text-primary/80" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">{node.folder.name}</span>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="text-xs">
+          <ContextMenuItem onSelect={() => onAddConnHere(node.folder.id)}>
+            <Plus className="size-3.5" />
+            New connection here
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onAddSubfolder(node.folder.id)}>
+            <FolderPlus className="size-3.5" />
+            New subfolder
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => onRenameFolder(node.folder)}>
+            <Pencil className="size-3.5" />
+            Rename…
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onSelect={() => onDeleteFolder(node.folder)}>
+            <Trash2 className="size-3.5" />
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {isOpen && (
         <>
@@ -333,11 +315,8 @@ function FolderRow({
               />
             ))}
           </SortableGroup>
-          <SortableGroup
-            id={`conns:${node.folder.id}`}
-            ids={node.connections.map((c) => `conn:${c.id}`)}
-          >
-            {node.connections.map((c) => (
+          <SortableGroup id={`conns:${node.folder.id}`} ids={node.items.map((c) => `item:${c.id}`)}>
+            {node.items.map((c) => (
               <ConnRow
                 key={c.id}
                 c={c}
@@ -445,112 +424,103 @@ function ConnRow({
           : "Not connected";
   return (
     <SortableRow
-      id={`conn:${c.id}`}
-      data={{ type: "conn", entityId: c.id, containerKey, name: c.name, kind: c.kind }}
+      id={`item:${c.id}`}
+      data={{ type: "item", entityId: c.id, containerKey, name: c.name }}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        aria-pressed={isActive}
-        onClick={() => onActivate(c.id)}
-        onDoubleClick={() => onEdit(c.id)}
-        onKeyDown={onActivateKey(() => onActivate(c.id))}
-        className={cn(
-          "group relative cursor-pointer rounded-md py-1 pr-2 text-xs",
-          isActive ? "bg-primary/15 text-foreground" : "hover:bg-sidebar-accent",
-        )}
-        style={{ paddingLeft: 8 + depth * 12 + 16 }}
-      >
-        {c.color && (
-          <span
-            aria-hidden
-            className="absolute left-0 top-1 bottom-1 w-1 rounded-full"
-            style={{ backgroundColor: c.color, marginLeft: depth * 12 + 4 }}
-          />
-        )}
-        {canListDatabases && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleExpanded();
-            }}
-            className="absolute top-1.5 flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            style={{ left: 8 + depth * 12 }}
-            aria-expanded={expanded}
-            title={expanded ? "Hide databases" : "Show databases"}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            role="button"
+            tabIndex={0}
+            aria-pressed={isActive}
+            onClick={() => onActivate(c.id)}
+            onDoubleClick={() => onEdit(c.id)}
+            onKeyDown={onActivateKey(() => onActivate(c.id))}
+            className={cn(
+              "relative cursor-pointer rounded-md py-1 pr-2 text-xs",
+              isActive ? "bg-primary/15 text-foreground" : "hover:bg-sidebar-accent",
+            )}
+            style={{ paddingLeft: 8 + depth * 12 + 16 }}
           >
-            {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-          </button>
-        )}
-        <div className="flex items-center justify-between gap-1">
-          <span
-            role="status"
-            aria-label={indicatorTitle}
-            title={indicatorTitle}
-            className={cn("size-1.5 shrink-0 rounded-full", indicatorClass)}
-          />
-          <span className="min-w-0 flex-1 truncate font-medium">{c.name}</span>
-          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
-            {c.kind}
-          </span>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-                onClick={(e) => e.stopPropagation()}
-                title="More actions"
-              >
-                <MoreHorizontal className="size-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              onClick={(e) => e.stopPropagation()}
-              className="text-xs"
-            >
-              <DropdownMenuItem onSelect={() => onEdit(c.id)}>
-                <Pencil className="size-3.5" />
-                Edit…
-              </DropdownMenuItem>
-              {isConnected && (
-                <DropdownMenuItem onSelect={() => onDisconnect(c.id)}>
-                  <Unplug className="size-3.5" />
-                  Disconnect
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                onSelect={() => {
-                  onActivate(c.id);
-                  openExportDialog(c.id);
+            {c.color && (
+              <span
+                aria-hidden
+                className="absolute left-0 top-1 bottom-1 w-1 rounded-full"
+                style={{ backgroundColor: c.color, marginLeft: depth * 12 + 4 }}
+              />
+            )}
+            {canListDatabases && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleExpanded();
                 }}
+                className="absolute top-1.5 flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                style={{ left: 8 + depth * 12 }}
+                aria-expanded={expanded}
+                title={expanded ? "Hide databases" : "Show databases"}
               >
-                <Download className="size-3.5" />
-                Export database…
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
-                  onActivate(c.id);
-                  openImportDialog(c.id);
-                }}
-              >
-                <Upload className="size-3.5" />
-                Import SQL file…
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c)}>
-                <Trash2 className="size-3.5" />
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-          {c.username}@{c.host}:{c.port}/{c.database}
-        </div>
-      </div>
+                {expanded ? (
+                  <ChevronDown className="size-3" />
+                ) : (
+                  <ChevronRight className="size-3" />
+                )}
+              </button>
+            )}
+            <div className="flex items-center gap-1">
+              <span
+                role="status"
+                aria-label={indicatorTitle}
+                title={indicatorTitle}
+                className={cn("size-1.5 shrink-0 rounded-full", indicatorClass)}
+              />
+              <span className="min-w-0 truncate font-medium">{c.name}</span>
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">
+                {c.kind}
+              </span>
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+              {c.username}@{c.host}:{c.port}/{c.database}
+            </div>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="text-xs">
+          <ContextMenuItem onSelect={() => onEdit(c.id)}>
+            <Pencil className="size-3.5" />
+            Edit…
+          </ContextMenuItem>
+          {isConnected && (
+            <ContextMenuItem onSelect={() => onDisconnect(c.id)}>
+              <Unplug className="size-3.5" />
+              Disconnect
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            onSelect={() => {
+              onActivate(c.id);
+              openExportDialog(c.id);
+            }}
+          >
+            <Download className="size-3.5" />
+            Export database…
+          </ContextMenuItem>
+          <ContextMenuItem
+            onSelect={() => {
+              onActivate(c.id);
+              openImportDialog(c.id);
+            }}
+          >
+            <Upload className="size-3.5" />
+            Import SQL file…
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onSelect={() => onDelete(c)}>
+            <Trash2 className="size-3.5" />
+            Delete
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {expanded && (
         <div>

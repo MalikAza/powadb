@@ -96,6 +96,10 @@ pub struct ConnectionPosition {
     pub position: i64,
 }
 
+/// A snippet's new container + position after a drag. Structurally identical
+/// to `ConnectionPosition` — both are "item moved into folder at index".
+pub type SnippetPosition = ConnectionPosition;
+
 /// One row of a sidebar drag-and-drop update for a folder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FolderPosition {
@@ -186,11 +190,13 @@ impl Storage {
 
     pub async fn list_snippets(&self, connection_id: Option<&str>) -> AppResult<Vec<Snippet>> {
         let q = if connection_id.is_some() {
-            "SELECT id, connection_id, name, sql, created_at, bytea_modes_json FROM snippets
+            "SELECT id, connection_id, name, sql, created_at, bytea_modes_json, folder_id, position
+             FROM snippets
              WHERE connection_id IS NULL OR connection_id = ?1
              ORDER BY name"
         } else {
-            "SELECT id, connection_id, name, sql, created_at, bytea_modes_json FROM snippets ORDER BY name"
+            "SELECT id, connection_id, name, sql, created_at, bytea_modes_json, folder_id, position
+             FROM snippets ORDER BY name"
         };
         let mut q = sqlx::query(q);
         if let Some(cid) = connection_id {
@@ -210,6 +216,8 @@ impl Storage {
                         .try_get::<Option<String>, _>("bytea_modes_json")
                         .ok()
                         .flatten(),
+                    folder_id: r.try_get::<Option<String>, _>("folder_id").ok().flatten(),
+                    position: r.try_get::<Option<i64>, _>("position").ok().flatten(),
                 })
             })
             .collect())
@@ -218,13 +226,14 @@ impl Storage {
     pub async fn upsert_snippet(&self, s: &Snippet) -> AppResult<()> {
         sqlx::query(
             r#"
-            INSERT INTO snippets (id, connection_id, name, sql, bytea_modes_json)
-            VALUES (?1, ?2, ?3, ?4, ?5)
+            INSERT INTO snippets (id, connection_id, name, sql, bytea_modes_json, folder_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
             ON CONFLICT(id) DO UPDATE SET
                 connection_id=excluded.connection_id,
                 name=excluded.name,
                 sql=excluded.sql,
-                bytea_modes_json=excluded.bytea_modes_json
+                bytea_modes_json=excluded.bytea_modes_json,
+                folder_id=excluded.folder_id
             "#,
         )
         .bind(&s.id)
@@ -232,6 +241,7 @@ impl Storage {
         .bind(&s.name)
         .bind(&s.sql)
         .bind(&s.bytea_modes_json)
+        .bind(&s.folder_id)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -244,6 +254,114 @@ impl Storage {
     ) -> AppResult<()> {
         sqlx::query("UPDATE snippets SET bytea_modes_json = ?1 WHERE id = ?2")
             .bind(bytea_modes_json)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Manual position of a snippet, so `save_snippet` can echo it back
+    /// instead of resetting it on every edit (mirrors `connection_position`).
+    pub async fn snippet_position(&self, id: &str) -> AppResult<Option<i64>> {
+        let row = sqlx::query("SELECT position FROM snippets WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get("position").ok().flatten()))
+    }
+
+    pub async fn set_snippet_positions(&self, items: &[SnippetPosition]) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        for item in items {
+            sqlx::query("UPDATE snippets SET folder_id = ?1, position = ?2 WHERE id = ?3")
+                .bind(&item.folder_id)
+                .bind(item.position)
+                .bind(&item.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn list_snippet_folders(&self) -> AppResult<Vec<Folder>> {
+        let rows = sqlx::query(
+            "SELECT id, name, parent_id, position FROM snippet_folders
+             ORDER BY position IS NULL, position, name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                Some(Folder {
+                    id: r.try_get("id").ok()?,
+                    name: r.try_get("name").ok()?,
+                    parent_id: r.try_get("parent_id").ok().flatten(),
+                    position: r.try_get("position").ok().flatten(),
+                })
+            })
+            .collect())
+    }
+
+    pub async fn snippet_folder_position(&self, id: &str) -> AppResult<Option<i64>> {
+        let row = sqlx::query("SELECT position FROM snippet_folders WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get("position").ok().flatten()))
+    }
+
+    pub async fn upsert_snippet_folder(&self, f: &Folder) -> AppResult<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO snippet_folders (id, name, parent_id)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(id) DO UPDATE SET name=excluded.name, parent_id=excluded.parent_id
+            "#,
+        )
+        .bind(&f.id)
+        .bind(&f.name)
+        .bind(&f.parent_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_snippet_folder_positions(&self, items: &[FolderPosition]) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        for item in items {
+            sqlx::query("UPDATE snippet_folders SET parent_id = ?1, position = ?2 WHERE id = ?3")
+                .bind(&item.parent_id)
+                .bind(item.position)
+                .bind(&item.id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Delete a snippet folder, promoting its children (subfolders + snippets)
+    /// to its own parent — same contract as `delete_folder`.
+    pub async fn delete_snippet_folder(&self, id: &str) -> AppResult<()> {
+        let row = sqlx::query("SELECT parent_id FROM snippet_folders WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        let new_parent: Option<String> = row.and_then(|r| r.try_get("parent_id").ok().flatten());
+
+        sqlx::query("UPDATE snippet_folders SET parent_id = ?1 WHERE parent_id = ?2")
+            .bind(&new_parent)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("UPDATE snippets SET folder_id = ?1 WHERE folder_id = ?2")
+            .bind(&new_parent)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        sqlx::query("DELETE FROM snippet_folders WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -760,6 +878,13 @@ pub struct Snippet {
     pub created_at: String,
     #[serde(default)]
     pub bytea_modes_json: Option<String>,
+    /// Owning `snippet_folders` row; `None` = top level.
+    #[serde(default)]
+    pub folder_id: Option<String>,
+    /// Manual ordering within the folder. Same semantics as
+    /// `connections.position`: `None` sorts after positioned siblings, by name.
+    #[serde(default)]
+    pub position: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1355,12 +1480,32 @@ mod tests {
             sql: "SELECT * FROM users".into(),
             created_at: String::new(),
             bytea_modes_json: None,
+            folder_id: Some("f1".into()),
+            position: None,
         };
         s.upsert_snippet(&snip).await.unwrap();
 
         let scoped = s.list_snippets(Some("c1")).await.unwrap();
         assert_eq!(scoped.len(), 1);
         assert_eq!(scoped[0].sql, "SELECT * FROM users");
+        assert_eq!(scoped[0].folder_id.as_deref(), Some("f1"));
+        let created_at = scoped[0].created_at.clone();
+
+        // Re-upserting the same id is the rename/update path the UI uses:
+        // one row in, one row out, creation timestamp preserved.
+        let renamed = Snippet {
+            name: "Active users".into(),
+            sql: "SELECT * FROM users WHERE active".into(),
+            folder_id: None,
+            ..snip.clone()
+        };
+        s.upsert_snippet(&renamed).await.unwrap();
+        let after = s.list_snippets(Some("c1")).await.unwrap();
+        assert_eq!(after.len(), 1, "upsert on the same id must not duplicate");
+        assert_eq!(after[0].name, "Active users");
+        assert_eq!(after[0].sql, "SELECT * FROM users WHERE active");
+        assert!(after[0].folder_id.is_none(), "folder must be clearable");
+        assert_eq!(after[0].created_at, created_at);
 
         let other = s.list_snippets(Some("other")).await.unwrap();
         assert!(
@@ -1423,6 +1568,8 @@ mod tests {
             sql: "SELECT id FROM t".into(),
             created_at: String::new(),
             bytea_modes_json: Some(r#"{"id":"ulid"}"#.into()),
+            folder_id: None,
+            position: None,
         };
         s.upsert_snippet(&snip).await.unwrap();
         let loaded = s.list_snippets(Some("c1")).await.unwrap();
@@ -1451,6 +1598,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snippet_folders_nest_and_promote_children_on_delete() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert_snippet_folder(&sample_folder("root", "Root", None))
+            .await
+            .unwrap();
+        s.upsert_snippet_folder(&sample_folder("mid", "Mid", Some("root")))
+            .await
+            .unwrap();
+        s.upsert_snippet_folder(&sample_folder("leaf", "Leaf", Some("mid")))
+            .await
+            .unwrap();
+        let snip = Snippet {
+            id: "s1".into(),
+            connection_id: Some("c1".into()),
+            name: "In mid".into(),
+            sql: "SELECT 1".into(),
+            created_at: String::new(),
+            bytea_modes_json: None,
+            folder_id: Some("mid".into()),
+            position: None,
+        };
+        s.upsert_snippet(&snip).await.unwrap();
+
+        assert_eq!(s.list_snippet_folders().await.unwrap().len(), 3);
+
+        // Deleting the middle folder promotes its subfolder AND its snippets
+        // to the deleted folder's own parent — never orphans them.
+        s.delete_snippet_folder("mid").await.unwrap();
+        let folders = s.list_snippet_folders().await.unwrap();
+        assert_eq!(folders.len(), 2);
+        let leaf = folders.iter().find(|f| f.id == "leaf").unwrap();
+        assert_eq!(leaf.parent_id.as_deref(), Some("root"));
+        let snippets = s.list_snippets(Some("c1")).await.unwrap();
+        assert_eq!(snippets[0].folder_id.as_deref(), Some("root"));
+    }
+
+    #[tokio::test]
+    async fn reordering_moves_snippets_between_folders_and_survives_a_save() {
+        let (_d, s) = fresh_storage().await;
+        s.upsert_snippet_folder(&sample_folder("f1", "One", None))
+            .await
+            .unwrap();
+        for id in ["a", "b"] {
+            s.upsert_snippet(&Snippet {
+                id: id.into(),
+                connection_id: None,
+                name: id.into(),
+                sql: "SELECT 1".into(),
+                created_at: String::new(),
+                bytea_modes_json: None,
+                folder_id: None,
+                position: None,
+            })
+            .await
+            .unwrap();
+        }
+
+        s.set_snippet_positions(&[
+            SnippetPosition {
+                id: "b".into(),
+                folder_id: Some("f1".into()),
+                position: 0,
+            },
+            SnippetPosition {
+                id: "a".into(),
+                folder_id: Some("f1".into()),
+                position: 1,
+            },
+        ])
+        .await
+        .unwrap();
+
+        let all = s.list_snippets(None).await.unwrap();
+        let b = all.iter().find(|x| x.id == "b").unwrap();
+        assert_eq!(b.folder_id.as_deref(), Some("f1"));
+        assert_eq!(b.position, Some(0));
+
+        // `upsert_snippet` must not clobber a dragged position.
+        assert_eq!(s.snippet_position("b").await.unwrap(), Some(0));
+        s.upsert_snippet(&Snippet {
+            name: "renamed".into(),
+            ..b.clone()
+        })
+        .await
+        .unwrap();
+        assert_eq!(s.snippet_position("b").await.unwrap(), Some(0));
+    }
+
+    #[tokio::test]
     async fn global_snippets_are_visible_to_any_connection() {
         let (_d, s) = fresh_storage().await;
         let global = Snippet {
@@ -1460,6 +1696,8 @@ mod tests {
             sql: "SELECT 1".into(),
             created_at: String::new(),
             bytea_modes_json: None,
+            folder_id: None,
+            position: None,
         };
         s.upsert_snippet(&global).await.unwrap();
         // Visible whether you ask scoped or unscoped — that's the contract.
