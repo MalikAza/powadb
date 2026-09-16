@@ -33,6 +33,16 @@ const MIGRATIONS: &[Migration] = &[
         name: "positions",
         sql: include_str!("../migrations/0002_positions.sql"),
     },
+    Migration {
+        version: 3,
+        name: "snippet_folder",
+        sql: include_str!("../migrations/0003_snippet_folder.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "snippet_folders",
+        sql: include_str!("../migrations/0004_snippet_folders.sql"),
+    },
 ];
 
 /// Apply every migration whose version is greater than the highest already
@@ -99,6 +109,15 @@ mod tests {
         Ok(row.try_get::<i64, _>("n")? > 0)
     }
 
+    async fn has_column(pool: &SqlitePool, table: &str, column: &str) -> AppResult<bool> {
+        let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
+            .fetch_all(pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .any(|r| r.try_get::<String, _>("name").ok().as_deref() == Some(column)))
+    }
+
     async fn fresh_pool() -> SqlitePool {
         SqlitePoolOptions::new()
             .max_connections(1)
@@ -129,6 +148,68 @@ mod tests {
         ] {
             assert!(has_table(&pool, t).await.unwrap(), "missing table {t}");
         }
+        // v3's free-text label is replaced by v4's real folder tree.
+        assert!(has_table(&pool, "snippet_folders").await.unwrap());
+        assert!(has_column(&pool, "snippets", "folder_id").await.unwrap());
+        assert!(has_column(&pool, "snippets", "position").await.unwrap());
+        assert!(!has_column(&pool, "snippets", "folder").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn v4_turns_free_text_snippet_labels_into_folder_rows() {
+        let pool = fresh_pool().await;
+        // Stop at v3, the world where `snippets.folder` is a plain label.
+        sqlx::query(
+            "CREATE TABLE schema_version (version INTEGER PRIMARY KEY,
+             applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for m in MIGRATIONS.iter().take_while(|m| m.version <= 3) {
+            sqlx::raw_sql(m.sql).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO schema_version (version) VALUES (?1)")
+                .bind(m.version)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        for (id, folder) in [("s1", "reports"), ("s2", "reports"), ("s3", "")] {
+            sqlx::query(
+                "INSERT INTO snippets (id, name, sql, folder) VALUES (?1, ?1, 'SELECT 1', ?2)",
+            )
+            .bind(id)
+            .bind(folder)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO snippets (id, name, sql) VALUES ('s4', 's4', 'SELECT 1')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        run(&pool).await.unwrap();
+
+        // One folder per distinct non-empty label, and the snippets point at it.
+        let folders = sqlx::query("SELECT id, name FROM snippet_folders")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].try_get::<String, _>("name").unwrap(), "reports");
+        let folder_id = folders[0].try_get::<String, _>("id").unwrap();
+
+        let rows = sqlx::query("SELECT id, folder_id FROM snippets ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let folder_of = |i: usize| rows[i].try_get::<Option<String>, _>("folder_id").unwrap();
+        assert_eq!(folder_of(0).as_deref(), Some(folder_id.as_str()));
+        assert_eq!(folder_of(1).as_deref(), Some(folder_id.as_str()));
+        // Empty label and NULL label both mean "top level".
+        assert!(folder_of(2).is_none());
+        assert!(folder_of(3).is_none());
     }
 
     #[tokio::test]
@@ -162,5 +243,8 @@ mod tests {
         // The legacy `connections` table is left untouched — `IF NOT EXISTS`
         // is a no-op against it. (The other tables get created.)
         assert!(has_table(&pool, "snippets").await.unwrap());
+        // Legacy installs get the later ALTER TABLE migrations too.
+        assert!(has_column(&pool, "snippets", "folder_id").await.unwrap());
+        assert!(has_column(&pool, "connections", "position").await.unwrap());
     }
 }

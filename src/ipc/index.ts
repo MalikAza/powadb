@@ -289,6 +289,17 @@ export const ipc = {
   saveSnippet: (input: SnippetInput): Promise<Snippet> => invoke("save_snippet", { input }),
 
   deleteSnippet: (id: string): Promise<void> => invoke("delete_snippet", { id }),
+  reorderSnippets: (items: ConnectionPositionUpdate[]): Promise<void> =>
+    invoke("reorder_snippets", { items }),
+
+  /// Snippets have their own folder tree, separate from the connection one,
+  /// but the same shape and the same command surface.
+  listSnippetFolders: (): Promise<Folder[]> => invoke("list_snippet_folders"),
+  saveSnippetFolder: (input: FolderInput): Promise<Folder> =>
+    invoke("save_snippet_folder", { input }),
+  reorderSnippetFolders: (items: FolderPositionUpdate[]): Promise<void> =>
+    invoke("reorder_snippet_folders", { items }),
+  deleteSnippetFolder: (id: string): Promise<void> => invoke("delete_snippet_folder", { id }),
 
   updateSnippetByteaModes: (id: string, byteaModesJson: string | null): Promise<void> =>
     invoke("update_snippet_bytea_modes", { id, byteaModesJson }),
@@ -582,14 +593,20 @@ export type Snippet = {
   sql: string;
   created_at: string;
   bytea_modes_json: string | null;
+  /** Owning `snippet_folders` row; null = top level. */
+  folder_id: string | null;
+  /** Manual ordering within the folder; null sorts last, by name. */
+  position: number | null;
 };
 
 export type SnippetInput = {
+  /** Omit to create; pass an existing id to update in place (upsert). */
   id?: string;
   connection_id?: string | null;
   name: string;
   sql: string;
   bytea_modes_json?: string | null;
+  folder_id?: string | null;
 };
 
 export type DiagColumn = {
